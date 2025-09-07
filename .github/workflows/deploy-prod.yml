@@ -1,0 +1,641 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to deploy (must be from staging)'
+        required: true
+        type: string
+      deployment_reason:
+        description: 'Business reason for production deployment'
+        required: true
+        type: string
+      rollback_plan:
+        description: 'Rollback plan in case of issues'
+        required: true
+        type: string
+      skip_staging_validation:
+        description: 'Skip staging environment validation (NOT recommended)'
+        required: false
+        default: false
+        type: boolean
+      maintenance_mode:
+        description: 'Enable maintenance mode during deployment'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: 'us-east-1'
+  ENVIRONMENT: 'production'
+  S3_BUCKET: ${{ secrets.PROD_ARTIFACTS_BUCKET }}
+
+jobs:
+  pre-production-validation:
+    name: Pre-Production Validation
+    runs-on: ubuntu-latest
+    outputs:
+      deploy-sha: ${{ steps.validate-sha.outputs.sha }}
+      staging-validated: ${{ steps.staging-check.outputs.validated }}
+      should-deploy: ${{ steps.validation.outputs.should-deploy }}
+      deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate deployment SHA
+        id: validate-sha
+        run: |
+          SHA="${{ github.event.inputs.commit_sha }}"
+          
+          # Validate SHA format
+          if [[ ! "$SHA" =~ ^[a-f0-9]{40}$ ]] && [[ ! "$SHA" =~ ^[a-f0-9]{7,40}$ ]]; then
+            echo "❌ Invalid SHA format: $SHA"
+            exit 1
+          fi
+          
+          # Validate SHA exists
+          if ! git cat-file -e "$SHA^{commit}"; then
+            echo "❌ Commit not found: $SHA"
+            exit 1
+          fi
+          
+          # Expand short SHA to full SHA
+          FULL_SHA=$(git rev-parse "$SHA")
+          echo "sha=$FULL_SHA" >> $GITHUB_OUTPUT
+          echo "✅ Valid commit SHA: $FULL_SHA"
+
+      - name: Validate commit is from main branch
+        run: |
+          SHA="${{ steps.validate-sha.outputs.sha }}"
+          
+          # Check if commit is in main branch
+          if git branch -r --contains "$SHA" | grep -q 'origin/main'; then
+            echo "✅ Commit is in main branch"
+          else
+            echo "❌ Commit is not in main branch - only main branch commits can be deployed to production"
+            exit 1
+          fi
+
+      - name: Validate staging deployment
+        id: staging-check
+        if: '!github.event.inputs.skip_staging_validation'
+        run: |
+          SHA="${{ steps.validate-sha.outputs.sha }}"
+          
+          echo "🔍 Checking if commit was deployed to staging..."
+          
+          # Configure AWS CLI
+          aws configure set aws_access_key_id "${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}"
+          aws configure set default.region "${{ env.AWS_REGION }}"
+          
+          # Check if staging artifacts exist
+          if aws s3 ls "s3://${{ secrets.STAGING_ARTIFACTS_BUCKET }}/builds/$SHA/" > /dev/null 2>&1; then
+            echo "✅ Commit was deployed to staging"
+            echo "validated=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Commit was not found in staging - deploy to staging first"
+            echo "validated=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Security and compliance validation
+        run: |
+          echo "🛡️ Running security and compliance checks..."
+          
+          # Check for security-related files
+          SECURITY_FILES=(".github/workflows" "scripts" "src/infrastructure")
+          for file in "${SECURITY_FILES[@]}"; do
+            if git diff --name-only HEAD~5..HEAD | grep -q "$file"; then
+              echo "⚠️ Security-sensitive files changed in recent commits - extra scrutiny required"
+            fi
+          done
+          
+          # Validate required secrets exist
+          REQUIRED_SECRETS=("PROD_AWS_ACCESS_KEY_ID" "PROD_AWS_SECRET_ACCESS_KEY" "PROD_AWS_ACCOUNT_ID" "PROD_ARTIFACTS_BUCKET")
+          for secret_name in "${REQUIRED_SECRETS[@]}"; do
+            if [[ -z "${!secret_name}" ]]; then
+              echo "❌ Missing required production secret: $secret_name"
+              exit 1
+            fi
+          done
+          
+          echo "✅ Security validation passed"
+        env:
+          PROD_AWS_ACCESS_KEY_ID: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          PROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          PROD_AWS_ACCOUNT_ID: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
+          PROD_ARTIFACTS_BUCKET: ${{ secrets.PROD_ARTIFACTS_BUCKET }}
+
+      - name: Final validation
+        id: validation
+        run: |
+          # Check deployment inputs
+          if [[ -z "${{ github.event.inputs.deployment_reason }}" ]]; then
+            echo "❌ Deployment reason is required"
+            exit 1
+          fi
+          
+          if [[ -z "${{ github.event.inputs.rollback_plan }}" ]]; then
+            echo "❌ Rollback plan is required"
+            exit 1
+          fi
+          
+          echo "✅ All validations passed"
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+
+      - name: Create production deployment
+        id: create-deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ steps.validate-sha.outputs.sha }}',
+              environment: 'production',
+              description: `PRODUCTION DEPLOYMENT - ${{ github.event.inputs.deployment_reason }}`,
+              auto_merge: false,
+              required_contexts: []
+            });
+            
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'pending',
+              description: 'Production deployment initiated - awaiting approvals'
+            });
+            
+            // Create detailed issue for tracking
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚀 Production Deployment - ${new Date().toISOString().split('T')[0]}`,
+              body: `## Production Deployment Request
+              
+**Commit SHA:** \`${{ steps.validate-sha.outputs.sha }}\`
+**Requested by:** @${{ github.actor }}
+**Reason:** ${{ github.event.inputs.deployment_reason }}
+**Rollback Plan:** ${{ github.event.inputs.rollback_plan }}
+**Maintenance Mode:** ${{ github.event.inputs.maintenance_mode }}
+
+## Pre-deployment Checklist
+- [x] SHA validation complete
+- [x] Staging validation: ${{ steps.staging-check.outputs.validated || 'SKIPPED' }}
+- [x] Security checks passed
+- [ ] Business stakeholder approval
+- [ ] Technical lead approval
+- [ ] Final deployment approval
+
+**Deployment URL:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+              labels: ['deployment', 'production', 'high-priority']
+            });
+            
+            return deployment.data.id;
+
+  business-approval:
+    name: Business Stakeholder Approval
+    runs-on: ubuntu-latest
+    needs: pre-production-validation
+    if: needs.pre-production-validation.outputs.should-deploy == 'true'
+    environment:
+      name: production-business-approval
+    steps:
+      - name: Business approval checkpoint
+        run: |
+          echo "🏢 BUSINESS STAKEHOLDER APPROVAL REQUIRED"
+          echo ""
+          echo "📋 Deployment Details:"
+          echo "  - Commit: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
+          echo "  - Reason: ${{ github.event.inputs.deployment_reason }}"
+          echo "  - Rollback Plan: ${{ github.event.inputs.rollback_plan }}"
+          echo "  - Requested by: ${{ github.actor }}"
+          echo ""
+          echo "⚠️  This deployment will affect the production environment"
+          echo "⚠️  Business stakeholders must approve before proceeding"
+
+  technical-approval:
+    name: Technical Lead Approval
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, business-approval]
+    if: needs.pre-production-validation.outputs.should-deploy == 'true'
+    environment:
+      name: production-technical-approval
+    steps:
+      - name: Technical approval checkpoint
+        run: |
+          echo "🔧 TECHNICAL LEAD APPROVAL REQUIRED"
+          echo ""
+          echo "🔍 Technical Review Checklist:"
+          echo "  - [ ] Code review completed"
+          echo "  - [ ] Security assessment passed"
+          echo "  - [ ] Performance impact assessed"
+          echo "  - [ ] Database migration reviewed (if applicable)"
+          echo "  - [ ] Monitoring and alerting configured"
+          echo "  - [ ] Rollback procedures verified"
+          echo ""
+          echo "📋 Deployment Details:"
+          echo "  - Commit: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
+          echo "  - Environment: Production"
+          echo "  - Maintenance Mode: ${{ github.event.inputs.maintenance_mode }}"
+
+  final-deployment-approval:
+    name: Final Deployment Approval
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, business-approval, technical-approval]
+    if: needs.pre-production-validation.outputs.should-deploy == 'true'
+    environment:
+      name: production-final-approval
+    steps:
+      - name: Final deployment approval
+        run: |
+          echo "🚨 FINAL PRODUCTION DEPLOYMENT APPROVAL"
+          echo ""
+          echo "⚡ PRODUCTION DEPLOYMENT ABOUT TO START"
+          echo ""
+          echo "📊 Summary:"
+          echo "  - SHA: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
+          echo "  - Business Approved: ✅"
+          echo "  - Technical Approved: ✅"
+          echo "  - Staging Validated: ${{ needs.pre-production-validation.outputs.staging-validated == 'true' && '✅' || '⚠️ SKIPPED' }}"
+          echo ""
+          echo "🚀 Proceeding with production deployment..."
+
+  enable-maintenance-mode:
+    name: Enable Maintenance Mode
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, final-deployment-approval]
+    if: needs.pre-production-validation.outputs.should-deploy == 'true' && github.event.inputs.maintenance_mode == 'true'
+    environment:
+      name: production
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Enable maintenance mode
+        run: |
+          echo "🚧 Enabling maintenance mode..."
+          
+          # Update load balancer to show maintenance page
+          # This is a placeholder - implement based on your architecture
+          aws ssm put-parameter \
+            --name "/aws-community-hub/production/maintenance-mode" \
+            --value "true" \
+            --type "String" \
+            --overwrite
+          
+          echo "✅ Maintenance mode enabled"
+          echo "Users will see maintenance page during deployment"
+
+  build-production:
+    name: Build for Production
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, final-deployment-approval]
+    if: needs.pre-production-validation.outputs.should-deploy == 'true'
+    steps:
+      - name: Checkout production commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.pre-production-validation.outputs.deploy-sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production applications
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_API_URL: https://api.aws-community-hub.com
+
+      - name: CDK synth for production
+        run: |
+          cd src/infrastructure
+          npm run build
+          npx cdk synth --all
+        env:
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          CDK_DEPLOY_ACCOUNT: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
+          ENVIRONMENT: production
+
+      - name: Archive production build
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/backend-prod-${{ needs.pre-production-validation.outputs.deploy-sha }}.tar.gz -C src/backend dist
+          tar -czf artifacts/frontend-prod-${{ needs.pre-production-validation.outputs.deploy-sha }}.tar.gz -C src/frontend .next public
+          tar -czf artifacts/infrastructure-prod-${{ needs.pre-production-validation.outputs.deploy-sha }}.tar.gz -C src/infrastructure cdk.out
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload production artifacts
+        run: |
+          aws s3 cp artifacts/ s3://${{ env.S3_BUCKET }}/builds/${{ needs.pre-production-validation.outputs.deploy-sha }}/ --recursive
+          aws s3 cp artifacts/ s3://${{ env.S3_BUCKET }}/builds/production-latest/ --recursive
+          
+          # Create backup of previous version
+          aws s3 sync s3://${{ env.S3_BUCKET }}/builds/production-current/ s3://${{ env.S3_BUCKET }}/builds/production-backup/ --delete || true
+          aws s3 sync s3://${{ env.S3_BUCKET }}/builds/production-latest/ s3://${{ env.S3_BUCKET }}/builds/production-current/ --delete
+
+      - name: Cache production build
+        uses: actions/cache@v3
+        with:
+          path: |
+            src/backend/dist
+            src/frontend/.next
+            src/infrastructure/cdk.out
+            artifacts/
+          key: deploy-prod-${{ needs.pre-production-validation.outputs.deploy-sha }}
+
+  deploy-production-infrastructure:
+    name: Deploy Production Infrastructure
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, build-production, enable-maintenance-mode]
+    if: always() && needs.pre-production-validation.outputs.should-deploy == 'true' && needs.build-production.result == 'success' && (needs.enable-maintenance-mode.result == 'success' || needs.enable-maintenance-mode.result == 'skipped')
+    environment:
+      name: production-infrastructure
+      url: https://aws-community-hub.com
+    steps:
+      - name: Checkout production commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.pre-production-validation.outputs.deploy-sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore production build cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            src/backend/dist
+            src/frontend/.next
+            src/infrastructure/cdk.out
+            artifacts/
+          key: deploy-prod-${{ needs.pre-production-validation.outputs.deploy-sha }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy production infrastructure
+        run: |
+          cd src/infrastructure
+          npm run build
+          
+          echo "🚀 Deploying infrastructure to production..."
+          npx cdk deploy --all --require-approval never --outputs-file prod-outputs.json
+        env:
+          CDK_DEPLOY_ACCOUNT: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
+          CDK_DEPLOY_REGION: ${{ env.AWS_REGION }}
+          ENVIRONMENT: production
+
+      - name: Upload CDK outputs
+        run: |
+          cd src/infrastructure
+          if [ -f prod-outputs.json ]; then
+            aws s3 cp prod-outputs.json s3://${{ env.S3_BUCKET }}/configs/production/cdk-outputs.json
+          fi
+
+  deploy-production-applications:
+    name: Deploy Production Applications
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, deploy-production-infrastructure]
+    if: always() && needs.pre-production-validation.outputs.should-deploy == 'true' && needs.deploy-production-infrastructure.result == 'success'
+    environment:
+      name: production
+      url: https://aws-community-hub.com
+    steps:
+      - name: Checkout production commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.pre-production-validation.outputs.deploy-sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get CDK outputs
+        run: |
+          aws s3 cp s3://${{ env.S3_BUCKET }}/configs/production/cdk-outputs.json cdk-outputs.json
+
+      - name: Deploy applications to production
+        run: |
+          chmod +x scripts/deploy.sh
+          ./scripts/deploy.sh production ${{ needs.pre-production-validation.outputs.deploy-sha }}
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          S3_ARTIFACTS_BUCKET: ${{ env.S3_BUCKET }}
+
+  disable-maintenance-mode:
+    name: Disable Maintenance Mode
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, deploy-production-applications]
+    if: always() && needs.pre-production-validation.outputs.should-deploy == 'true' && needs.deploy-production-applications.result == 'success' && github.event.inputs.maintenance_mode == 'true'
+    environment:
+      name: production
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Disable maintenance mode
+        run: |
+          echo "🚧 Disabling maintenance mode..."
+          
+          aws ssm put-parameter \
+            --name "/aws-community-hub/production/maintenance-mode" \
+            --value "false" \
+            --type "String" \
+            --overwrite
+          
+          echo "✅ Maintenance mode disabled"
+          echo "Production site is now live!"
+
+  production-health-checks:
+    name: Production Health Checks
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, deploy-production-applications, disable-maintenance-mode]
+    if: always() && needs.pre-production-validation.outputs.should-deploy == 'true' && needs.deploy-production-applications.result == 'success' && (needs.disable-maintenance-mode.result == 'success' || needs.disable-maintenance-mode.result == 'skipped')
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get production URL
+        run: |
+          aws s3 cp s3://${{ env.S3_BUCKET }}/configs/production/cdk-outputs.json cdk-outputs.json
+          PROD_URL=$(jq -r '.["aws-community-hub-production"].AppUrl' cdk-outputs.json)
+          echo "PROD_URL=$PROD_URL" >> $GITHUB_ENV
+          echo "Production URL: $PROD_URL"
+
+      - name: Wait for deployment readiness
+        run: |
+          echo "⏳ Waiting for production deployment to be ready..."
+          sleep 120
+          
+          # Wait up to 10 minutes for the app to be ready
+          for i in {1..20}; do
+            if curl -f -s "${{ env.PROD_URL }}/health" > /dev/null; then
+              echo "✅ Production application is ready"
+              break
+            fi
+            echo "Waiting for production application... ($i/20)"
+            sleep 30
+          done
+
+      - name: Run comprehensive health checks
+        run: |
+          echo "🏥 Running comprehensive production health checks..."
+          
+          # Basic health check
+          curl -f "${{ env.PROD_URL }}/health"
+          echo "✅ Basic health check passed"
+          
+          # API health check
+          curl -f "${{ env.PROD_URL }}/api/health"
+          echo "✅ API health check passed"
+          
+          # Database connectivity check
+          curl -f "${{ env.PROD_URL }}/api/health/database"
+          echo "✅ Database connectivity check passed"
+          
+          # Authentication service check
+          curl -f -s "${{ env.PROD_URL }}/api/auth/config" > /dev/null
+          echo "✅ Authentication service check passed"
+
+      - name: Performance validation
+        run: |
+          echo "⚡ Running production performance validation..."
+          
+          # Response time test
+          RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' "${{ env.PROD_URL }}")
+          echo "Response time: ${RESPONSE_TIME}s"
+          
+          # Fail if response time is > 3 seconds in production
+          if (( $(echo "$RESPONSE_TIME > 3.0" | bc -l) )); then
+            echo "❌ Production response time too slow: ${RESPONSE_TIME}s"
+            exit 1
+          fi
+          
+          echo "✅ Production performance validation passed"
+
+  post-deployment-notification:
+    name: Production Deployment Complete
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, deploy-production-applications, production-health-checks]
+    if: always() && needs.pre-production-validation.outputs.should-deploy == 'true'
+    steps:
+      - name: Determine final deployment status
+        id: status
+        run: |
+          if [[ "${{ needs.deploy-production-applications.result }}" == "success" && "${{ needs.production-health-checks.result }}" == "success" ]]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=🚀 PRODUCTION DEPLOYMENT SUCCESSFUL" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ PRODUCTION DEPLOYMENT FAILED" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update deployment status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deploymentId = ${{ needs.pre-production-validation.outputs.deployment-id || 0 }};
+            if (deploymentId) {
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deploymentId,
+                state: '${{ steps.status.outputs.status }}',
+                description: '${{ steps.status.outputs.message }}',
+                environment_url: 'https://aws-community-hub.com'
+              });
+            }
+
+      - name: Send production deployment notifications
+        run: |
+          echo "📢 PRODUCTION DEPLOYMENT NOTIFICATION"
+          echo "Status: ${{ steps.status.outputs.status }}"
+          echo "Commit: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
+          echo "Reason: ${{ github.event.inputs.deployment_reason }}"
+          echo "Deployed by: ${{ github.actor }}"
+          echo "Environment: https://aws-community-hub.com"
+          echo "Rollback Plan: ${{ github.event.inputs.rollback_plan }}"
+          
+          # Add Slack/Teams notification here if configured
+          if [[ -n "${{ secrets.SLACK_PRODUCTION_WEBHOOK }}" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"${{ steps.status.outputs.message }} - Commit: ${{ needs.pre-production-validation.outputs.deploy-sha }} - Deployed by: ${{ github.actor }}"}' \
+            ${{ secrets.SLACK_PRODUCTION_WEBHOOK }}
+          fi
+
+      - name: Create production release
+        if: steps.status.outputs.status == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releaseTag = `v${new Date().toISOString().split('T')[0]}-prod-${{ needs.pre-production-validation.outputs.deploy-sha }}`.substring(0, 50);
+            
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: releaseTag,
+              name: `Production Release - ${new Date().toISOString().split('T')[0]}`,
+              body: `🎉 **Successfully Deployed to Production**
+
+**Deployment Details:**
+- **Commit:** ${{ needs.pre-production-validation.outputs.deploy-sha }}
+- **Reason:** ${{ github.event.inputs.deployment_reason }}
+- **Deployed by:** ${{ github.actor }}
+- **Rollback Plan:** ${{ github.event.inputs.rollback_plan }}
+
+**Environment:** https://aws-community-hub.com
+**Health Checks:** ✅ All passed
+**Performance:** ✅ Within acceptable limits
+
+This release has been tested in staging and approved by business stakeholders and technical leads.`,
+              draft: false,
+              prerelease: false
+            });

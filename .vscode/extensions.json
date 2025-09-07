@@ -1,0 +1,107 @@
+{
+  "recommendations": [
+    // TypeScript & JavaScript
+    "ms-vscode.vscode-typescript-next",
+    "ms-vscode.vscode-json",
+    "bradlc.vscode-tailwindcss",
+    
+    // Node.js & Backend Development
+    "ms-vscode.vscode-node-debug2",
+    "christian-kohler.npm-intellisense",
+    "mskelton.npm-outdated",
+    
+    // Database & SQL
+    "ms-ossdata.vscode-postgresql",
+    "mtxr.sqltools",
+    "mtxr.sqltools-driver-pg",
+    "formulahendry.auto-rename-tag",
+    
+    // AWS & Cloud Development
+    "amazonwebservices.aws-toolkit-vscode",
+    "ms-vscode.azure-account",
+    "aws-scripting-guy.cform",
+    
+    // Docker & Containers
+    "ms-azuretools.vscode-docker",
+    "ms-vscode-remote.remote-containers",
+    
+    // Git & Version Control
+    "eamodio.gitlens",
+    "donjayamanne.githistory",
+    "github.vscode-pull-request-github",
+    "github.copilot",
+    "github.copilot-chat",
+    
+    // Code Quality & Formatting
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "ms-vscode.vscode-typescript-next",
+    "streetsidesoftware.code-spell-checker",
+    
+    // Testing
+    "ms-vscode.test-adapter-converter",
+    "hbenl.vscode-test-explorer",
+    "kavod-io.vscode-jest-test-adapter",
+    "orta.vscode-jest",
+    
+    // REST API Testing
+    "humao.rest-client",
+    "rangav.vscode-thunder-client",
+    
+    // Markdown & Documentation
+    "yzhang.markdown-all-in-one",
+    "davidanson.vscode-markdownlint",
+    "bierner.markdown-preview-github-styles",
+    "shd101wyy.markdown-preview-enhanced",
+    
+    // Environment & Configuration
+    "mikestead.dotenv",
+    "redhat.vscode-yaml",
+    "tamasfe.even-better-toml",
+    
+    // Productivity & Navigation
+    "ms-vscode.vscode-todo-highlight",
+    "wayou.vscode-todo-highlight",
+    "gruntfuggly.todo-tree",
+    "aaron-bond.better-comments",
+    "oderwat.indent-rainbow",
+    "bradlc.vscode-tailwindcss",
+    
+    // UI & Theming
+    "pkief.material-icon-theme",
+    "github.github-vscode-theme",
+    "dracula-theme.theme-dracula",
+    
+    // AWS CDK Specific
+    "aws-scripting-guy.cform",
+    "kddejong.vscode-cfn-lint",
+    
+    // Additional Development Tools
+    "ms-vscode.vscode-json",
+    "redhat.vscode-xml",
+    "ms-python.python",
+    "ms-python.flake8",
+    "ms-python.black-formatter",
+    
+    // API Development
+    "42crunch.vscode-openapi",
+    "arjun.swagger-viewer",
+    
+    // Performance & Monitoring
+    "ms-vscode.vscode-js-profile-flame",
+    "wallabyjs.quokka-vscode",
+    
+    // Security
+    "snyk-security.snyk-vulnerability-scanner",
+    
+    // Live Share & Collaboration
+    "ms-vsliveshare.vsliveshare",
+    "ms-vsliveshare.vsliveshare-pack"
+  ],
+  "unwantedRecommendations": [
+    // Avoid conflicting extensions
+    "hookyqr.beautify",
+    "ms-vscode.vscode-typescript",
+    "formulahendry.code-runner"
+  ]
+}

@@ -1,0 +1,275 @@
+import * as cdk from 'aws-cdk-lib';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as rds from 'aws-cdk-lib/aws-rds';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { Construct } from 'constructs';
+import { PgVectorEnabler } from '../constructs/pgvector-enabler';
+
+export interface DatabaseStackProps extends cdk.StackProps {
+  /**
+   * Environment name (dev, staging, prod)
+   */
+  environment?: string;
+
+  /**
+   * Whether to enable deletion protection
+   */
+  deletionProtection?: boolean;
+
+  /**
+   * Backup retention period in days
+   */
+  backupRetentionDays?: number;
+
+  /**
+   * Min Aurora Serverless capacity
+   */
+  minCapacity?: number;
+
+  /**
+   * Max Aurora Serverless capacity
+   */
+  maxCapacity?: number;
+}
+
+/**
+ * Database stack for AWS Community Content Hub
+ * 
+ * Creates:
+ * - VPC with public and private subnets
+ * - Aurora Serverless v2 PostgreSQL cluster with pgvector extension
+ * - RDS Proxy for connection pooling
+ * - Secrets Manager for database credentials
+ * - Bastion host for development access
+ * - Security groups and proper networking
+ */
+export class DatabaseStack extends cdk.Stack {
+  public readonly vpc: ec2.Vpc;
+  public readonly cluster: rds.DatabaseCluster;
+  public readonly proxy: rds.DatabaseProxy;
+  public readonly databaseSecret: secretsmanager.Secret;
+  public readonly bastionHost: ec2.Instance;
+  public readonly clusterEndpoint: string;
+  public readonly proxyEndpoint: string;
+
+  constructor(scope: Construct, id: string, props?: DatabaseStackProps) {
+    super(scope, id, props);
+
+    const environment = props?.environment || 'dev';
+    const isProd = environment === 'prod';
+
+    // Create VPC with public and private subnets
+    this.vpc = new ec2.Vpc(this, 'CommunityContentVpc', {
+      cidr: '10.0.0.0/16',
+      maxAzs: 2,
+      enableDnsHostnames: true,
+      enableDnsSupport: true,
+      subnetConfiguration: [
+        {
+          cidrMask: 24,
+          name: 'Public',
+          subnetType: ec2.SubnetType.PUBLIC,
+        },
+        {
+          cidrMask: 24,
+          name: 'Private',
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        },
+      ],
+      natGateways: 1, // Reduce cost in dev, increase in prod
+    });
+
+    // Create security group for Aurora cluster
+    const databaseSecurityGroup = new ec2.SecurityGroup(this, 'DatabaseSecurityGroup', {
+      vpc: this.vpc,
+      description: 'Security group for Aurora Serverless cluster',
+      allowAllOutbound: true,
+    });
+
+    // Create security group for RDS Proxy
+    const proxySecurityGroup = new ec2.SecurityGroup(this, 'ProxySecurityGroup', {
+      vpc: this.vpc,
+      description: 'Security group for RDS Proxy',
+      allowAllOutbound: true,
+    });
+
+    // Create security group for Lambda functions
+    const lambdaSecurityGroup = new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
+      vpc: this.vpc,
+      description: 'Security group for Lambda functions',
+      allowAllOutbound: true,
+    });
+
+    // Create security group for bastion host
+    const bastionSecurityGroup = new ec2.SecurityGroup(this, 'BastionSecurityGroup', {
+      vpc: this.vpc,
+      description: 'Security group for bastion host',
+      allowAllOutbound: true,
+    });
+
+    // Allow SSH access to bastion host
+    bastionSecurityGroup.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(22),
+      'Allow SSH access'
+    );
+
+    // Allow Lambda and Proxy to connect to database
+    databaseSecurityGroup.addIngressRule(
+      lambdaSecurityGroup,
+      ec2.Port.tcp(5432),
+      'Allow Lambda access to database'
+    );
+
+    databaseSecurityGroup.addIngressRule(
+      proxySecurityGroup,
+      ec2.Port.tcp(5432),
+      'Allow RDS Proxy access to database'
+    );
+
+    // Allow bastion host to connect to database (dev only)
+    if (!isProd) {
+      databaseSecurityGroup.addIngressRule(
+        bastionSecurityGroup,
+        ec2.Port.tcp(5432),
+        'Allow bastion host access to database'
+      );
+    }
+
+    // Create database credentials secret
+    this.databaseSecret = new secretsmanager.Secret(this, 'DatabaseSecret', {
+      description: 'Aurora Serverless database credentials',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ username: 'postgres' }),
+        generateStringKey: 'password',
+        passwordLength: 32,
+        excludeCharacters: '"@/\\',
+      },
+    });
+
+    // Create DB subnet group
+    const subnetGroup = new rds.SubnetGroup(this, 'DatabaseSubnetGroup', {
+      description: 'Subnet group for Aurora Serverless cluster',
+      vpc: this.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+    });
+
+    // Create Aurora Serverless v2 cluster
+    this.cluster = new rds.DatabaseCluster(this, 'DatabaseCluster', {
+      engine: rds.DatabaseClusterEngine.auroraPostgres({
+        version: rds.AuroraPostgresEngineVersion.VER_15_4,
+      }),
+      credentials: rds.Credentials.fromSecret(this.databaseSecret),
+      vpc: this.vpc,
+      subnetGroup,
+      securityGroups: [databaseSecurityGroup],
+      serverlessV2MinCapacity: props?.minCapacity || 0.5,
+      serverlessV2MaxCapacity: props?.maxCapacity || (isProd ? 4 : 1),
+      backup: {
+        retention: cdk.Duration.days(props?.backupRetentionDays || 7),
+        preferredWindow: '03:00-04:00',
+      },
+      preferredMaintenanceWindow: 'Sun:04:00-Sun:05:00',
+      deletionProtection: props?.deletionProtection || false,
+      cloudwatchLogsExports: ['postgresql'],
+      cloudwatchLogsRetention: isProd ? cdk.aws_logs.RetentionDays.ONE_MONTH : cdk.aws_logs.RetentionDays.ONE_WEEK,
+      defaultDatabaseName: 'community_content',
+      writer: rds.ClusterInstance.serverlessV2('writer'),
+    });
+
+    // Create RDS Proxy for connection pooling
+    this.proxy = new rds.DatabaseProxy(this, 'DatabaseProxy', {
+      proxyTarget: rds.ProxyTarget.fromCluster(this.cluster),
+      secrets: [this.databaseSecret],
+      vpc: this.vpc,
+      securityGroups: [proxySecurityGroup],
+      requireTLS: true,
+      idleClientTimeout: cdk.Duration.seconds(1800),
+    });
+
+    // Enable pgvector extension
+    const pgvectorEnabler = new PgVectorEnabler(this, 'PgVectorEnabler', {
+      cluster: this.cluster,
+      databaseSecret: this.databaseSecret,
+      vpc: this.vpc,
+      securityGroups: [lambdaSecurityGroup],
+      databaseName: 'community_content',
+    });
+
+    // Create bastion host for development access
+    const bastionRole = new iam.Role(this, 'BastionRole', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+      ],
+    });
+
+    this.bastionHost = new ec2.Instance(this, 'BastionHost', {
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+      machineImage: ec2.MachineImage.latestAmazonLinux2(),
+      vpc: this.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PUBLIC,
+      },
+      securityGroup: bastionSecurityGroup,
+      role: bastionRole,
+      userData: ec2.UserData.custom(`#!/bin/bash
+yum update -y
+yum install -y postgresql15
+echo 'export PGHOST=${this.cluster.clusterEndpoint.hostname}' >> /home/ec2-user/.bashrc
+echo 'export PGPORT=5432' >> /home/ec2-user/.bashrc
+echo 'export PGDATABASE=community_content' >> /home/ec2-user/.bashrc
+echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
+`),
+    });
+
+    // Store endpoints for easy access
+    this.clusterEndpoint = this.cluster.clusterEndpoint.socketAddress;
+    this.proxyEndpoint = this.proxy.endpoint;
+
+    // CloudFormation outputs
+    new cdk.CfnOutput(this, 'VpcId', {
+      value: this.vpc.vpcId,
+      description: 'VPC ID for the database infrastructure',
+    });
+
+    new cdk.CfnOutput(this, 'DatabaseClusterEndpoint', {
+      value: this.cluster.clusterEndpoint.socketAddress,
+      description: 'Aurora cluster endpoint',
+    });
+
+    new cdk.CfnOutput(this, 'DatabaseClusterIdentifier', {
+      value: this.cluster.clusterIdentifier,
+      description: 'Aurora cluster identifier',
+    });
+
+    new cdk.CfnOutput(this, 'RDSProxyEndpoint', {
+      value: this.proxy.endpoint,
+      description: 'RDS Proxy endpoint for connection pooling',
+    });
+
+    new cdk.CfnOutput(this, 'DatabaseSecretArn', {
+      value: this.databaseSecret.secretArn,
+      description: 'Secrets Manager ARN for database credentials',
+    });
+
+    new cdk.CfnOutput(this, 'BastionHostInstanceId', {
+      value: this.bastionHost.instanceId,
+      description: 'Bastion host instance ID for database access',
+    });
+
+    new cdk.CfnOutput(this, 'DatabaseSecurityGroupId', {
+      value: databaseSecurityGroup.securityGroupId,
+      description: 'Security group ID for database access',
+    });
+
+    // Add tags based on environment
+    cdk.Tags.of(this).add('Environment', environment);
+    cdk.Tags.of(this).add('Project', 'community-content-hub');
+    cdk.Tags.of(this).add('Component', 'database');
+  }
+}

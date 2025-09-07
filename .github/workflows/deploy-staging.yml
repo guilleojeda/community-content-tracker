@@ -1,0 +1,474 @@
+name: Deploy to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+      commit_sha:
+        description: 'Commit SHA to deploy (leave empty for latest)'
+        required: false
+        type: string
+      skip_tests:
+        description: 'Skip test execution'
+        required: false
+        default: false
+        type: boolean
+      deployment_reason:
+        description: 'Reason for deployment'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: 'us-east-1'
+  ENVIRONMENT: 'staging'
+  S3_BUCKET: ${{ secrets.STAGING_ARTIFACTS_BUCKET }}
+
+jobs:
+  validate-deployment:
+    name: Validate Deployment Request
+    runs-on: ubuntu-latest
+    outputs:
+      deploy-sha: ${{ steps.determine-sha.outputs.sha }}
+      should-deploy: ${{ steps.validation.outputs.should-deploy }}
+      deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine deployment SHA
+        id: determine-sha
+        run: |
+          if [[ -n "${{ github.event.inputs.commit_sha }}" ]]; then
+            SHA="${{ github.event.inputs.commit_sha }}"
+            echo "Using specified commit: $SHA"
+          else
+            SHA=$(git rev-parse HEAD)
+            echo "Using latest commit: $SHA"
+          fi
+          
+          # Validate SHA exists
+          if git cat-file -e "$SHA^{commit}"; then
+            echo "sha=$SHA" >> $GITHUB_OUTPUT
+            echo "✅ Valid commit SHA: $SHA"
+          else
+            echo "❌ Invalid commit SHA: $SHA"
+            exit 1
+          fi
+
+      - name: Validate deployment requirements
+        id: validation
+        run: |
+          echo "🔍 Validating deployment requirements..."
+          
+          # Check if deploying from main branch or valid commit
+          BRANCH=$(git branch -r --contains ${{ steps.determine-sha.outputs.sha }} | grep 'origin/main' || true)
+          if [[ -z "$BRANCH" ]]; then
+            echo "⚠️ Warning: Commit not found in main branch"
+          else
+            echo "✅ Commit is in main branch"
+          fi
+          
+          # Check if required secrets are available
+          REQUIRED_SECRETS=("STAGING_AWS_ACCESS_KEY_ID" "STAGING_AWS_SECRET_ACCESS_KEY" "STAGING_AWS_ACCOUNT_ID")
+          for secret in "${REQUIRED_SECRETS[@]}"; do
+            if [[ -z "${!secret}" ]]; then
+              echo "❌ Missing required secret: $secret"
+              exit 1
+            fi
+          done
+          
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+          echo "✅ Deployment validation passed"
+        env:
+          STAGING_AWS_ACCESS_KEY_ID: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          STAGING_AWS_SECRET_ACCESS_KEY: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          STAGING_AWS_ACCOUNT_ID: ${{ secrets.STAGING_AWS_ACCOUNT_ID }}
+
+      - name: Create GitHub deployment
+        id: create-deployment
+        if: steps.validation.outputs.should-deploy == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ steps.determine-sha.outputs.sha }}',
+              environment: 'staging',
+              description: `Manual deployment to staging - ${{ github.event.inputs.deployment_reason }}`,
+              auto_merge: false,
+              required_contexts: []
+            });
+            
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'pending',
+              description: 'Deployment validation complete, waiting for approval'
+            });
+            
+            return deployment.data.id;
+
+  approval-gate:
+    name: Manual Approval Required
+    runs-on: ubuntu-latest
+    needs: validate-deployment
+    if: needs.validate-deployment.outputs.should-deploy == 'true'
+    environment:
+      name: staging-approval
+    steps:
+      - name: Manual approval checkpoint
+        run: |
+          echo "🚨 Manual approval required for staging deployment"
+          echo "Deploying commit: ${{ needs.validate-deployment.outputs.deploy-sha }}"
+          echo "Reason: ${{ github.event.inputs.deployment_reason }}"
+          echo "Requested by: ${{ github.actor }}"
+          echo ""
+          echo "This step will wait for manual approval from authorized users."
+
+  pre-deployment-tests:
+    name: Pre-deployment Tests
+    runs-on: ubuntu-latest
+    needs: [validate-deployment, approval-gate]
+    if: needs.validate-deployment.outputs.should-deploy == 'true' && !github.event.inputs.skip_tests
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: staging_test_password
+          POSTGRES_USER: staging_test_user
+          POSTGRES_DB: staging_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout specific commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-deployment.outputs.deploy-sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run comprehensive tests
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run test -- --coverage --ci --watchAll=false --passWithNoTests
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://staging_test_user:staging_test_password@localhost:5432/staging_test_db
+
+      - name: Run integration tests
+        run: |
+          npm run db:migrate
+          cd src/backend
+          npm run test -- --testPathPattern=integration --ci --watchAll=false
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://staging_test_user:staging_test_password@localhost:5432/staging_test_db
+
+      - name: Security scan
+        run: |
+          npm audit --audit-level=moderate
+          # Add Snyk scan if token is available
+          if [[ -n "${{ secrets.SNYK_TOKEN }}" ]]; then
+            npx snyk test --severity-threshold=medium
+          fi
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  build-for-staging:
+    name: Build for Staging Deployment
+    runs-on: ubuntu-latest
+    needs: [validate-deployment, approval-gate]
+    if: always() && needs.validate-deployment.outputs.should-deploy == 'true' && (needs.pre-deployment-tests.result == 'success' || needs.pre-deployment-tests.result == 'skipped')
+    steps:
+      - name: Checkout specific commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-deployment.outputs.deploy-sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build applications
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_API_URL: https://api.staging.aws-community-hub.com
+
+      - name: CDK synth infrastructure
+        run: |
+          cd src/infrastructure
+          npm run build
+          npx cdk synth --all
+        env:
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          CDK_DEPLOY_ACCOUNT: ${{ secrets.STAGING_AWS_ACCOUNT_ID }}
+          ENVIRONMENT: ${{ env.ENVIRONMENT }}
+
+      - name: Archive staging build
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/backend-staging-${{ needs.validate-deployment.outputs.deploy-sha }}.tar.gz -C src/backend dist
+          tar -czf artifacts/frontend-staging-${{ needs.validate-deployment.outputs.deploy-sha }}.tar.gz -C src/frontend .next public
+          tar -czf artifacts/infrastructure-staging-${{ needs.validate-deployment.outputs.deploy-sha }}.tar.gz -C src/infrastructure cdk.out
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload staging artifacts
+        run: |
+          aws s3 cp artifacts/ s3://${{ env.S3_BUCKET }}/builds/${{ needs.validate-deployment.outputs.deploy-sha }}/ --recursive
+          aws s3 cp artifacts/ s3://${{ env.S3_BUCKET }}/builds/staging-latest/ --recursive
+
+      - name: Cache build for deployment
+        uses: actions/cache@v3
+        with:
+          path: |
+            src/backend/dist
+            src/frontend/.next
+            src/infrastructure/cdk.out
+            artifacts/
+          key: deploy-staging-${{ needs.validate-deployment.outputs.deploy-sha }}
+
+  deploy-staging-infrastructure:
+    name: Deploy Staging Infrastructure
+    runs-on: ubuntu-latest
+    needs: [validate-deployment, build-for-staging]
+    if: always() && needs.validate-deployment.outputs.should-deploy == 'true' && needs.build-for-staging.result == 'success'
+    environment:
+      name: staging-infrastructure
+      url: https://staging.aws-community-hub.com
+    steps:
+      - name: Checkout specific commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-deployment.outputs.deploy-sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore build cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            src/backend/dist
+            src/frontend/.next
+            src/infrastructure/cdk.out
+            artifacts/
+          key: deploy-staging-${{ needs.validate-deployment.outputs.deploy-sha }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy infrastructure to staging
+        run: |
+          cd src/infrastructure
+          npm run build
+          npx cdk deploy --all --require-approval never --outputs-file staging-outputs.json
+        env:
+          CDK_DEPLOY_ACCOUNT: ${{ secrets.STAGING_AWS_ACCOUNT_ID }}
+          CDK_DEPLOY_REGION: ${{ env.AWS_REGION }}
+          ENVIRONMENT: ${{ env.ENVIRONMENT }}
+
+      - name: Upload CDK outputs
+        run: |
+          cd src/infrastructure
+          if [ -f staging-outputs.json ]; then
+            aws s3 cp staging-outputs.json s3://${{ env.S3_BUCKET }}/configs/staging/cdk-outputs.json
+          fi
+
+  deploy-staging-applications:
+    name: Deploy Staging Applications
+    runs-on: ubuntu-latest
+    needs: [validate-deployment, deploy-staging-infrastructure]
+    if: always() && needs.validate-deployment.outputs.should-deploy == 'true' && needs.deploy-staging-infrastructure.result == 'success'
+    environment:
+      name: staging
+      url: https://staging.aws-community-hub.com
+    steps:
+      - name: Checkout specific commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-deployment.outputs.deploy-sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get CDK outputs
+        run: |
+          aws s3 cp s3://${{ env.S3_BUCKET }}/configs/staging/cdk-outputs.json cdk-outputs.json
+
+      - name: Deploy applications to staging
+        run: |
+          chmod +x scripts/deploy.sh
+          ./scripts/deploy.sh staging ${{ needs.validate-deployment.outputs.deploy-sha }}
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          S3_ARTIFACTS_BUCKET: ${{ env.S3_BUCKET }}
+
+  post-deployment-tests:
+    name: Staging Post-deployment Tests
+    runs-on: ubuntu-latest
+    needs: [validate-deployment, deploy-staging-applications]
+    if: always() && needs.validate-deployment.outputs.should-deploy == 'true' && needs.deploy-staging-applications.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-deployment.outputs.deploy-sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get application URL
+        run: |
+          aws s3 cp s3://${{ env.S3_BUCKET }}/configs/staging/cdk-outputs.json cdk-outputs.json
+          APP_URL=$(jq -r '.["aws-community-hub-staging"].AppUrl' cdk-outputs.json)
+          echo "STAGING_URL=$APP_URL" >> $GITHUB_ENV
+          echo "Staging URL: $APP_URL"
+
+      - name: Wait for deployment readiness
+        run: |
+          echo "Waiting for application to be ready..."
+          sleep 60
+          
+          # Wait up to 5 minutes for the app to be ready
+          for i in {1..10}; do
+            if curl -f -s "${{ env.STAGING_URL }}/health" > /dev/null; then
+              echo "✅ Application is ready"
+              break
+            fi
+            echo "Waiting for application... ($i/10)"
+            sleep 30
+          done
+
+      - name: Run smoke tests
+        run: |
+          echo "🧪 Running smoke tests against staging environment..."
+          
+          # Basic health check
+          curl -f "${{ env.STAGING_URL }}/health"
+          echo "✅ Health check passed"
+          
+          # API availability check
+          curl -f "${{ env.STAGING_URL }}/api/health"
+          echo "✅ API health check passed"
+          
+          # Authentication endpoint check
+          curl -f -s "${{ env.STAGING_URL }}/api/auth/config" > /dev/null
+          echo "✅ Authentication config accessible"
+
+      - name: Run performance tests
+        run: |
+          echo "⚡ Running basic performance tests..."
+          
+          # Basic response time test
+          RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' "${{ env.STAGING_URL }}")
+          echo "Response time: ${RESPONSE_TIME}s"
+          
+          # Fail if response time is > 5 seconds
+          if (( $(echo "$RESPONSE_TIME > 5.0" | bc -l) )); then
+            echo "❌ Response time too slow: ${RESPONSE_TIME}s"
+            exit 1
+          fi
+          
+          echo "✅ Performance test passed"
+
+  notify-staging-deployment:
+    name: Staging Deployment Notifications
+    runs-on: ubuntu-latest
+    needs: [validate-deployment, deploy-staging-applications, post-deployment-tests]
+    if: always() && needs.validate-deployment.outputs.should-deploy == 'true'
+    steps:
+      - name: Determine final status
+        id: status
+        run: |
+          if [[ "${{ needs.deploy-staging-applications.result }}" == "success" && ("${{ needs.post-deployment-tests.result }}" == "success" || "${{ needs.post-deployment-tests.result }}" == "skipped") ]]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=✅ Staging deployment successful" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Staging deployment failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update deployment status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deploymentId = ${{ needs.validate-deployment.outputs.deployment-id || 0 }};
+            if (deploymentId) {
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deploymentId,
+                state: '${{ steps.status.outputs.status }}',
+                description: '${{ steps.status.outputs.message }}',
+                environment_url: 'https://staging.aws-community-hub.com'
+              });
+            }
+
+      - name: Notify deployment team
+        run: |
+          echo "📢 Staging Deployment Notification"
+          echo "Status: ${{ steps.status.outputs.status }}"
+          echo "Commit: ${{ needs.validate-deployment.outputs.deploy-sha }}"
+          echo "Reason: ${{ github.event.inputs.deployment_reason }}"
+          echo "Deployed by: ${{ github.actor }}"
+          echo "Environment: https://staging.aws-community-hub.com"

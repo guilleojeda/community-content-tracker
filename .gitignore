@@ -26,12 +26,13 @@ hive-mind-prompt-*.txt
 # Environment variables
 .env
 .env.local
-.env.development
 .env.development.local
 .env.test
 .env.test.local
 .env.production
 .env.production.local
+
+# Keep .env.development for AI agents (local dev config only)
 
 # Dependencies
 node_modules/

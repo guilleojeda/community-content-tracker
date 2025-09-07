@@ -1,0 +1,431 @@
+name: CI - Pull Request Validation
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+      - "LICENSE"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+  CACHE_DEPENDENCY_PATH: '**/package-lock.json'
+
+jobs:
+  setup:
+    name: Setup and Cache
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache-keys.outputs.node-modules }}
+      has-infrastructure-changes: ${{ steps.changes.outputs.infrastructure }}
+      has-backend-changes: ${{ steps.changes.outputs.backend }}
+      has-frontend-changes: ${{ steps.changes.outputs.frontend }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            infrastructure:
+              - 'src/infrastructure/**'
+              - 'cdk.json'
+            backend:
+              - 'src/backend/**'
+              - 'src/shared/**'
+            frontend:
+              - 'src/frontend/**'
+              - 'src/shared/**'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.CACHE_DEPENDENCY_PATH }}
+
+      - name: Generate cache keys
+        id: cache-keys
+        run: |
+          echo "node-modules=${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}" >> $GITHUB_OUTPUT
+
+      - name: Cache node modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            src/*/node_modules
+          key: ${{ steps.cache-keys.outputs.node-modules }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+  lint:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    needs: setup
+    if: always() && needs.setup.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.CACHE_DEPENDENCY_PATH }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            src/*/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Check code formatting with Prettier
+        run: npx prettier --check "**/*.{js,ts,tsx,json,md,yml,yaml}"
+
+      - name: Run TypeScript type checking
+        run: npm run typecheck
+
+  test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: always() && needs.setup.result == 'success'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.CACHE_DEPENDENCY_PATH }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            src/*/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests with coverage
+        run: npm run test -- --coverage --ci --watchAll=false --passWithNoTests
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+
+  security-scan:
+    name: Security & Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: setup
+    if: always() && needs.setup.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.CACHE_DEPENDENCY_PATH }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            src/*/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+
+      - name: Run Snyk security scan
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+  cdk-validation:
+    name: CDK Infrastructure Validation
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.has-infrastructure-changes == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.CACHE_DEPENDENCY_PATH }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            src/*/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: CDK synth validation
+        run: |
+          cd src/infrastructure
+          npm run build
+          npx cdk synth --all
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCOUNT_ID: '123456789012'  # Dummy account for synth validation
+
+      - name: CDK diff (dry-run)
+        run: |
+          cd src/infrastructure
+          npx cdk diff --all || true
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCOUNT_ID: '123456789012'
+
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: [setup, lint, test]
+    if: always() && needs.setup.result == 'success' && needs.lint.result == 'success' && needs.test.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.CACHE_DEPENDENCY_PATH }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            src/*/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all packages
+        run: npm run build
+
+      - name: Cache build artifacts
+        uses: actions/cache@v3
+        with:
+          path: |
+            src/backend/dist
+            src/frontend/.next
+            src/infrastructure/cdk.out
+          key: build-${{ github.sha }}
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [setup, build]
+    if: always() && needs.setup.result == 'success' && needs.build.result == 'success'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: integration_test_password
+          POSTGRES_USER: integration_test_user
+          POSTGRES_DB: integration_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.CACHE_DEPENDENCY_PATH }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            src/*/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Restore build artifacts
+        uses: actions/cache@v3
+        with:
+          path: |
+            src/backend/dist
+            src/frontend/.next
+            src/infrastructure/cdk.out
+          key: build-${{ github.sha }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run database migrations
+        run: npm run db:migrate
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://integration_test_user:integration_test_password@localhost:5432/integration_test_db
+
+      - name: Run integration tests
+        run: |
+          # Run backend integration tests
+          cd src/backend
+          npm run test -- --testPathPattern=integration --ci --watchAll=false
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://integration_test_user:integration_test_password@localhost:5432/integration_test_db
+
+  validate-pr:
+    name: PR Validation Summary
+    runs-on: ubuntu-latest
+    needs: [setup, lint, test, security-scan, build, integration-tests]
+    if: always()
+    steps:
+      - name: Check all jobs status
+        run: |
+          echo "Setup: ${{ needs.setup.result }}"
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Test: ${{ needs.test.result }}"
+          echo "Security: ${{ needs.security-scan.result }}"
+          echo "Build: ${{ needs.build.result }}"
+          echo "Integration: ${{ needs.integration-tests.result }}"
+          
+          if [[ "${{ needs.setup.result }}" == "failure" || "${{ needs.lint.result }}" == "failure" || "${{ needs.test.result }}" == "failure" || "${{ needs.build.result }}" == "failure" || "${{ needs.integration-tests.result }}" == "failure" ]]; then
+            echo "❌ PR validation failed"
+            exit 1
+          else
+            echo "✅ PR validation passed"
+          fi
+
+      - name: Comment PR status
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && comment.body.includes('🤖 CI Pipeline Status')
+            );
+            
+            const status = '${{ needs.setup.result }}' === 'success' && 
+                          '${{ needs.lint.result }}' === 'success' && 
+                          '${{ needs.test.result }}' === 'success' && 
+                          '${{ needs.build.result }}' === 'success' && 
+                          '${{ needs.integration-tests.result }}' === 'success' ? '✅ PASSED' : '❌ FAILED';
+            
+            const body = `🤖 CI Pipeline Status: ${status}
+            
+            | Stage | Status |
+            |-------|--------|
+            | Setup | ${{ needs.setup.result == 'success' && '✅' || '❌' }} ${{ needs.setup.result }} |
+            | Lint | ${{ needs.lint.result == 'success' && '✅' || '❌' }} ${{ needs.lint.result }} |
+            | Tests | ${{ needs.test.result == 'success' && '✅' || '❌' }} ${{ needs.test.result }} |
+            | Security | ${{ needs.security-scan.result == 'success' && '✅' || needs.security-scan.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.security-scan.result }} |
+            | Build | ${{ needs.build.result == 'success' && '✅' || '❌' }} ${{ needs.build.result }} |
+            | Integration | ${{ needs.integration-tests.result == 'success' && '✅' || '❌' }} ${{ needs.integration-tests.result }} |
+            
+            Pipeline run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }

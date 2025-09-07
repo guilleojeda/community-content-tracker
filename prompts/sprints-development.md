@@ -1,3 +1,4 @@
+With [X] = 1
 You are implementing Sprint [X] of the AWS Community Content Hub.
 
 ## Project Documentation - READ THESE FIRST
@@ -74,6 +75,6 @@ Sprint [X] is complete when:
 
 ## Your Assignment
 
-Implement all tasks in Sprint [X] following TDD methodology. Ensure each task's acceptance criteria are fully met before moving to the next. Document any assumptions or decisions made.
+Implement all tasks in Sprint [X] following TDD methodology. Ensure each task's acceptance criteria are fully met before moving to the next. Document any assumptions or decisions made. Only implement Sprint [X], not any other Sprints.
 
 Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements.
