@@ -1,109 +1,79 @@
-With [X] = 1
-You are implementing Sprint [X] of the AWS Community Content Hub using claude-flow orchestration.
+You are implementing Sprint [X] of the AWS Community Content Hub.
 
-## Project Context Loading
-Before any implementation, read these project documents:
-1. docs/PRD.md - Product requirements
-2. docs/ADRs.md - Architecture decisions  
-3. docs/plan/sprint_[X].md - Your sprint tasks
+## Project Documentation - READ THESE FIRST
+
+1. docs/PRD.md - Product requirements (understand WHAT we're building)
+2. docs/ADRs.md - Architecture decisions (understand HOW we're building it)
+3. docs/plan/sprint_[X].md - Your sprint tasks with acceptance criteria
 4. src/shared/types/index.ts - Type definitions (USE THESE EXACTLY)
-5. docs/api-errors.md - Error standards
+5. docs/api-errors.md - Error handling standards
 6. docs/implementation-notes.md - Critical patterns and AWS-specific rules
-7. .env.template - Required environment variables
+7. docs/PERFORMANCE_TARGETS.md - Performance requirements
+8. .env.development - Local development configuration
 
-## Sprint Execution with Claude-Flow
+## Sprint [X] Implementation
 
-### Phase 1: Initialize Sprint
-Single message with all setup:
-- npx claude-flow sparc tdd 'Sprint [X] - AWS Community Content Hub'
-- npx claude-flow hooks session-start --session-id sprint-[X]
-- mkdir -p src/{lambdas,repositories,services} tests docs/sprint-[X]
+Read docs/plan/sprint_[X].md to understand:
+- Sprint goal
+- All tasks and their dependencies
+- Acceptance criteria for each task
+- Required test coverage (80% minimum)
 
-### Phase 2: Parallel Task Implementation
-For Sprint [X], spawn ALL task agents concurrently using Claude Code's Task tool:
-
-[Single Message - Complete Sprint Execution]:
-  // Read sprint_[X].md to determine how many tasks exist, then spawn agents for each
-  // Example pattern - adjust based on actual tasks in sprint_[X].md:
-  Task('Task [X].1 Agent', 'Read sprint_[X].md Task [X].1. Write tests FIRST in /tests. Implement in /src. Follow acceptance criteria exactly. Use types from src/shared/types/index.ts', 'tdd-london-swarm')
-  Task('Task [X].2 Agent', 'Read sprint_[X].md Task [X].2. Check Task [X].1 completion in memory. Write tests, then implement. Store progress in memory.', 'coder')
-  Task('Task [X].3 Agent', 'Read sprint_[X].md Task [X].3. Verify dependencies via memory. TDD implementation. Use hooks for coordination.', 'sparc-coder')
-  // Continue for all tasks in the sprint
-  
-  // Batch all todos - create one todo per acceptance criterion across ALL tasks
-  TodoWrite { todos: [
-    // Generate todos based on the tasks in sprint_[X].md
-  ]}
-  
-  // Run SPARC TDD for complex tasks
-  Bash 'npx claude-flow sparc tdd \"Sprint [X] tasks implementation\"'
-
-### Phase 3: Sprint Validation
-After ALL tasks complete:
-[Single Message - Validation]:
-  Task('Validator', 'Run npm test. Check all acceptance criteria from sprint_[X].md. Verify 80% coverage.', 'production-validator')
-  Task('Security Auditor', 'Run npm audit. Check for hardcoded values. Verify no AWS credentials in code.', 'security-manager')
-  Task('Performance Tester', 'Check against docs/PERFORMANCE_TARGETS.md. Test with load if applicable.', 'perf-analyzer')
+For each task in the sprint:
+1. Write tests FIRST (TDD is mandatory)
+2. Test files go in appropriate test directories
+3. Implementation goes in src/ directories
+4. Follow acceptance criteria exactly
+5. Use types from src/shared/types/index.ts without modification
 
 ## Critical Project Rules (AWS Community Content Hub Specific)
 
-These override any generic patterns:
-1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel
+1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel only
 2. NEVER deploy to AWS - Write CDK code but do not run cdk deploy
-3. USE LOCAL PostgreSQL - Connection string in .env.development
-4. ENFORCE visibility rules at the query level (private, aws_only, aws_community, public)
+3. USE LOCAL PostgreSQL at localhost:5432 (connection string in .env.development)
+4. ENFORCE visibility rules at query level: private, aws_only, aws_community, public
 5. USE exact types from src/shared/types/index.ts - no alternatives
 6. FOLLOW error format from docs/api-errors.md exactly
-7. GDPR compliance - implement data export and deletion for every user entity
+7. IMPLEMENT GDPR compliance - data export and deletion for every user entity
+8. NO hardcoded configuration - use environment variables
+9. USE connection pooling for all database access (never create per-request connections)
+10. RESPECT task dependencies - check previous task completion before starting dependent tasks
 
-## Task Dependencies & Coordination
+## Local Development Environment
 
-Each agent MUST check dependencies via memory:
-- npx claude-flow hooks memory-get --key sprint-[X]/task-Y/complete
+You are working in LOCAL DEVELOPMENT mode:
+- PostgreSQL is running at localhost:5432 (database: content_hub_dev)
+- Use mock values from .env.development for Cognito and AWS services
+- Write Lambda functions as regular TypeScript modules in src/backend/lambdas/
+- Write CDK infrastructure code but DO NOT deploy it
+- Document manual deployment steps in docs/deployment-instructions.md
+- Run 'npm test' to verify your implementation
+- Run 'cdk synth' to validate CDK code (but not 'cdk deploy')
 
-Store completion status:
-- npx claude-flow hooks memory-set --key sprint-[X]/task-[X].Y/complete --value true
+## Code Organization
 
-## Acceptance Criteria Validation
+- src/backend/ - Lambda functions, repositories, services
+- src/frontend/ - Next.js application
+- src/shared/types/ - Shared TypeScript types (read-only, do not modify)
+- src/infrastructure/ - CDK infrastructure code
+- tests/ - All test files
+- docs/ - Documentation
 
-For EACH task, the agent MUST:
-1. Read the exact acceptance criteria from docs/plan/sprint_[X].md
-2. Create one test per criterion
-3. Implement until test passes
-4. Store validation in memory with key: sprint-[X]/task-[X].Y/criteria-N
+## Success Criteria
 
-## Local Development Mode
-
-IMPORTANT: Work in LOCAL DEVELOPMENT mode only:
-- Use mock AWS services where needed
-- Use local PostgreSQL (should be running at localhost:5432)
-- Do NOT attempt AWS deployments
-- Write CDK code but do NOT deploy
-- Document deployment steps in docs/deployment-instructions.md
-
-## Sprint Completion Checklist
-
-The final validation agent checks:
-- All task completion flags in memory
-- npm test passes with >80% coverage
-- No npm audit vulnerabilities
-- Database migrations successful (npm run db:migrate)
-- All acceptance criteria validated
-- CDK synth runs successfully (but no deploy) if infrastructure tasks present
-- Performance targets met for implemented features
+Sprint [X] is complete when:
+- All tasks from sprint_[X].md are implemented
+- All acceptance criteria are met
+- Test coverage is above 80%
+- npm test passes
+- npm run typecheck passes
+- No security vulnerabilities (npm audit)
+- CDK synth succeeds (if infrastructure tasks present)
+- Database migrations work locally
+- Performance targets are met (see docs/PERFORMANCE_TARGETS.md)
 
 ## Your Assignment
 
-Implement Sprint [X] as defined in docs/plan/sprint_[X].md
+Implement all tasks in Sprint [X] following TDD methodology. Ensure each task's acceptance criteria are fully met before moving to the next. Document any assumptions or decisions made.
 
-First, read the sprint file to understand:
-1. The sprint goal
-2. Number of tasks
-3. Task dependencies
-4. Acceptance criteria for each task
-
-Then spawn an agent for each task, ensuring dependencies are respected through memory coordination.
-
-Use claude-flow's parallel execution to complete ALL tasks concurrently while respecting dependencies. Each agent handles one task with full TDD implementation.
-
-Begin by reading sprint_[X].md, then spawning all task agents in a SINGLE message.
+Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements.
