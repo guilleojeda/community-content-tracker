@@ -1,4 +1,3 @@
-
 # Claude Flow generated files
 .claude/settings.local.json
 .mcp.json
@@ -23,3 +22,122 @@ claude-flow
 claude-flow.bat
 claude-flow.ps1
 hive-mind-prompt-*.txt
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Production builds
+dist/
+build/
+*.tsbuildinfo
+
+# Next.js
+.next/
+out/
+.vercel
+
+# Testing
+coverage/
+*.lcov
+.nyc_output
+test-results/
+jest-results.json
+
+# CDK
+cdk.out/
+.cdk.staging/
+*.js
+!jest.config.js
+!next.config.js
+*.d.ts
+!*.config.d.ts
+!src/**/*.d.ts
+
+# AWS
+.aws-sam/
+samconfig.toml
+aws-exports.js
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# Debug
+debug/
+*.pid
+*.seed
+*.pid.lock
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Mac specific
+*.icloud
+
+# Security - NEVER commit these
+*.pem
+*.key
+*.cert
+*.crt
+private-key.json
+credentials.json
+secrets.json
+
+# Workspace specific
+src/*/node_modules/
+src/*/dist/
+src/*/build/
+src/*/.next/
