@@ -1,3 +1,4 @@
+With [X] = 1
 You are implementing Sprint [X] of the AWS Community Content Hub using claude-flow orchestration.
 
 ## Project Context Loading
