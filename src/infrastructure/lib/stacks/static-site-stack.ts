@@ -4,6 +4,9 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 
 export interface StaticSiteStackProps extends cdk.StackProps {
@@ -48,6 +51,10 @@ export class StaticSiteStack extends cdk.Stack {
 
   constructor(scope: Construct, id: string, props?: StaticSiteStackProps) {
     super(scope, id, props);
+
+    // Add cost tags
+    cdk.Tags.of(this).add('Project', 'community-content-hub');
+    cdk.Tags.of(this).add('Environment', props?.environment || 'dev');
 
     const environment = props?.environment || 'dev';
     const isProd = environment === 'prod';
@@ -210,7 +217,7 @@ export class StaticSiteStack extends cdk.Stack {
     // Configure CloudFront distribution
     const distributionConfig: cloudfront.DistributionProps = {
       defaultBehavior: {
-        origin: new origins.S3Origin(this.bucket, {
+        origin: new origins.S3BucketOrigin(this.bucket, {
           originAccessIdentity: this.originAccessIdentity,
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -220,7 +227,7 @@ export class StaticSiteStack extends cdk.Stack {
       },
       additionalBehaviors: {
         '/api/*': {
-          origin: new origins.S3Origin(this.bucket, {
+          origin: new origins.S3BucketOrigin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -228,7 +235,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: true,
         },
         '*.js': {
-          origin: new origins.S3Origin(this.bucket, {
+          origin: new origins.S3BucketOrigin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -237,7 +244,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: true,
         },
         '*.css': {
-          origin: new origins.S3Origin(this.bucket, {
+          origin: new origins.S3BucketOrigin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -246,7 +253,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: true,
         },
         '*.woff*': {
-          origin: new origins.S3Origin(this.bucket, {
+          origin: new origins.S3BucketOrigin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -254,7 +261,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: false, // Fonts are already compressed
         },
         '*.ico': {
-          origin: new origins.S3Origin(this.bucket, {
+          origin: new origins.S3BucketOrigin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -262,6 +269,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: true,
         },
       },
+      defaultRootObject: 'index.html',
       errorResponses: [
         {
           httpStatus: 403,
@@ -298,10 +306,59 @@ export class StaticSiteStack extends cdk.Stack {
     // Create CloudFront distribution
     this.distribution = new cloudfront.Distribution(this, 'Distribution', distributionConfig);
 
+    // Create Route53 records if domain name is provided and we have account/region
+    if (props?.domainName && this.account !== cdk.Aws.ACCOUNT_ID && this.region !== cdk.Aws.REGION) {
+      try {
+        const hostedZone = route53.HostedZone.fromLookup(this, 'Zone', {
+          domainName: props.domainName.split('.').slice(-2).join('.'),
+        });
+
+        // Create A record
+        new route53.ARecord(this, 'SiteARecord', {
+          zone: hostedZone,
+          recordName: props.domainName,
+          target: route53.RecordTarget.fromAlias(
+            new route53targets.CloudFrontTarget(this.distribution)
+          ),
+        });
+
+        // Create AAAA record for IPv6
+        new route53.AaaaRecord(this, 'SiteAAAARecord', {
+          zone: hostedZone,
+          recordName: props.domainName,
+          target: route53.RecordTarget.fromAlias(
+            new route53targets.CloudFrontTarget(this.distribution)
+          ),
+        });
+      } catch (error) {
+        // Skip Route53 records if hosted zone cannot be looked up (e.g., in unit tests)
+        console.log('Skipping Route53 records creation - hosted zone lookup requires account/region');
+      }
+    }
+
     // Set website URL
     this.websiteUrl = props?.domainName 
       ? `https://${props.domainName}`
       : `https://${this.distribution.distributionDomainName}`;
+
+    // Create SSM parameters for configuration
+    new ssm.StringParameter(this, 'BucketNameParameter', {
+      parameterName: `/${environment}/static-site/bucket-name`,
+      stringValue: this.bucket.bucketName,
+      description: 'S3 bucket name for static site',
+    });
+
+    new ssm.StringParameter(this, 'DistributionIdParameter', {
+      parameterName: `/${environment}/static-site/distribution-id`,
+      stringValue: this.distribution.distributionId,
+      description: 'CloudFront distribution ID',
+    });
+
+    new ssm.StringParameter(this, 'DistributionDomainParameter', {
+      parameterName: `/${environment}/static-site/distribution-domain`,
+      stringValue: this.distribution.distributionDomainName,
+      description: 'CloudFront distribution domain name',
+    });
 
     // Add tags for cost tracking
     const tags = {
@@ -319,17 +376,17 @@ export class StaticSiteStack extends cdk.Stack {
     });
 
     // CloudFormation outputs
-    new cdk.CfnOutput(this, 'S3BucketName', {
+    new cdk.CfnOutput(this, 'BucketName', {
       value: this.bucket.bucketName,
       description: 'S3 bucket name for static site hosting',
     });
 
-    new cdk.CfnOutput(this, 'CloudFrontDistributionId', {
+    new cdk.CfnOutput(this, 'DistributionId', {
       value: this.distribution.distributionId,
-      description: 'CloudFront distribution ID',
+      description: 'CloudFront distribution ID for cache invalidation',
     });
 
-    new cdk.CfnOutput(this, 'CloudFrontDomainName', {
+    new cdk.CfnOutput(this, 'DistributionDomainName', {
       value: this.distribution.distributionDomainName,
       description: 'CloudFront distribution domain name',
     });

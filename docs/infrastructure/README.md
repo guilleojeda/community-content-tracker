@@ -2,7 +2,7 @@
 
 This directory contains the AWS CDK infrastructure code for the Community Content Tracker application, implementing Sprint 2: Authentication & Data Layer requirements.
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 The infrastructure consists of three main stacks deployed in dependency order:
 
@@ -40,7 +40,7 @@ graph TB
     WEB --> API
 ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 src/infrastructure/
@@ -58,7 +58,7 @@ src/infrastructure/
 └── README.md                      # This file
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -84,7 +84,7 @@ src/infrastructure/
    ./scripts/deploy.sh status dev
    ```
 
-## 🌍 Environments
+## Environments
 
 ### Development (`dev`)
 - Minimal resources for cost optimization
@@ -105,7 +105,7 @@ src/infrastructure/
 - 30-day log retention
 - WAF protection
 
-## 📋 Stack Details
+## Stack Details
 
 ### DatabaseStack
 
@@ -174,7 +174,7 @@ src/infrastructure/
     /content/
 ```
 
-## 🔒 Security Features
+## Security Features
 
 ### Authentication & Authorization
 - Cognito User Pool with MFA support
@@ -200,7 +200,7 @@ src/infrastructure/
 - Cognito identity roles for authenticated users
 - Admin roles with elevated permissions
 
-## 🚦 Deployment Commands
+## Deployment Commands
 
 ### Basic Operations
 ```bash
@@ -244,7 +244,7 @@ cdk deploy CommunityTracker-Database-dev --context environment=dev
 cdk synth --context environment=prod
 ```
 
-## 📊 Monitoring & Observability
+## Monitoring & Observability
 
 ### CloudWatch Logs
 - API Gateway access logs with structured JSON
@@ -263,7 +263,7 @@ cdk synth --context environment=prod
 - RDS performance metrics
 - Custom application metrics
 
-## 💰 Cost Optimization
+## Cost Optimization
 
 ### Development Environment
 - t3.micro RDS instance (~$13/month)
@@ -277,7 +277,7 @@ cdk synth --context environment=prod
 - Reserved instances for predictable workloads
 - Cost allocation tags for tracking
 
-## 🔧 Configuration Management
+## Configuration Management
 
 ### Environment Variables
 Configuration is managed through:
@@ -301,7 +301,7 @@ Configuration is managed through:
       └── id               # API Gateway ID
 ```
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -347,7 +347,7 @@ Solution: Ensure AWS credentials have necessary permissions
    cdk synth --context environment=dev
    ```
 
-## 📈 Scaling Considerations
+## Scaling Considerations
 
 ### Database Scaling
 - Vertical scaling through instance size increases
@@ -367,7 +367,7 @@ Solution: Ensure AWS credentials have necessary permissions
 - DDoS protection with AWS Shield
 - Security monitoring and alerting
 
-## 🔄 CI/CD Integration
+## CI/CD Integration
 
 The infrastructure supports automated deployments through:
 
@@ -396,7 +396,7 @@ jobs:
           ./scripts/deploy.sh deploy ${{ env.ENVIRONMENT }}
 ```
 
-## 🤝 Contributing
+## Contributing
 
 1. Make changes to infrastructure code
 2. Test with `npm run typecheck`

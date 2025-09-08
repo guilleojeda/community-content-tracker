@@ -425,10 +425,10 @@ main() {
     # Cleanup
     cleanup "$artifacts_dir"
     
-    log_success "✅ Deployment to $ENVIRONMENT completed successfully!"
-    log_success "🌐 Application URL: ${APP_URL:-Not available}"
-    log_success "🔗 API URL: ${API_URL:-Not available}"
-    log_success "📦 Deployment ID: $TIMESTAMP"
+    log_success "Deployment to $ENVIRONMENT completed successfully!"
+    log_success "Application URL: ${APP_URL:-Not available}"
+    log_success "API URL: ${API_URL:-Not available}"
+    log_success "Deployment ID: $TIMESTAMP"
 }
 
 # Handle script interruption

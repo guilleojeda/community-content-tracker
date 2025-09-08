@@ -58,20 +58,20 @@ jobs:
           
           # Validate SHA format
           if [[ ! "$SHA" =~ ^[a-f0-9]{40}$ ]] && [[ ! "$SHA" =~ ^[a-f0-9]{7,40}$ ]]; then
-            echo "❌ Invalid SHA format: $SHA"
+            echo "Invalid SHA format: $SHA"
             exit 1
           fi
           
           # Validate SHA exists
           if ! git cat-file -e "$SHA^{commit}"; then
-            echo "❌ Commit not found: $SHA"
+            echo "Commit not found: $SHA"
             exit 1
           fi
           
           # Expand short SHA to full SHA
           FULL_SHA=$(git rev-parse "$SHA")
           echo "sha=$FULL_SHA" >> $GITHUB_OUTPUT
-          echo "✅ Valid commit SHA: $FULL_SHA"
+          echo "Valid commit SHA: $FULL_SHA"
 
       - name: Validate commit is from main branch
         run: |
@@ -79,9 +79,9 @@ jobs:
           
           # Check if commit is in main branch
           if git branch -r --contains "$SHA" | grep -q 'origin/main'; then
-            echo "✅ Commit is in main branch"
+            echo "Commit is in main branch"
           else
-            echo "❌ Commit is not in main branch - only main branch commits can be deployed to production"
+            echo "Commit is not in main branch - only main branch commits can be deployed to production"
             exit 1
           fi
 
@@ -91,7 +91,7 @@ jobs:
         run: |
           SHA="${{ steps.validate-sha.outputs.sha }}"
           
-          echo "🔍 Checking if commit was deployed to staging..."
+          echo "Checking if commit was deployed to staging..."
           
           # Configure AWS CLI
           aws configure set aws_access_key_id "${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}"
@@ -100,23 +100,23 @@ jobs:
           
           # Check if staging artifacts exist
           if aws s3 ls "s3://${{ secrets.STAGING_ARTIFACTS_BUCKET }}/builds/$SHA/" > /dev/null 2>&1; then
-            echo "✅ Commit was deployed to staging"
+            echo "Commit was deployed to staging"
             echo "validated=true" >> $GITHUB_OUTPUT
           else
-            echo "❌ Commit was not found in staging - deploy to staging first"
+            echo "Commit was not found in staging - deploy to staging first"
             echo "validated=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
       - name: Security and compliance validation
         run: |
-          echo "🛡️ Running security and compliance checks..."
+          echo "Running security and compliance checks..."
           
           # Check for security-related files
           SECURITY_FILES=(".github/workflows" "scripts" "src/infrastructure")
           for file in "${SECURITY_FILES[@]}"; do
             if git diff --name-only HEAD~5..HEAD | grep -q "$file"; then
-              echo "⚠️ Security-sensitive files changed in recent commits - extra scrutiny required"
+              echo "Security-sensitive files changed in recent commits - extra scrutiny required"
             fi
           done
           
@@ -124,12 +124,12 @@ jobs:
           REQUIRED_SECRETS=("PROD_AWS_ACCESS_KEY_ID" "PROD_AWS_SECRET_ACCESS_KEY" "PROD_AWS_ACCOUNT_ID" "PROD_ARTIFACTS_BUCKET")
           for secret_name in "${REQUIRED_SECRETS[@]}"; do
             if [[ -z "${!secret_name}" ]]; then
-              echo "❌ Missing required production secret: $secret_name"
+              echo "Missing required production secret: $secret_name"
               exit 1
             fi
           done
           
-          echo "✅ Security validation passed"
+          echo "Security validation passed"
         env:
           PROD_AWS_ACCESS_KEY_ID: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
           PROD_AWS_SECRET_ACCESS_KEY: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
@@ -141,16 +141,16 @@ jobs:
         run: |
           # Check deployment inputs
           if [[ -z "${{ github.event.inputs.deployment_reason }}" ]]; then
-            echo "❌ Deployment reason is required"
+            echo "Deployment reason is required"
             exit 1
           fi
           
           if [[ -z "${{ github.event.inputs.rollback_plan }}" ]]; then
-            echo "❌ Rollback plan is required"
+            echo "Rollback plan is required"
             exit 1
           fi
           
-          echo "✅ All validations passed"
+          echo "All validations passed"
           echo "should-deploy=true" >> $GITHUB_OUTPUT
 
       - name: Create production deployment
@@ -180,7 +180,7 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🚀 Production Deployment - ${new Date().toISOString().split('T')[0]}`,
+              title: `Production Deployment - ${new Date().toISOString().split('T')[0]}`,
               body: `## Production Deployment Request
               
 **Commit SHA:** \`${{ steps.validate-sha.outputs.sha }}\`
@@ -213,16 +213,16 @@ jobs:
     steps:
       - name: Business approval checkpoint
         run: |
-          echo "🏢 BUSINESS STAKEHOLDER APPROVAL REQUIRED"
+          echo "BUSINESS STAKEHOLDER APPROVAL REQUIRED"
           echo ""
-          echo "📋 Deployment Details:"
+          echo "Deployment Details:"
           echo "  - Commit: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
           echo "  - Reason: ${{ github.event.inputs.deployment_reason }}"
           echo "  - Rollback Plan: ${{ github.event.inputs.rollback_plan }}"
           echo "  - Requested by: ${{ github.actor }}"
           echo ""
-          echo "⚠️  This deployment will affect the production environment"
-          echo "⚠️  Business stakeholders must approve before proceeding"
+          echo "This deployment will affect the production environment"
+          echo "Business stakeholders must approve before proceeding"
 
   technical-approval:
     name: Technical Lead Approval
@@ -234,9 +234,9 @@ jobs:
     steps:
       - name: Technical approval checkpoint
         run: |
-          echo "🔧 TECHNICAL LEAD APPROVAL REQUIRED"
+          echo "TECHNICAL LEAD APPROVAL REQUIRED"
           echo ""
-          echo "🔍 Technical Review Checklist:"
+          echo "Technical Review Checklist:"
           echo "  - [ ] Code review completed"
           echo "  - [ ] Security assessment passed"
           echo "  - [ ] Performance impact assessed"
@@ -244,7 +244,7 @@ jobs:
           echo "  - [ ] Monitoring and alerting configured"
           echo "  - [ ] Rollback procedures verified"
           echo ""
-          echo "📋 Deployment Details:"
+          echo "Deployment Details:"
           echo "  - Commit: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
           echo "  - Environment: Production"
           echo "  - Maintenance Mode: ${{ github.event.inputs.maintenance_mode }}"
@@ -259,17 +259,17 @@ jobs:
     steps:
       - name: Final deployment approval
         run: |
-          echo "🚨 FINAL PRODUCTION DEPLOYMENT APPROVAL"
+          echo "FINAL PRODUCTION DEPLOYMENT APPROVAL"
           echo ""
-          echo "⚡ PRODUCTION DEPLOYMENT ABOUT TO START"
+          echo "PRODUCTION DEPLOYMENT ABOUT TO START"
           echo ""
-          echo "📊 Summary:"
+          echo "Summary:"
           echo "  - SHA: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
-          echo "  - Business Approved: ✅"
-          echo "  - Technical Approved: ✅"
+          echo "  - Business Approved"
+          echo "  - Technical Approved"
           echo "  - Staging Validated: ${{ needs.pre-production-validation.outputs.staging-validated == 'true' && '✅' || '⚠️ SKIPPED' }}"
           echo ""
-          echo "🚀 Proceeding with production deployment..."
+          echo "Proceeding with production deployment..."
 
   enable-maintenance-mode:
     name: Enable Maintenance Mode
@@ -288,7 +288,7 @@ jobs:
 
       - name: Enable maintenance mode
         run: |
-          echo "🚧 Enabling maintenance mode..."
+          echo "Enabling maintenance mode..."
           
           # Update load balancer to show maintenance page
           # This is a placeholder - implement based on your architecture
@@ -298,7 +298,7 @@ jobs:
             --type "String" \
             --overwrite
           
-          echo "✅ Maintenance mode enabled"
+          echo "Maintenance mode enabled"
           echo "Users will see maintenance page during deployment"
 
   build-production:
@@ -415,7 +415,7 @@ jobs:
           cd src/infrastructure
           npm run build
           
-          echo "🚀 Deploying infrastructure to production..."
+          echo "Deploying infrastructure to production..."
           npx cdk deploy --all --require-approval never --outputs-file prod-outputs.json
         env:
           CDK_DEPLOY_ACCOUNT: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
@@ -479,7 +479,7 @@ jobs:
 
       - name: Disable maintenance mode
         run: |
-          echo "🚧 Disabling maintenance mode..."
+          echo "Disabling maintenance mode..."
           
           aws ssm put-parameter \
             --name "/aws-community-hub/production/maintenance-mode" \
@@ -487,7 +487,7 @@ jobs:
             --type "String" \
             --overwrite
           
-          echo "✅ Maintenance mode disabled"
+          echo "Maintenance mode disabled"
           echo "Production site is now live!"
 
   production-health-checks:
@@ -512,13 +512,13 @@ jobs:
 
       - name: Wait for deployment readiness
         run: |
-          echo "⏳ Waiting for production deployment to be ready..."
+          echo "Waiting for production deployment to be ready..."
           sleep 120
           
           # Wait up to 10 minutes for the app to be ready
           for i in {1..20}; do
             if curl -f -s "${{ env.PROD_URL }}/health" > /dev/null; then
-              echo "✅ Production application is ready"
+              echo "Production application is ready"
               break
             fi
             echo "Waiting for production application... ($i/20)"
@@ -527,27 +527,27 @@ jobs:
 
       - name: Run comprehensive health checks
         run: |
-          echo "🏥 Running comprehensive production health checks..."
+          echo "Running comprehensive production health checks..."
           
           # Basic health check
           curl -f "${{ env.PROD_URL }}/health"
-          echo "✅ Basic health check passed"
+          echo "Basic health check passed"
           
           # API health check
           curl -f "${{ env.PROD_URL }}/api/health"
-          echo "✅ API health check passed"
+          echo "API health check passed"
           
           # Database connectivity check
           curl -f "${{ env.PROD_URL }}/api/health/database"
-          echo "✅ Database connectivity check passed"
+          echo "Database connectivity check passed"
           
           # Authentication service check
           curl -f -s "${{ env.PROD_URL }}/api/auth/config" > /dev/null
-          echo "✅ Authentication service check passed"
+          echo "Authentication service check passed"
 
       - name: Performance validation
         run: |
-          echo "⚡ Running production performance validation..."
+          echo "Running production performance validation..."
           
           # Response time test
           RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' "${{ env.PROD_URL }}")
@@ -555,11 +555,11 @@ jobs:
           
           # Fail if response time is > 3 seconds in production
           if (( $(echo "$RESPONSE_TIME > 3.0" | bc -l) )); then
-            echo "❌ Production response time too slow: ${RESPONSE_TIME}s"
+            echo "Production response time too slow: ${RESPONSE_TIME}s"
             exit 1
           fi
           
-          echo "✅ Production performance validation passed"
+          echo "Production performance validation passed"
 
   post-deployment-notification:
     name: Production Deployment Complete
@@ -572,10 +572,10 @@ jobs:
         run: |
           if [[ "${{ needs.deploy-production-applications.result }}" == "success" && "${{ needs.production-health-checks.result }}" == "success" ]]; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "message=🚀 PRODUCTION DEPLOYMENT SUCCESSFUL" >> $GITHUB_OUTPUT
+            echo "message=PRODUCTION DEPLOYMENT SUCCESSFUL" >> $GITHUB_OUTPUT
           else
             echo "status=failure" >> $GITHUB_OUTPUT
-            echo "message=❌ PRODUCTION DEPLOYMENT FAILED" >> $GITHUB_OUTPUT
+            echo "message=PRODUCTION DEPLOYMENT FAILED" >> $GITHUB_OUTPUT
           fi
 
       - name: Update deployment status
@@ -596,7 +596,7 @@ jobs:
 
       - name: Send production deployment notifications
         run: |
-          echo "📢 PRODUCTION DEPLOYMENT NOTIFICATION"
+          echo "PRODUCTION DEPLOYMENT NOTIFICATION"
           echo "Status: ${{ steps.status.outputs.status }}"
           echo "Commit: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
           echo "Reason: ${{ github.event.inputs.deployment_reason }}"
@@ -623,7 +623,7 @@ jobs:
               repo: context.repo.repo,
               tag_name: releaseTag,
               name: `Production Release - ${new Date().toISOString().split('T')[0]}`,
-              body: `🎉 **Successfully Deployed to Production**
+              body: `**Successfully Deployed to Production**
 
 **Deployment Details:**
 - **Commit:** ${{ needs.pre-production-validation.outputs.deploy-sha }}
@@ -632,8 +632,8 @@ jobs:
 - **Rollback Plan:** ${{ github.event.inputs.rollback_plan }}
 
 **Environment:** https://aws-community-hub.com
-**Health Checks:** ✅ All passed
-**Performance:** ✅ Within acceptable limits
+**Health Checks:** All passed
+**Performance:** Within acceptable limits
 
 This release has been tested in staging and approved by business stakeholders and technical leads.`,
               draft: false,

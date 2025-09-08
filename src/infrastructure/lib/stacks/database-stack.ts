@@ -4,6 +4,7 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 import { PgVectorEnabler } from '../constructs/pgvector-enabler';
 
@@ -50,19 +51,23 @@ export class DatabaseStack extends cdk.Stack {
   public readonly cluster: rds.DatabaseCluster;
   public readonly proxy: rds.DatabaseProxy;
   public readonly databaseSecret: secretsmanager.Secret;
-  public readonly bastionHost: ec2.Instance;
+  public readonly bastionHost?: ec2.Instance;
   public readonly clusterEndpoint: string;
   public readonly proxyEndpoint: string;
 
   constructor(scope: Construct, id: string, props?: DatabaseStackProps) {
     super(scope, id, props);
 
+    // Add cost tags
+    cdk.Tags.of(this).add('Project', 'community-content-hub');
+    cdk.Tags.of(this).add('Environment', props?.environment || 'dev');
+
     const environment = props?.environment || 'dev';
     const isProd = environment === 'prod';
 
     // Create VPC with public and private subnets
     this.vpc = new ec2.Vpc(this, 'CommunityContentVpc', {
-      cidr: '10.0.0.0/16',
+      ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
       maxAzs: 2,
       enableDnsHostnames: true,
       enableDnsSupport: true,
@@ -84,7 +89,7 @@ export class DatabaseStack extends cdk.Stack {
     // Create security group for Aurora cluster
     const databaseSecurityGroup = new ec2.SecurityGroup(this, 'DatabaseSecurityGroup', {
       vpc: this.vpc,
-      description: 'Security group for Aurora Serverless cluster',
+      description: 'Security group for Aurora database cluster',
       allowAllOutbound: true,
     });
 
@@ -102,19 +107,22 @@ export class DatabaseStack extends cdk.Stack {
       allowAllOutbound: true,
     });
 
-    // Create security group for bastion host
-    const bastionSecurityGroup = new ec2.SecurityGroup(this, 'BastionSecurityGroup', {
-      vpc: this.vpc,
-      description: 'Security group for bastion host',
-      allowAllOutbound: true,
-    });
+    // Create security group for bastion host (only in non-prod)
+    let bastionSecurityGroup: ec2.SecurityGroup | undefined;
+    if (!isProd) {
+      bastionSecurityGroup = new ec2.SecurityGroup(this, 'BastionSecurityGroup', {
+        vpc: this.vpc,
+        description: 'Security group for bastion host',
+        allowAllOutbound: true,
+      });
 
-    // Allow SSH access to bastion host
-    bastionSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(22),
-      'Allow SSH access'
-    );
+      // Allow SSH access to bastion host
+      bastionSecurityGroup.addIngressRule(
+        ec2.Peer.anyIpv4(),
+        ec2.Port.tcp(22),
+        'Allow SSH access'
+      );
+    }
 
     // Allow Lambda and Proxy to connect to database
     databaseSecurityGroup.addIngressRule(
@@ -130,7 +138,7 @@ export class DatabaseStack extends cdk.Stack {
     );
 
     // Allow bastion host to connect to database (dev only)
-    if (!isProd) {
+    if (!isProd && bastionSecurityGroup) {
       databaseSecurityGroup.addIngressRule(
         bastionSecurityGroup,
         ec2.Port.tcp(5432),
@@ -200,24 +208,25 @@ export class DatabaseStack extends cdk.Stack {
       databaseName: 'community_content',
     });
 
-    // Create bastion host for development access
-    const bastionRole = new iam.Role(this, 'BastionRole', {
-      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
-      ],
-    });
+    // Create bastion host for development access (only in non-prod environments)
+    if (!isProd) {
+      const bastionRole = new iam.Role(this, 'BastionRole', {
+        assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+        managedPolicies: [
+          iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+        ],
+      });
 
-    this.bastionHost = new ec2.Instance(this, 'BastionHost', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
-      machineImage: ec2.MachineImage.latestAmazonLinux2(),
-      vpc: this.vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC,
-      },
-      securityGroup: bastionSecurityGroup,
-      role: bastionRole,
-      userData: ec2.UserData.custom(`#!/bin/bash
+      this.bastionHost = new ec2.Instance(this, 'BastionHost', {
+        instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+        machineImage: ec2.MachineImage.latestAmazonLinux2(),
+        vpc: this.vpc,
+        vpcSubnets: {
+          subnetType: ec2.SubnetType.PUBLIC,
+        },
+        securityGroup: bastionSecurityGroup!,
+        role: bastionRole,
+        userData: ec2.UserData.custom(`#!/bin/bash
 yum update -y
 yum install -y postgresql15
 echo 'export PGHOST=${this.cluster.clusterEndpoint.hostname}' >> /home/ec2-user/.bashrc
@@ -225,11 +234,31 @@ echo 'export PGPORT=5432' >> /home/ec2-user/.bashrc
 echo 'export PGDATABASE=community_content' >> /home/ec2-user/.bashrc
 echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
 `),
-    });
+      });
+    }
 
     // Store endpoints for easy access
     this.clusterEndpoint = this.cluster.clusterEndpoint.socketAddress;
     this.proxyEndpoint = this.proxy.endpoint;
+
+    // Create SSM parameters for database configuration
+    new ssm.StringParameter(this, 'DatabaseEndpointParameter', {
+      parameterName: `/${environment}/database/endpoint`,
+      stringValue: this.cluster.clusterEndpoint.socketAddress,
+      description: 'Aurora cluster endpoint',
+    });
+
+    new ssm.StringParameter(this, 'DatabaseProxyEndpointParameter', {
+      parameterName: `/${environment}/database/proxy-endpoint`,
+      stringValue: this.proxy.endpoint,
+      description: 'RDS Proxy endpoint',
+    });
+
+    new ssm.StringParameter(this, 'DatabaseSecretArnParameter', {
+      parameterName: `/${environment}/database/secret-arn`,
+      stringValue: this.databaseSecret.secretArn,
+      description: 'Database credentials secret ARN',
+    });
 
     // CloudFormation outputs
     new cdk.CfnOutput(this, 'VpcId', {
@@ -257,10 +286,12 @@ echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
       description: 'Secrets Manager ARN for database credentials',
     });
 
-    new cdk.CfnOutput(this, 'BastionHostInstanceId', {
-      value: this.bastionHost.instanceId,
-      description: 'Bastion host instance ID for database access',
-    });
+    if (this.bastionHost) {
+      new cdk.CfnOutput(this, 'BastionHostInstanceId', {
+        value: this.bastionHost.instanceId,
+        description: 'Bastion host instance ID for database access',
+      });
+    }
 
     new cdk.CfnOutput(this, 'DatabaseSecurityGroupId', {
       value: databaseSecurityGroup.securityGroupId,

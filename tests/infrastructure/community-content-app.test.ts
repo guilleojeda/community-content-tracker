@@ -132,9 +132,9 @@ describe('CommunityContentApp', () => {
       dbTemplate.hasOutput('VpcId', {});
       dbTemplate.hasOutput('DatabaseSecurityGroupId', {});
 
-      // Static site stack should export distribution info
-      siteTemplate.hasOutput('CloudFrontDistributionId', {});
-      siteTemplate.hasOutput('S3BucketName', {});
+      // Static site stack should export distribution info (matching actual output names)
+      siteTemplate.hasOutput('DistributionId', {});
+      siteTemplate.hasOutput('BucketName', {});
     });
   });
 

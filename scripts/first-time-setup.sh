@@ -378,7 +378,7 @@ validate_setup() {
 
 # Display next steps
 show_next_steps() {
-    log_success "🎉 First-time setup completed successfully!"
+    log_success "First-time setup completed successfully!"
     echo ""
     echo "Next steps:"
     echo "1. Review and update your .env file with proper values"

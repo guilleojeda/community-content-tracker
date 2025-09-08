@@ -71,27 +71,27 @@ jobs:
       - name: Validate deployment requirements
         id: validation
         run: |
-          echo "🔍 Validating deployment requirements..."
+          echo "Validating deployment requirements..."
           
           # Check if deploying from main branch or valid commit
           BRANCH=$(git branch -r --contains ${{ steps.determine-sha.outputs.sha }} | grep 'origin/main' || true)
           if [[ -z "$BRANCH" ]]; then
-            echo "⚠️ Warning: Commit not found in main branch"
+            echo "Warning: Commit not found in main branch"
           else
-            echo "✅ Commit is in main branch"
+            echo "Commit is in main branch"
           fi
           
           # Check if required secrets are available
           REQUIRED_SECRETS=("STAGING_AWS_ACCESS_KEY_ID" "STAGING_AWS_SECRET_ACCESS_KEY" "STAGING_AWS_ACCOUNT_ID")
           for secret in "${REQUIRED_SECRETS[@]}"; do
             if [[ -z "${!secret}" ]]; then
-              echo "❌ Missing required secret: $secret"
+              echo "Missing required secret: $secret"
               exit 1
             fi
           done
           
           echo "should-deploy=true" >> $GITHUB_OUTPUT
-          echo "✅ Deployment validation passed"
+          echo "Deployment validation passed"
         env:
           STAGING_AWS_ACCESS_KEY_ID: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
           STAGING_AWS_SECRET_ACCESS_KEY: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
@@ -133,7 +133,7 @@ jobs:
     steps:
       - name: Manual approval checkpoint
         run: |
-          echo "🚨 Manual approval required for staging deployment"
+          echo "Manual approval required for staging deployment"
           echo "Deploying commit: ${{ needs.validate-deployment.outputs.deploy-sha }}"
           echo "Reason: ${{ github.event.inputs.deployment_reason }}"
           echo "Requested by: ${{ github.actor }}"
@@ -392,7 +392,7 @@ jobs:
           # Wait up to 5 minutes for the app to be ready
           for i in {1..10}; do
             if curl -f -s "${{ env.STAGING_URL }}/health" > /dev/null; then
-              echo "✅ Application is ready"
+              echo "Application is ready"
               break
             fi
             echo "Waiting for application... ($i/10)"
@@ -401,23 +401,23 @@ jobs:
 
       - name: Run smoke tests
         run: |
-          echo "🧪 Running smoke tests against staging environment..."
+          echo "Running smoke tests against staging environment..."
           
           # Basic health check
           curl -f "${{ env.STAGING_URL }}/health"
-          echo "✅ Health check passed"
+          echo "Health check passed"
           
           # API availability check
           curl -f "${{ env.STAGING_URL }}/api/health"
-          echo "✅ API health check passed"
+          echo "API health check passed"
           
           # Authentication endpoint check
           curl -f -s "${{ env.STAGING_URL }}/api/auth/config" > /dev/null
-          echo "✅ Authentication config accessible"
+          echo "Authentication config accessible"
 
       - name: Run performance tests
         run: |
-          echo "⚡ Running basic performance tests..."
+          echo "Running basic performance tests..."
           
           # Basic response time test
           RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' "${{ env.STAGING_URL }}")
@@ -425,11 +425,11 @@ jobs:
           
           # Fail if response time is > 5 seconds
           if (( $(echo "$RESPONSE_TIME > 5.0" | bc -l) )); then
-            echo "❌ Response time too slow: ${RESPONSE_TIME}s"
+            echo "Response time too slow: ${RESPONSE_TIME}s"
             exit 1
           fi
           
-          echo "✅ Performance test passed"
+          echo "Performance test passed"
 
   notify-staging-deployment:
     name: Staging Deployment Notifications
@@ -442,10 +442,10 @@ jobs:
         run: |
           if [[ "${{ needs.deploy-staging-applications.result }}" == "success" && ("${{ needs.post-deployment-tests.result }}" == "success" || "${{ needs.post-deployment-tests.result }}" == "skipped") ]]; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "message=✅ Staging deployment successful" >> $GITHUB_OUTPUT
+            echo "message=Staging deployment successful" >> $GITHUB_OUTPUT
           else
             echo "status=failure" >> $GITHUB_OUTPUT
-            echo "message=❌ Staging deployment failed" >> $GITHUB_OUTPUT
+            echo "message=Staging deployment failed" >> $GITHUB_OUTPUT
           fi
 
       - name: Update deployment status
@@ -466,7 +466,7 @@ jobs:
 
       - name: Notify deployment team
         run: |
-          echo "📢 Staging Deployment Notification"
+          echo "Staging Deployment Notification"
           echo "Status: ${{ steps.status.outputs.status }}"
           echo "Commit: ${{ needs.validate-deployment.outputs.deploy-sha }}"
           echo "Reason: ${{ github.event.inputs.deployment_reason }}"

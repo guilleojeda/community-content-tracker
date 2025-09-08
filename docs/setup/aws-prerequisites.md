@@ -45,7 +45,7 @@ The project uses the following AWS services:
 
 For development environments, the simplest approach is to use an IAM user with `AdministratorAccess` policy.
 
-**⚠️ Warning**: Only use this for development. Production should use least-privilege access.
+**Warning**: Only use this for development. Production should use least-privilege access.
 
 ```json
 {

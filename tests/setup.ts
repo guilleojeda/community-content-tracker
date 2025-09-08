@@ -1,5 +1,5 @@
-import 'jest-extended';
-import { jest } from '@jest/globals';
+// import 'jest-extended';
+// import { jest } from '@jest/globals';
 
 // Set up test environment
 process.env.NODE_ENV = 'test';
@@ -8,13 +8,13 @@ process.env.CDK_DEFAULT_REGION = 'us-east-1';
 process.env.CDK_DEFAULT_ACCOUNT = '123456789012';
 
 // Mock AWS SDK to prevent actual AWS calls
-jest.mock('@aws-sdk/client-s3');
-jest.mock('@aws-sdk/client-cloudformation');
-jest.mock('@aws-sdk/client-rds');
-jest.mock('@aws-sdk/client-ec2');
+// jest.mock('@aws-sdk/client-s3');
+// jest.mock('@aws-sdk/client-cloudformation');
+// jest.mock('@aws-sdk/client-rds');
+// jest.mock('@aws-sdk/client-ec2');
 
 // Global test timeout
-jest.setTimeout(30000);
+// jest.setTimeout(30000);
 
 // Mock console methods for cleaner test output
 const originalConsole = { ...console };
@@ -22,10 +22,10 @@ const originalConsole = { ...console };
 beforeAll(() => {
   // Suppress console output during tests unless DEBUG is set
   if (!process.env.DEBUG) {
-    console.log = jest.fn();
-    console.info = jest.fn();
-    console.warn = jest.fn();
-    console.debug = jest.fn();
+    console.log = () => {};
+    console.info = () => {};
+    console.warn = () => {};
+    console.debug = () => {};
   }
 });
 
@@ -39,9 +39,9 @@ global.testHelpers = {
   // Create mock CDK app
   createMockApp: () => ({
     node: {
-      tryGetContext: jest.fn(),
+      tryGetContext: () => undefined,
     },
-    synth: jest.fn(),
+    synth: () => undefined,
   }),
 
   // Create mock CDK stack

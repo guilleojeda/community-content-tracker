@@ -8,12 +8,12 @@ The AWS Community Content Hub serves as a centralized repository for community-g
 
 ## Features
 
-- 🔍 **Automated Content Discovery**: Ingests content from multiple sources (blogs, YouTube, GitHub)
-- 🔐 **Granular Visibility Controls**: Private, AWS-only, AWS+Community, and Public visibility levels
-- 🧠 **Semantic Search**: Vector-based similarity search using pgvector
-- 📊 **Analytics & Reporting**: Personal dashboards and CSV exports for AWS programs
-- 👥 **Public Profiles**: Showcase contributor portfolios
-- 🏆 **Badge System**: AWS program badge validation and display
+- **Automated Content Discovery**: Ingests content from multiple sources (blogs, YouTube, GitHub)
+- **Granular Visibility Controls**: Private, AWS-only, AWS+Community, and Public visibility levels
+- **Semantic Search**: Vector-based similarity search using pgvector
+- **Analytics & Reporting**: Personal dashboards and CSV exports for AWS programs
+- **Public Profiles**: Showcase contributor portfolios
+- **Badge System**: AWS program badge validation and display
 
 ## Architecture
 
@@ -76,7 +76,7 @@ This project uses a serverless-first architecture:
 
 ### Infrastructure Deployment
 
-⚠️ **Note**: This project is set up for local development. For AWS deployment:
+**Note**: This project is set up for local development. For AWS deployment:
 
 1. **Configure AWS credentials**
    ```bash

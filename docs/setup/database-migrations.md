@@ -307,7 +307,7 @@ npm run db:migrate:down
 
 ### Production Environment
 
-**⚠️ Important**: Always backup your database before running migrations in production!
+**Important**: Always backup your database before running migrations in production!
 
 1. **Create database backup**:
    ```bash
