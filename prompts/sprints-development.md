@@ -1,4 +1,4 @@
-With [X] = 1
+With [X] = 6
 You are implementing Sprint [X] of the AWS Community Content Hub.
 
 ## Project Documentation - READ THESE FIRST
@@ -9,7 +9,6 @@ You are implementing Sprint [X] of the AWS Community Content Hub.
 4. src/shared/types/index.ts - Type definitions (USE THESE EXACTLY)
 5. docs/api-errors.md - Error handling standards
 6. docs/implementation-notes.md - Critical patterns and AWS-specific rules
-7. docs/PERFORMANCE_TARGETS.md - Performance requirements
 8. .env.development - Local development configuration
 
 ## Sprint [X] Implementation
@@ -18,14 +17,16 @@ Read docs/plan/sprint_[X].md to understand:
 - Sprint goal
 - All tasks and their dependencies
 - Acceptance criteria for each task
-- Required test coverage (80% minimum)
+- Required test coverage (90% minimum)
 
 For each task in the sprint:
 1. Write tests FIRST (TDD is mandatory)
-2. Test files go in appropriate test directories
-3. Implementation goes in src/ directories
-4. Follow acceptance criteria exactly
-5. Use types from src/shared/types/index.ts without modification
+2. Make sure the tests cover every requirement in the task, and not more
+3. Test files go in appropriate test directories
+4. Then write the implementation code to pass those tests. Do not write implementation code beyond what is in the requirements and the tests. Remember that we're using TDD.
+5. Implementation goes in src/ directories
+6. Follow acceptance criteria exactly
+7. Use types from src/shared/types/index.ts without modification
 
 ## Critical Project Rules (AWS Community Content Hub Specific)
 
@@ -39,6 +40,7 @@ For each task in the sprint:
 8. NO hardcoded configuration - use environment variables
 9. USE connection pooling for all database access (never create per-request connections)
 10. RESPECT task dependencies - check previous task completion before starting dependent tasks
+11. NEVER use emojis
 
 ## Local Development Environment
 
@@ -64,17 +66,17 @@ You are working in LOCAL DEVELOPMENT mode:
 
 Sprint [X] is complete when:
 - All tasks from sprint_[X].md are implemented
+- The code implemented is real, working code, not placeholders
 - All acceptance criteria are met
 - Test coverage is above 80%
 - npm test passes
 - npm run typecheck passes
 - No security vulnerabilities (npm audit)
-- CDK synth succeeds (if infrastructure tasks present)
+- If infrastructure tasks are present, npm run build and cdk synth (ran from the src/infrastructure folder) succeed without errors
 - Database migrations work locally
-- Performance targets are met (see docs/PERFORMANCE_TARGETS.md)
 
 ## Your Assignment
 
-Implement all tasks in Sprint [X] following TDD methodology. Ensure each task's acceptance criteria are fully met before moving to the next. Document any assumptions or decisions made. Only implement Sprint [X], not any other Sprints.
+Implement all tasks in Sprint [X] following TDD methodology. Ensure each task's acceptance criteria are fully met before moving to the next. Document any assumptions or decisions made. Only implement Sprint [X], not any other Sprints. When you've completed all tasks, verify that every single criteria listed in # Success Criteria is met. If the success criteria requires executing commands, you must execute those commands and verify their output before asserting that the success criteria is met.
 
-Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements.
+Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements. ultrathink in order to understand everything better.

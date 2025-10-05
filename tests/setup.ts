@@ -2,16 +2,42 @@
 // import { jest } from '@jest/globals';
 
 // Set up test environment
-process.env.NODE_ENV = 'test';
+(process.env as any).NODE_ENV = 'test';
 process.env.AWS_REGION = 'us-east-1';
 process.env.CDK_DEFAULT_REGION = 'us-east-1';
 process.env.CDK_DEFAULT_ACCOUNT = '123456789012';
 
-// Mock AWS SDK to prevent actual AWS calls
+// Mock AWS SDK to prevent actual AWS calls and async cleanup issues
 // jest.mock('@aws-sdk/client-s3');
 // jest.mock('@aws-sdk/client-cloudformation');
 // jest.mock('@aws-sdk/client-rds');
 // jest.mock('@aws-sdk/client-ec2');
+
+// Global mock for CloudWatch to prevent async cleanup issues in tests
+jest.mock('@aws-sdk/client-cloudwatch', () => {
+  const mockSend = jest.fn().mockResolvedValue({});
+  return {
+    CloudWatchClient: jest.fn().mockImplementation(() => ({
+      send: mockSend
+    })),
+    PutMetricDataCommand: jest.fn()
+  };
+});
+
+// Global mock for Bedrock Runtime to prevent actual API calls
+jest.mock('@aws-sdk/client-bedrock-runtime', () => {
+  const mockSend = jest.fn().mockResolvedValue({
+    body: new TextEncoder().encode(JSON.stringify({
+      embedding: new Array(1536).fill(0).map(() => Math.random())
+    }))
+  });
+  return {
+    BedrockRuntimeClient: jest.fn().mockImplementation(() => ({
+      send: mockSend
+    })),
+    InvokeModelCommand: jest.fn()
+  };
+});
 
 // Global test timeout
 // jest.setTimeout(30000);

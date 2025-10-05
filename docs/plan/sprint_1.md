@@ -1,8 +1,14 @@
 Sprint 1: Foundation Setup
-Goal: Establish development environment and core infrastructureTask 1.1: Project Repository Setup
+Goal: Establish development environment and core infrastructure
+Status: Complete
+
+Tasks:
+Task 1.1: Project Repository Setup
 Epic: E1
 Story Points: 2
-Dependencies: NoneUser Story: As a developer, I want a well-structured repository so that I can efficiently develop and maintain the application.Acceptance Criteria:
+Dependencies: None
+User Story: As a developer, I want a well-structured repository so that I can efficiently develop and maintain the application.
+Acceptance Criteria:
 
  GitHub repository created with proper .gitignore for Node.js/TypeScript
  Branch protection rules configured (main branch protected, PR required)
@@ -19,10 +25,14 @@ Repository Structure:
 │   └── infrastructure/ # CDK code
 ├── docs/              # ADRs and documentation
 ├── scripts/           # Build and deployment scripts
-└── tests/            # E2E testsTask 1.2: CDK Infrastructure Bootstrap
+└── tests/            # E2E tests
+
+Task 1.2: CDK Infrastructure Bootstrap
 Epic: E1
 Story Points: 3
-Dependencies: Task 1.1User Story: As a developer, I want CDK infrastructure initialized so that I can deploy AWS resources.Acceptance Criteria:
+Dependencies: Task 1.1
+User Story: As a developer, I want CDK infrastructure initialized so that I can deploy AWS resources.
+Acceptance Criteria:
 
  CDK app initialized with TypeScript
  Base stack structure created
@@ -39,10 +49,14 @@ const envDev = { account: process.env.AWS_ACCOUNT, region: 'us-east-1' };
 new ContentHubStack(app, 'ContentHub-Dev', {
   env: envDev,
   stage: 'dev'
-});Task 1.3: CI/CD Pipeline Setup
+});
+
+Task 1.3: CI/CD Pipeline Setup
 Epic: E1
 Story Points: 5
-Dependencies: Task 1.2User Story: As a team, we want automated CI/CD so that code changes are tested and deployed consistently.Acceptance Criteria:
+Dependencies: Task 1.2
+User Story: As a team, we want automated CI/CD so that code changes are tested and deployed consistently.
+Acceptance Criteria:
 
  GitHub Actions workflow for PR validation (lint, test, build)
  Automated deployment to dev on main branch merge
@@ -70,10 +84,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: test
     steps:
-      - cdk deployTask 1.4: Aurora Serverless Database Setup
+      - cdk deploy
+      
+Task 1.4: Aurora Serverless Database Setup
 Epic: E3
 Story Points: 5
-Dependencies: Task 1.2User Story: As a developer, I want the database infrastructure ready so that I can start implementing data persistence.Acceptance Criteria:
+Dependencies: Task 1.2
+User Story: As a developer, I want the database infrastructure ready so that I can start implementing data persistence.
+Acceptance Criteria:
 
  Aurora Serverless v2 Postgres cluster deployed
  pgvector extension enabled via custom resource
@@ -86,10 +104,14 @@ Dependencies: Task 1.2User Story: As a developer, I want the database infrastruc
 Verification Query:
 sqlSELECT version();
 SELECT * FROM pg_extension WHERE extname = 'vector';
-SHOW backup_retention_period;Task 1.5: Static Site Infrastructure Setup
+SHOW backup_retention_period;
+
+Task 1.5: Static Site Infrastructure Setup
 Epic: E1
 Story Points: 5
-Dependencies: Task 1.2User Story: As a developer, I want the frontend hosting infrastructure ready so that the Next.js app can be deployed.Acceptance Criteria:
+Dependencies: Task 1.2
+User Story: As a developer, I want the frontend hosting infrastructure ready so that the Next.js app can be deployed.
+Acceptance Criteria:
 
  S3 bucket for static site hosting configured
  CloudFront distribution created
@@ -113,10 +135,14 @@ const distribution = new cloudfront.Distribution(this, 'Distribution', {
   },
   domainNames: [props.domainName],
   certificate: certificate
-});Task 1.6: Development Environment Documentation
+});
+
+Task 1.6: Development Environment Documentation
 Epic: E1
 Story Points: 2
-Dependencies: Tasks 1.1-1.5User Story: As a new developer, I want clear setup instructions so that I can start contributing quickly.Acceptance Criteria:
+Dependencies: Tasks 1.1-1.5
+User Story: As a new developer, I want clear setup instructions so that I can start contributing quickly.
+Acceptance Criteria:
 
  Local development setup guide complete
  AWS account prerequisites documented

@@ -1,0 +1,31 @@
+<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg">
+  <!-- AWS Orange Background -->
+  <rect width="1200" height="630" fill="#FF9900"/>
+
+  <!-- AWS Squid Ink Overlay -->
+  <rect width="1200" height="630" fill="#232F3E" opacity="0.9"/>
+
+  <!-- AWS Community Content Hub Text -->
+  <text x="600" y="260" font-family="Arial, sans-serif" font-size="56" font-weight="bold" fill="#FFFFFF" text-anchor="middle">
+    AWS Community
+  </text>
+  <text x="600" y="330" font-family="Arial, sans-serif" font-size="56" font-weight="bold" fill="#FFFFFF" text-anchor="middle">
+    Content Hub
+  </text>
+
+  <!-- Subtitle -->
+  <text x="600" y="410" font-family="Arial, sans-serif" font-size="28" fill="#FF9900" text-anchor="middle">
+    Search &amp; Track AWS Community Content
+  </text>
+
+  <!-- Feature Highlights -->
+  <text x="600" y="480" font-family="Arial, sans-serif" font-size="22" fill="#FFFFFF" text-anchor="middle">
+    📝 Blogs · 🎥 Videos · 💻 GitHub · 🎤 Talks · 🎙️ Podcasts
+  </text>
+
+  <!-- Call to Action -->
+  <rect x="475" y="520" width="250" height="60" rx="8" fill="#FF9900"/>
+  <text x="600" y="558" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#232F3E" text-anchor="middle">
+    Explore Now
+  </text>
+</svg>

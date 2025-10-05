@@ -1,0 +1,846 @@
+openapi: 3.0.3
+info:
+  title: AWS Community Content Hub API
+  description: |
+    API for the AWS Community Content Hub - a platform for tracking and discovering
+    AWS community-generated content from contributors worldwide.
+
+    ## Features
+    - Semantic search powered by Amazon Bedrock
+    - Content tracking from blogs, YouTube, GitHub, and conferences
+    - User authentication with AWS Cognito
+    - Community profiles for AWS Heroes, Builders, and Ambassadors
+
+    ## Authentication
+    Most endpoints require authentication via JWT tokens obtained from the login endpoint.
+    Include the access token in the Authorization header: `Authorization: Bearer <token>`
+  version: 1.0.0
+  contact:
+    name: AWS Community Content Hub
+    email: support@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.awscommunity.example.com
+    description: Production API
+  - url: http://localhost:3001
+    description: Local development
+
+tags:
+  - name: Search
+    description: Content search operations
+  - name: Stats
+    description: Platform statistics
+  - name: Authentication
+    description: User authentication and registration
+
+security:
+  - BearerAuth: []
+
+paths:
+  /search:
+    get:
+      tags:
+        - Search
+      summary: Search for community content
+      description: |
+        Performs semantic search using Amazon Bedrock embeddings to find relevant
+        AWS community content. Supports filtering by content type, badges, tags,
+        and date ranges.
+      operationId: searchContent
+      security:
+        - BearerAuth: []
+        - {}  # Optional authentication
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query string
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+          example: "lambda performance optimization"
+
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of results to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          example: 20
+
+        - name: offset
+          in: query
+          required: false
+          description: Number of results to skip for pagination
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+
+        - name: type
+          in: query
+          required: false
+          description: Filter by content types (comma-separated)
+          schema:
+            type: string
+          example: "blog,youtube"
+
+        - name: tags
+          in: query
+          required: false
+          description: Filter by tags (comma-separated)
+          schema:
+            type: string
+          example: "serverless,containers"
+
+        - name: badges
+          in: query
+          required: false
+          description: Filter by contributor badges (comma-separated)
+          schema:
+            type: string
+          example: "hero,community_builder"
+
+        - name: startDate
+          in: query
+          required: false
+          description: Start date for date range filter (ISO 8601)
+          schema:
+            type: string
+            format: date
+          example: "2024-01-01"
+
+        - name: endDate
+          in: query
+          required: false
+          description: End date for date range filter (ISO 8601)
+          schema:
+            type: string
+            format: date
+          example: "2024-12-31"
+
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+              example:
+                results:
+                  - id: "123e4567-e89b-12d3-a456-426614174000"
+                    title: "Optimizing Lambda Cold Starts"
+                    description: "A comprehensive guide to reducing Lambda cold starts"
+                    contentType: "blog"
+                    visibility: "public"
+                    publishDate: "2024-09-15T00:00:00Z"
+                    captureDate: "2024-09-16T10:30:00Z"
+                    tags: ["serverless", "lambda", "performance"]
+                    isClaimed: true
+                    urls:
+                      - id: "url-123"
+                        url: "https://example.com/blog/lambda-optimization"
+                    author:
+                      username: "johndoe"
+                      profileSlug: "johndoe"
+                      badges: ["hero"]
+                    score: 0.95
+                total: 42
+                limit: 10
+                offset: 0
+
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /stats:
+    get:
+      tags:
+        - Stats
+      summary: Get platform statistics
+      description: Returns aggregate statistics about the platform including contributor count, content pieces, and activity metrics
+      operationId: getPlatformStats
+      security: []  # Public endpoint
+
+      responses:
+        '200':
+          description: Platform statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformStats'
+              example:
+                contributors: 5000
+                contentPieces: 50000
+                dailyContent: 100
+                weeklyActiveUsers: 1000
+                uptime: "24/7"
+                lastUpdated: "2024-10-03T12:00:00Z"
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user
+      description: Creates a new user account with AWS Cognito and the application database
+      operationId: registerUser
+      security: []  # Public endpoint
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: "user@example.com"
+              password: "SecurePass123!@#"
+              username: "johndoe"
+
+      responses:
+        '201':
+          description: User successfully registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+              example:
+                userId: "123e4567-e89b-12d3-a456-426614174000"
+                message: "Please check your email to verify your account"
+
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "DUPLICATE_RESOURCE"
+                  message: "User already exists - email: Email already registered"
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Login user
+      description: Authenticates user credentials and returns JWT tokens
+      operationId: loginUser
+      security: []  # Public endpoint
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: "user@example.com"
+              password: "SecurePass123!@#"
+
+      responses:
+        '200':
+          description: Successfully authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                idToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                expiresIn: 3600
+                user:
+                  id: "123e4567-e89b-12d3-a456-426614174000"
+                  email: "user@example.com"
+                  username: "johndoe"
+                  profileSlug: "johndoe"
+                  isAdmin: false
+                  isAwsEmployee: false
+
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "AUTH_INVALID"
+                  message: "Invalid email or password"
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/verify-email:
+    post:
+      tags:
+        - Authentication
+      summary: Verify email address
+      description: Verifies user email with confirmation code sent during registration
+      operationId: verifyEmail
+      security: []  # Public endpoint
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+            example:
+              email: "user@example.com"
+              confirmationCode: "123456"
+
+      responses:
+        '200':
+          description: Email successfully verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyEmailResponse'
+              example:
+                message: "Email verified successfully"
+                verified: true
+
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Obtains new access and ID tokens using a refresh token
+      operationId: refreshToken
+      security: []  # Public endpoint
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+            example:
+              refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+      responses:
+        '200':
+          description: Tokens successfully refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshTokenResponse'
+              example:
+                accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                idToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                expiresIn: 3600
+
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+        '401':
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "AUTH_INVALID"
+                  message: "Invalid or expired refresh token"
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/forgot-password:
+    post:
+      tags:
+        - Authentication
+      summary: Request password reset
+      description: Sends a password reset confirmation code to the user's email
+      operationId: forgotPassword
+      security: []  # Public endpoint
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Email address of the account
+            example:
+              email: "user@example.com"
+
+      responses:
+        '200':
+          description: Password reset code sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+              example:
+                message: "Password reset code sent to email"
+
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/reset-password:
+    post:
+      tags:
+        - Authentication
+      summary: Reset password with confirmation code
+      description: Resets user password using the confirmation code from email
+      operationId: resetPassword
+      security: []  # Public endpoint
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - confirmationCode
+                - newPassword
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Email address of the account
+                confirmationCode:
+                  type: string
+                  minLength: 6
+                  maxLength: 6
+                  description: 6-digit confirmation code from email
+                newPassword:
+                  type: string
+                  format: password
+                  minLength: 12
+                  description: New password (min 12 characters)
+            example:
+              email: "user@example.com"
+              confirmationCode: "123456"
+              newPassword: "NewSecurePass123!@#"
+
+      responses:
+        '200':
+          description: Password successfully reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+              example:
+                message: "Password reset successful"
+
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token from the login endpoint
+
+  schemas:
+    # Enums
+    ContentType:
+      type: string
+      enum:
+        - blog
+        - youtube
+        - github
+        - conference_talk
+        - podcast
+      description: Type of content
+
+    BadgeType:
+      type: string
+      enum:
+        - community_builder
+        - hero
+        - ambassador
+        - user_group_leader
+      description: AWS community badge type
+
+    Visibility:
+      type: string
+      enum:
+        - private
+        - aws_only
+        - aws_community
+        - public
+      description: Content visibility level
+
+    # Search Response
+    SearchResponse:
+      type: object
+      required:
+        - results
+        - total
+        - limit
+        - offset
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentSearchResult'
+        total:
+          type: integer
+          description: Total number of results matching the query
+        limit:
+          type: integer
+          description: Maximum results per page
+        offset:
+          type: integer
+          description: Number of results skipped
+
+    ContentSearchResult:
+      type: object
+      required:
+        - id
+        - title
+        - contentType
+        - visibility
+        - captureDate
+        - tags
+        - isClaimed
+        - urls
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        contentType:
+          $ref: '#/components/schemas/ContentType'
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        publishDate:
+          type: string
+          format: date-time
+          nullable: true
+        captureDate:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: string
+        isClaimed:
+          type: boolean
+        originalAuthor:
+          type: string
+          nullable: true
+        urls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentUrl'
+        author:
+          $ref: '#/components/schemas/ContentAuthor'
+          nullable: true
+        score:
+          type: number
+          format: float
+          description: Relevance score (0-1)
+
+    ContentUrl:
+      type: object
+      required:
+        - id
+        - url
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+
+    ContentAuthor:
+      type: object
+      required:
+        - username
+        - profileSlug
+      properties:
+        username:
+          type: string
+        profileSlug:
+          type: string
+        badges:
+          type: array
+          items:
+            $ref: '#/components/schemas/BadgeType'
+
+    # Platform Stats
+    PlatformStats:
+      type: object
+      required:
+        - contributors
+        - contentPieces
+        - dailyContent
+        - weeklyActiveUsers
+        - uptime
+        - lastUpdated
+      properties:
+        contributors:
+          type: integer
+          description: Total number of active contributors
+        contentPieces:
+          type: integer
+          description: Total number of content pieces
+        dailyContent:
+          type: integer
+          description: Content added in last 24 hours
+        weeklyActiveUsers:
+          type: integer
+          description: Users created in last 7 days
+        uptime:
+          type: string
+          description: Platform uptime
+        lastUpdated:
+          type: string
+          format: date-time
+          description: Timestamp of last stats update
+
+    # Authentication Requests/Responses
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - username
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          minLength: 12
+          description: Must contain uppercase, lowercase, numbers, and symbols
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: Alphanumeric, hyphens, and underscores only
+
+    RegisterResponse:
+      type: object
+      required:
+        - userId
+        - message
+      properties:
+        userId:
+          type: string
+          format: uuid
+        message:
+          type: string
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    LoginResponse:
+      type: object
+      required:
+        - accessToken
+        - idToken
+        - refreshToken
+        - expiresIn
+        - user
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token for API authentication
+        idToken:
+          type: string
+          description: JWT ID token containing user information
+        refreshToken:
+          type: string
+          description: Token for refreshing access/ID tokens
+        expiresIn:
+          type: integer
+          description: Token expiration time in seconds
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    UserProfile:
+      type: object
+      required:
+        - id
+        - email
+        - username
+        - profileSlug
+        - isAdmin
+        - isAwsEmployee
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        profileSlug:
+          type: string
+        isAdmin:
+          type: boolean
+        isAwsEmployee:
+          type: boolean
+
+    VerifyEmailRequest:
+      type: object
+      required:
+        - email
+        - confirmationCode
+      properties:
+        email:
+          type: string
+          format: email
+        confirmationCode:
+          type: string
+          minLength: 6
+          maxLength: 6
+          description: 6-digit confirmation code from email
+
+    VerifyEmailResponse:
+      type: object
+      required:
+        - message
+        - verified
+      properties:
+        message:
+          type: string
+        verified:
+          type: boolean
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+
+    RefreshTokenResponse:
+      type: object
+      required:
+        - accessToken
+        - idToken
+        - expiresIn
+      properties:
+        accessToken:
+          type: string
+        idToken:
+          type: string
+        expiresIn:
+          type: integer
+
+    # Error Responses
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              additionalProperties: true
+              description: Additional error context
+
+  responses:
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Validation failed"
+              details:
+                fields:
+                  email: "Invalid email format"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An unexpected error occurred"

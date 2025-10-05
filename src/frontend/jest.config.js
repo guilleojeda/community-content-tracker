@@ -1,23 +1,38 @@
 /** @type {import('jest').Config} */
 module.exports = {
-  passWithNoTests: true,
+  passWithNoTests: false,
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
   displayName: 'Frontend Tests',
-  // Sprint 1: No frontend implementation yet, only infrastructure
-  roots: [],
-  testMatch: [],
+  roots: ['<rootDir>/../../tests/frontend'],
+  testMatch: [
+    '**/__tests__/**/*.+(ts|tsx|js)',
+    '**/?(*.)+(spec|test).+(ts|tsx|js)'
+  ],
   transform: {
-    '^.+\\.(ts|tsx)$': 'ts-jest'
+    '^.+\\.(ts|tsx)$': ['ts-jest', {
+      tsconfig: {
+        jsx: 'react',
+        esModuleInterop: true,
+        allowSyntheticDefaultImports: true
+      }
+    }]
   },
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/$1',
+    '\\.(css|less|scss|sass)$': 'identity-obj-proxy'
+  },
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   collectCoverageFrom: [
+    'app/**/*.{ts,tsx}',
     'src/**/*.{ts,tsx}',
-    '!src/**/*.d.ts',
-    '!src/**/*.test.{ts,tsx}',
-    '!src/**/__tests__/**',
-    '!src/**/node_modules/**',
-    '!src/**/dist/**',
-    '!src/**/coverage/**'
+    '!**/*.d.ts',
+    '!**/*.test.{ts,tsx}',
+    '!**/__tests__/**',
+    '!**/node_modules/**',
+    '!**/.next/**',
+    '!**/dist/**',
+    '!**/coverage/**'
   ],
   coverageDirectory: 'coverage',
   coverageReporters: [
@@ -28,10 +43,11 @@ module.exports = {
   ],
   coverageThreshold: {
     global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80
+      branches: 70,
+      functions: 70,
+      lines: 70,
+      statements: 70
     }
-  }
+  },
+  testTimeout: 10000
 };

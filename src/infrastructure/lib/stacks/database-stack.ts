@@ -51,6 +51,8 @@ export class DatabaseStack extends cdk.Stack {
   public readonly cluster: rds.DatabaseCluster;
   public readonly proxy: rds.DatabaseProxy;
   public readonly databaseSecret: secretsmanager.Secret;
+  public readonly youtubeApiKeySecret: secretsmanager.Secret;
+  public readonly githubTokenSecret: secretsmanager.Secret;
   public readonly bastionHost?: ec2.Instance;
   public readonly clusterEndpoint: string;
   public readonly proxyEndpoint: string;
@@ -155,6 +157,24 @@ export class DatabaseStack extends cdk.Stack {
         passwordLength: 32,
         excludeCharacters: '"@/\\',
       },
+    });
+
+    // Create YouTube API key secret (placeholder - should be set via CLI)
+    this.youtubeApiKeySecret = new secretsmanager.Secret(this, 'YouTubeApiKeySecret', {
+      description: 'YouTube Data API v3 key for content scraping',
+      secretName: `youtube-api-key-${environment}`,
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        process.env.YOUTUBE_API_KEY || 'REPLACE_ME_WITH_ACTUAL_KEY'
+      ),
+    });
+
+    // Create GitHub token secret (placeholder - should be set via CLI)
+    this.githubTokenSecret = new secretsmanager.Secret(this, 'GitHubTokenSecret', {
+      description: 'GitHub personal access token for content scraping',
+      secretName: `github-token-${environment}`,
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        process.env.GITHUB_TOKEN || 'REPLACE_ME_WITH_ACTUAL_TOKEN'
+      ),
     });
 
     // Create DB subnet group

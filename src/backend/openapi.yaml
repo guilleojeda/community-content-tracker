@@ -1,0 +1,314 @@
+openapi: 3.0.3
+info:
+  title: AWS Community Content Hub API
+  description: API for searching and managing AWS community content
+  version: 1.0.0
+  contact:
+    name: AWS Community Content Hub
+    email: support@aws-community-hub.com
+
+servers:
+  - url: https://api.aws-community-hub.com/v1
+    description: Production API
+  - url: http://localhost:3001
+    description: Local development
+
+tags:
+  - name: Search
+    description: Content search endpoints
+  - name: Auth
+    description: Authentication endpoints
+  - name: Content
+    description: Content management
+  - name: Users
+    description: User management
+
+paths:
+  /search:
+    get:
+      summary: Search for content
+      description: |
+        Search for community content using semantic and keyword search.
+        Supports filtering by content type, tags, badges, and date range.
+        Returns public content for anonymous users, additional content for authenticated users.
+      operationId: searchContent
+      tags:
+        - Search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query string
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+            example: "AWS Lambda serverless"
+        - name: limit
+          in: query
+          required: false
+          description: Number of results to return (max 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: offset
+          in: query
+          required: false
+          description: Pagination offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: type
+          in: query
+          required: false
+          description: Filter by content types (comma-separated)
+          schema:
+            type: string
+            example: "blog,youtube"
+        - name: tags
+          in: query
+          required: false
+          description: Filter by tags (comma-separated)
+          schema:
+            type: string
+            example: "serverless,lambda,api-gateway"
+        - name: badges
+          in: query
+          required: false
+          description: Filter by AWS program badges (comma-separated)
+          schema:
+            type: string
+            example: "hero,community_builder"
+        - name: startDate
+          in: query
+          required: false
+          description: Start date for date range filter (ISO 8601)
+          schema:
+            type: string
+            format: date
+            example: "2024-01-01"
+        - name: endDate
+          in: query
+          required: false
+          description: End date for date range filter (ISO 8601)
+          schema:
+            type: string
+            format: date
+            example: "2024-12-31"
+      responses:
+        '200':
+          description: Successful search response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /stats:
+    get:
+      summary: Get platform statistics
+      description: Returns aggregated statistics about the platform
+      operationId: getStats
+      tags:
+        - Search
+      responses:
+        '200':
+          description: Platform statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformStats'
+
+components:
+  schemas:
+    SearchResponse:
+      type: object
+      required:
+        - items
+        - total
+        - limit
+        - offset
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+        total:
+          type: integer
+          description: Total number of results matching the query
+          example: 245
+        limit:
+          type: integer
+          description: Number of results returned in this response
+          example: 10
+        offset:
+          type: integer
+          description: Pagination offset
+          example: 0
+
+    Content:
+      type: object
+      required:
+        - id
+        - userId
+        - title
+        - contentType
+        - visibility
+        - tags
+        - urls
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique content identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        userId:
+          type: string
+          format: uuid
+          description: User who created/owns the content
+          example: "660e8400-e29b-41d4-a716-446655440000"
+        title:
+          type: string
+          description: Content title
+          example: "Building Serverless APIs with AWS Lambda"
+        description:
+          type: string
+          nullable: true
+          description: Content description
+          example: "Learn how to build scalable serverless APIs using AWS Lambda and API Gateway"
+        contentType:
+          type: string
+          enum: [blog, youtube, github, conference_talk, podcast, social, whitepaper, tutorial, workshop, book]
+          description: Type of content
+        visibility:
+          type: string
+          enum: [public, aws_community, aws_only, private]
+          description: Visibility level of the content
+        publishDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Original publication date
+        captureDate:
+          type: string
+          format: date-time
+          description: Date the content was captured by our system
+        metrics:
+          type: object
+          description: Engagement metrics
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags associated with the content
+          example: ["serverless", "lambda", "api-gateway", "aws"]
+        isClaimed:
+          type: boolean
+          description: Whether the content has been claimed by its author
+        originalAuthor:
+          type: string
+          nullable: true
+          description: Original author if different from user
+        urls:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              url:
+                type: string
+                format: uri
+          description: URLs associated with the content
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when content was added to the system
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when content was last updated
+
+    PlatformStats:
+      type: object
+      properties:
+        contributors:
+          type: integer
+          description: Total number of contributors
+          example: 5000
+        contentPieces:
+          type: integer
+          description: Total number of content pieces
+          example: 50000
+        dailyContent:
+          type: integer
+          description: Average daily content additions
+          example: 100
+        weeklyActiveUsers:
+          type: integer
+          description: Weekly active users
+          example: 1000
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              enum:
+                - VALIDATION_ERROR
+                - AUTHENTICATION_ERROR
+                - AUTHORIZATION_ERROR
+                - NOT_FOUND
+                - CONFLICT
+                - RATE_LIMIT_EXCEEDED
+                - INTERNAL_ERROR
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Missing required query parameter: q"
+            field:
+              type: string
+              description: Field that caused the error (if applicable)
+              example: "q"
+            details:
+              type: object
+              description: Additional error details
+              additionalProperties: true
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from AWS Cognito
+
+security:
+  - BearerAuth: []
+  - {} # Allow anonymous access for public endpoints

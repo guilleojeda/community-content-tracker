@@ -4,20 +4,28 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   displayName: 'Backend Tests',
-  // Sprint 1: No backend implementation yet, only infrastructure
-  roots: [],
-  testMatch: [],
+  // Sprint 2: Authentication Lambda functions implementation
+  roots: ['<rootDir>/src', '<rootDir>/../../tests'],
+  testMatch: [
+    '**/tests/**/*.test.{ts,tsx}',
+    '**/__tests__/**/*.{ts,tsx}',
+    '**/*.(test|spec).{ts,tsx}'
+  ],
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest'
   },
   collectCoverageFrom: [
+    'lambdas/**/*.{ts,tsx}',
+    'repositories/**/*.{ts,tsx}',
+    'services/**/*.{ts,tsx}',
     'src/**/*.{ts,tsx}',
-    '!src/**/*.d.ts',
-    '!src/**/*.test.{ts,tsx}',
-    '!src/**/__tests__/**',
-    '!src/**/node_modules/**',
-    '!src/**/dist/**',
-    '!src/**/coverage/**'
+    '!**/*.d.ts',
+    '!**/*.test.{ts,tsx}',
+    '!**/__tests__/**',
+    '!**/node_modules/**',
+    '!**/dist/**',
+    '!**/coverage/**',
+    '!scripts/**'
   ],
   coverageDirectory: 'coverage',
   coverageReporters: [
@@ -33,23 +41,17 @@ module.exports = {
       lines: 80,
       statements: 80
     },
-    './src/handlers/': {
+    './lambdas/auth/': {
       branches: 90,
       functions: 90,
       lines: 90,
       statements: 90
     },
-    './src/services/': {
+    './repositories/': {
       branches: 85,
       functions: 85,
       lines: 85,
       statements: 85
-    },
-    './src/models/': {
-      branches: 95,
-      functions: 95,
-      lines: 95,
-      statements: 95
     }
   },
   setupFilesAfterEnv: [],
@@ -65,7 +67,10 @@ module.exports = {
     '^@services/(.*)$': '<rootDir>/src/services/$1',
     '^@models/(.*)$': '<rootDir>/src/models/$1',
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
-    '^@config/(.*)$': '<rootDir>/src/config/$1'
+    '^@config/(.*)$': '<rootDir>/src/config/$1',
+    '^@auth/(.*)$': '<rootDir>/src/backend/lambdas/auth/$1',
+    '^@repo/(.*)$': '<rootDir>/src/backend/repositories/$1',
+    '^@aws-community-hub/shared$': '<rootDir>/../shared/types'
   },
   clearMocks: true,
   restoreMocks: true,

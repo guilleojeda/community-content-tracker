@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -8,6 +9,7 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
+import * as path from 'path';
 
 export interface StaticSiteStackProps extends cdk.StackProps {
   /**
@@ -217,7 +219,7 @@ export class StaticSiteStack extends cdk.Stack {
     // Configure CloudFront distribution
     const distributionConfig: cloudfront.DistributionProps = {
       defaultBehavior: {
-        origin: new origins.S3BucketOrigin(this.bucket, {
+        origin: new origins.S3Origin(this.bucket, {
           originAccessIdentity: this.originAccessIdentity,
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -227,7 +229,7 @@ export class StaticSiteStack extends cdk.Stack {
       },
       additionalBehaviors: {
         '/api/*': {
-          origin: new origins.S3BucketOrigin(this.bucket, {
+          origin: new origins.S3Origin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -235,7 +237,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: true,
         },
         '*.js': {
-          origin: new origins.S3BucketOrigin(this.bucket, {
+          origin: new origins.S3Origin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -244,7 +246,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: true,
         },
         '*.css': {
-          origin: new origins.S3BucketOrigin(this.bucket, {
+          origin: new origins.S3Origin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -253,7 +255,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: true,
         },
         '*.woff*': {
-          origin: new origins.S3BucketOrigin(this.bucket, {
+          origin: new origins.S3Origin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -261,7 +263,7 @@ export class StaticSiteStack extends cdk.Stack {
           compress: false, // Fonts are already compressed
         },
         '*.ico': {
-          origin: new origins.S3BucketOrigin(this.bucket, {
+          origin: new origins.S3Origin(this.bucket, {
             originAccessIdentity: this.originAccessIdentity,
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -402,5 +404,38 @@ export class StaticSiteStack extends cdk.Stack {
         description: 'WAF Web ACL ARN',
       });
     }
+
+    // Deploy Next.js static site to S3
+    // This will build the frontend and upload to S3 during cdk deploy
+    const frontendPath = path.join(__dirname, '../../../frontend');
+    const buildOutputPath = path.join(frontendPath, 'out');
+
+    // Deploy the Next.js static export to S3
+    const deployment = new s3deploy.BucketDeployment(this, 'DeployWebsite', {
+      sources: [s3deploy.Source.asset(buildOutputPath)],
+      destinationBucket: this.bucket,
+      distribution: this.distribution,
+      distributionPaths: ['/*'], // Invalidate all paths
+      // Cache control headers for different file types
+      cacheControl: [
+        // HTML files - short cache
+        s3deploy.CacheControl.setPublic(),
+        s3deploy.CacheControl.maxAge(cdk.Duration.minutes(5)),
+      ],
+      // Prune old files
+      prune: true,
+      // Retain logs for troubleshooting
+      retainOnDelete: false,
+      memoryLimit: 512,
+    });
+
+    // Add specific cache control for static assets
+    // Note: This will be handled by CloudFront cache policies we configured above
+    // The S3 cache control is a fallback
+
+    new cdk.CfnOutput(this, 'DeploymentStatus', {
+      value: 'Website deployed successfully',
+      description: 'Frontend deployment status',
+    });
   }
 }

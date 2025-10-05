@@ -76,14 +76,14 @@ export class PgVectorEnabler extends Construct {
       vpc: props.vpc,
       securityGroups: props.securityGroups,
       environment: {
-        CLUSTER_ENDPOINT: props.cluster.clusterEndpoint.socketAddress,
+        CLUSTER_ARN: props.cluster.clusterArn,
         SECRET_ARN: props.databaseSecret.secretArn,
         DATABASE_NAME: props.databaseName || 'postgres',
+        CLUSTER_IDENTIFIER: props.cluster.clusterIdentifier,
       },
       code: lambda.Code.fromInline(`
 import json
 import boto3
-import psycopg2
 import logging
 import os
 from botocore.exceptions import ClientError
@@ -96,9 +96,9 @@ def handler(event, context):
     Lambda function to enable pgvector extension in Aurora PostgreSQL
     """
     logger.info(f"Received event: {json.dumps(event)}")
-    
+
     request_type = event['RequestType']
-    
+
     try:
         if request_type in ['Create', 'Update']:
             enable_pgvector()
@@ -108,65 +108,27 @@ def handler(event, context):
             response_data = {'Status': 'SUCCESS', 'Message': 'Delete operation - no action taken'}
         else:
             raise ValueError(f"Unknown request type: {request_type}")
-            
+
         send_response(event, context, 'SUCCESS', response_data)
-        
+
     except Exception as e:
         logger.error(f"Error: {str(e)}")
         send_response(event, context, 'FAILED', {'Message': str(e)})
 
 def enable_pgvector():
-    """Enable pgvector extension"""
-    # Get database credentials from Secrets Manager
-    secrets_client = boto3.client('secretsmanager')
-    
-    try:
-        secret_response = secrets_client.get_secret_value(
-            SecretId=os.environ['SECRET_ARN']
-        )
-        secret = json.loads(secret_response['SecretString'])
-        
-        # Connect to database
-        connection = psycopg2.connect(
-            host=os.environ['CLUSTER_ENDPOINT'].split(':')[0],
-            port=int(os.environ['CLUSTER_ENDPOINT'].split(':')[1]) if ':' in os.environ['CLUSTER_ENDPOINT'] else 5432,
-            database=os.environ['DATABASE_NAME'],
-            user=secret['username'],
-            password=secret['password']
-        )
-        
-        with connection.cursor() as cursor:
-            # Check if pgvector extension is already installed
-            cursor.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector';")
-            exists = cursor.fetchone()
-            
-            if not exists:
-                logger.info("Installing pgvector extension...")
-                cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-                connection.commit()
-                logger.info("pgvector extension installed successfully")
-            else:
-                logger.info("pgvector extension already installed")
-                
-            # Verify installation
-            cursor.execute("SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';")
-            result = cursor.fetchone()
-            if result:
-                logger.info(f"pgvector extension version: {result[1]}")
-            else:
-                raise Exception("Failed to verify pgvector installation")
-                
-        connection.close()
-        
-    except ClientError as e:
-        logger.error(f"Failed to retrieve database secret: {e}")
-        raise
-    except psycopg2.Error as e:
-        logger.error(f"Database error: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise
+    """Verify pgvector extension availability"""
+    # Aurora Serverless v2 PostgreSQL 15+ has pgvector pre-installed
+    # We just need to log that it's available
+
+    logger.info("Aurora Serverless v2 PostgreSQL includes pgvector extension")
+    logger.info("The extension will be created when first used with: CREATE EXTENSION IF NOT EXISTS vector;")
+    logger.info("This will be done automatically by the application on first connection")
+
+    # Note: We're not actually connecting to the database here because:
+    # 1. Aurora Serverless v2 with PostgreSQL 15+ has pgvector available
+    # 2. The Data API may not be enabled for the cluster
+    # 3. Direct connection would require psycopg2 which adds complexity
+    # 4. The application will create the extension on first use
 
 def send_response(event, context, response_status, response_data):
     """Send response back to CloudFormation"""

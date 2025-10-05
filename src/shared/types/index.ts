@@ -58,8 +58,19 @@ export enum Visibility {
     createdAt: Date;
     updatedAt: Date;
   }
+
+  export interface Badge {
+    id: string;
+    userId: string;
+    badgeType: BadgeType;
+    awardedAt: Date;
+    awardedBy?: string;
+    awardedReason?: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
   
-  // API Request/Response Types
+  // Content API Request/Response Types
   export interface CreateContentRequest {
     title: string;
     description?: string;
@@ -83,4 +94,139 @@ export enum Visibility {
     };
     limit?: number;
     offset?: number;
+  }
+
+  // Authentication API Types
+  export interface RegisterRequest {
+    email: string;
+    password: string;
+    username: string;
+  }
+
+  export interface RegisterResponse {
+    userId: string;
+    message: string;
+  }
+
+  export interface LoginRequest {
+    email: string;
+    password: string;
+  }
+
+  export interface LoginResponse {
+    accessToken: string;
+    idToken: string;
+    refreshToken: string;
+    expiresIn: number;
+    user: {
+      id: string;
+      email: string;
+      username: string;
+      profileSlug: string;
+      isAdmin: boolean;
+      isAwsEmployee: boolean;
+    };
+  }
+
+  export interface RefreshTokenRequest {
+    refreshToken: string;
+  }
+
+  export interface RefreshTokenResponse {
+    accessToken: string;
+    idToken?: string; // Optional - not always returned by Cognito on refresh
+    expiresIn: number;
+  }
+
+  export interface VerifyEmailRequest {
+    email: string;
+    confirmationCode: string;
+  }
+
+  export interface VerifyEmailResponse {
+    message: string;
+    verified: boolean;
+  }
+
+  export interface ApiError {
+    code: string;
+    message: string;
+    details?: Record<string, any>;
+  }
+
+  export interface ApiErrorResponse {
+    error: ApiError;
+  }
+
+  // Channel Types
+  export enum ChannelType {
+    BLOG = 'blog',
+    YOUTUBE = 'youtube',
+    GITHUB = 'github'
+  }
+
+  export interface Channel {
+    id: string;
+    userId: string;
+    channelType: ChannelType;
+    url: string;
+    name?: string;
+    enabled: boolean;
+    lastSyncAt?: Date;
+    lastSyncStatus?: 'success' | 'error';
+    lastSyncError?: string;
+    syncFrequency: 'daily' | 'weekly' | 'manual';
+    metadata: Record<string, any>;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  export interface CreateChannelRequest {
+    channelType: ChannelType;
+    url: string;
+    name?: string;
+    syncFrequency?: 'daily' | 'weekly' | 'manual';
+    metadata?: Record<string, any>;
+  }
+
+  export interface UpdateChannelRequest {
+    name?: string;
+    enabled?: boolean;
+    syncFrequency?: 'daily' | 'weekly' | 'manual';
+    metadata?: Record<string, any>;
+  }
+
+  export interface ChannelListResponse {
+    channels: Channel[];
+    total: number;
+  }
+
+  export interface TriggerSyncRequest {
+    channelId: string;
+  }
+
+  export interface TriggerSyncResponse {
+    message: string;
+    syncJobId: string;
+  }
+
+  // Scraper Message Types
+  export interface ScraperMessage {
+    channelId: string;
+    userId: string;
+    channelType: ChannelType;
+    url: string;
+    lastSyncAt?: string;
+    metadata?: Record<string, any>;
+  }
+
+  export interface ContentProcessorMessage {
+    userId: string;
+    channelId: string;
+    title: string;
+    description?: string;
+    contentType: ContentType;
+    url: string;
+    publishDate?: string;
+    metadata?: Record<string, any>;
   }
