@@ -137,23 +137,18 @@ describe('StaticSiteStack - Sprint 1 Requirements', () => {
       });
     });
 
-    it('should create Origin Access Identity for S3', () => {
-      template.hasResourceProperties('AWS::CloudFront::CloudFrontOriginAccessIdentity', {
-        CloudFrontOriginAccessIdentityConfig: {
-          Comment: Match.anyValue(),
-        },
-      });
-
-      // Verify S3 bucket policy allows OAI access
+    it('should create Origin Access Control for S3', () => {
+      // With OAC (Origin Access Control), CloudFront automatically manages bucket permissions
+      // Verify S3 bucket policy allows CloudFront service access
       template.hasResourceProperties('AWS::S3::BucketPolicy', {
         PolicyDocument: Match.objectLike({
           Statement: Match.arrayWith([
             Match.objectLike({
               Effect: 'Allow',
               Principal: Match.objectLike({
-                AWS: Match.anyValue(), // OAI principal
+                Service: 'cloudfront.amazonaws.com',
               }),
-              Action: Match.anyValue(),
+              Action: 's3:GetObject',
             }),
           ]),
         }),

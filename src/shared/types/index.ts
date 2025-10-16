@@ -11,7 +11,12 @@ export enum Visibility {
     YOUTUBE = 'youtube',
     GITHUB = 'github',
     CONFERENCE_TALK = 'conference_talk',
-    PODCAST = 'podcast'
+    PODCAST = 'podcast',
+    SOCIAL = 'social',
+    WHITEPAPER = 'whitepaper',
+    TUTORIAL = 'tutorial',
+    WORKSHOP = 'workshop',
+    BOOK = 'book'
   }
   
   export enum BadgeType {
@@ -21,6 +26,14 @@ export enum Visibility {
     USER_GROUP_LEADER = 'user_group_leader'
   }
   
+  // Social Links Interface
+  export interface SocialLinks {
+    twitter?: string;
+    linkedin?: string;
+    github?: string;
+    website?: string;
+  }
+
   // Entity Interfaces
   export interface User {
     id: string;
@@ -28,9 +41,15 @@ export enum Visibility {
     email: string;
     username: string;
     profileSlug: string;
+    bio?: string;
+    socialLinks?: SocialLinks;
     defaultVisibility: Visibility;
     isAdmin: boolean;
     isAwsEmployee: boolean;
+    mfaEnabled?: boolean;
+    receiveNewsletter?: boolean;
+    receiveContentNotifications?: boolean;
+    receiveCommunityUpdates?: boolean;
     createdAt: Date;
     updatedAt: Date;
   }
@@ -57,15 +76,21 @@ export enum Visibility {
     urls: ContentUrl[];
     createdAt: Date;
     updatedAt: Date;
+    deletedAt?: Date;
   }
 
-  export interface Badge {
+export interface Badge {
     id: string;
     userId: string;
     badgeType: BadgeType;
     awardedAt: Date;
     awardedBy?: string;
     awardedReason?: string;
+    metadata?: Record<string, any>;
+    isActive?: boolean;
+    revokedAt?: Date;
+    revokedBy?: string;
+    revokeReason?: string;
     createdAt: Date;
     updatedAt: Date;
   }
@@ -229,4 +254,54 @@ export enum Visibility {
     url: string;
     publishDate?: string;
     metadata?: Record<string, any>;
+  }
+
+  // User Settings API Types
+  export interface UpdateUserRequest {
+    username?: string;
+    bio?: string;
+    defaultVisibility?: Visibility;
+  }
+
+  export interface ChangePasswordRequest {
+    currentPassword: string;
+    newPassword: string;
+  }
+
+  export interface ChangePasswordResponse {
+    message: string;
+  }
+
+  export interface MfaSetupResponse {
+    qrCode: string;
+    secret: string;
+  }
+
+  export interface UpdatePreferencesRequest {
+    receiveNewsletter?: boolean;
+    receiveContentNotifications?: boolean;
+    receiveCommunityUpdates?: boolean;
+  }
+
+  export interface UpdatePreferencesResponse {
+    message: string;
+  }
+
+  export interface UserDataExport {
+    user: User;
+    content: Content[];
+    badges: Badge[];
+  }
+
+  export interface DeleteAccountResponse {
+    message: string;
+  }
+
+  // Search Filters Interface (matches SearchRequest.filters structure)
+  export interface SearchFilters {
+    contentTypes?: ContentType[];
+    badges?: BadgeType[];
+    visibility?: Visibility[];
+    dateRange?: { start: Date; end: Date };
+    tags?: string[];
   }

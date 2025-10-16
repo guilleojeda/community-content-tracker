@@ -1,7 +1,4 @@
 import { ScheduledEvent, Context } from 'aws-lambda';
-import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { ChannelType, ContentType } from '../../../../src/shared/types';
 
 // Set required environment variables BEFORE any imports that use them
@@ -9,21 +6,40 @@ process.env.CONTENT_PROCESSING_QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/
 process.env.AWS_REGION = 'us-east-1';
 process.env.GITHUB_TOKEN = 'ghp_test_token';
 
-// Create mock functions that will be used
-const mockFindActiveByType = jest.fn();
-const mockUpdateSyncStatus = jest.fn();
+// Mock database pool FIRST
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+  end: jest.fn(),
+  on: jest.fn(),
+};
+
+jest.mock('../../../../src/backend/services/database', () => ({
+  getDatabasePool: jest.fn().mockResolvedValue(mockPool),
+  closeDatabasePool: jest.fn(),
+  setTestDatabasePool: jest.fn(),
+  resetDatabaseCache: jest.fn(),
+}));
+
+// Mock ChannelRepository with class pattern
+jest.mock('../../../../src/backend/repositories/ChannelRepository', () => {
+  const mockFindActiveByType = jest.fn();
+  const mockUpdateSyncStatus = jest.fn();
+
+  class MockChannelRepository {
+    findActiveByType = mockFindActiveByType;
+    updateSyncStatus = mockUpdateSyncStatus;
+
+    static mockFindActiveByType = mockFindActiveByType;
+    static mockUpdateSyncStatus = mockUpdateSyncStatus;
+  }
+
+  return { ChannelRepository: MockChannelRepository };
+});
+
+// Create mock functions for AWS services
 const mockSend = jest.fn();
 const mockSecretsManagerSend = jest.fn();
-
-// Mock dependencies - must be done before importing handler
-jest.mock('../../../../src/backend/repositories/ChannelRepository', () => {
-  return {
-    ChannelRepository: jest.fn().mockImplementation(() => ({
-      findActiveByType: mockFindActiveByType,
-      updateSyncStatus: mockUpdateSyncStatus,
-    })),
-  };
-});
 
 jest.mock('@aws-sdk/client-sqs', () => {
   return {
@@ -51,35 +67,27 @@ jest.mock('pg', () => ({
   })),
 }));
 
-// Mock database service
-jest.mock('../../../../src/backend/services/database', () => ({
-  getDatabasePool: jest.fn().mockResolvedValue({
-    query: jest.fn(),
-    connect: jest.fn(),
-    end: jest.fn(),
-  }),
-}));
-
 // Mock fetch globally
 global.fetch = jest.fn();
 
-// Import handler AFTER mocks are set up
+// Import handler and services AFTER mocks are set up
 import { handler } from '../../../../src/backend/lambdas/scrapers/github';
+import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 
 const mockChannelRepository = ChannelRepository as jest.MockedClass<typeof ChannelRepository>;
 const mockSQSClient = SQSClient as jest.MockedClass<typeof SQSClient>;
+
+// Access the mock methods from the mocked class
+const mockFindActiveByType = (mockChannelRepository as any).mockFindActiveByType;
+const mockUpdateSyncStatus = (mockChannelRepository as any).mockUpdateSyncStatus;
 
 describe('GitHub Scraper Lambda', () => {
   let mockContext: Context;
 
   beforeEach(() => {
-    // Clear mock call history but keep implementations
-    mockFindActiveByType.mockClear();
-    mockUpdateSyncStatus.mockClear();
-    mockSend.mockClear();
-    mockSecretsManagerSend.mockClear();
-    (global.fetch as jest.Mock).mockClear();
-
+    jest.clearAllMocks();
     mockContext = {} as Context;
 
     // Reset to default environment variables

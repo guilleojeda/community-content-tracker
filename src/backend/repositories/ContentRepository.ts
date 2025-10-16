@@ -64,8 +64,28 @@ export interface ContentUpdateData {
  * Handles visibility filtering and content search functionality
  */
 export class ContentRepository extends BaseRepository {
+  private static analyticsTableChecked = false;
+  private static analyticsTableExists = false;
+
   constructor(pool: Pool | PoolClient) {
     super(pool, 'content');
+  }
+
+  private async ensureAnalyticsTable(): Promise<void> {
+    if (ContentRepository.analyticsTableChecked) {
+      return;
+    }
+
+    try {
+      const result = await this.executeQuery(
+        `SELECT to_regclass('public.content_analytics') AS table_exists`
+      );
+      ContentRepository.analyticsTableExists = Boolean(result.rows[0]?.table_exists);
+    } catch (error) {
+      ContentRepository.analyticsTableExists = false;
+    } finally {
+      ContentRepository.analyticsTableChecked = true;
+    }
   }
 
   /**
@@ -91,6 +111,7 @@ export class ContentRepository extends BaseRepository {
       urls: row.urls || [], // Will be populated by join or separate query
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      deletedAt: row.deleted_at ?? undefined,
     };
   }
 
@@ -634,13 +655,26 @@ export class ContentRepository extends BaseRepository {
     contentData: Omit<ContentCreateData, 'urls'>,
     urls?: string[]
   ): Promise<Content> {
-    const content = await this.create(contentData);
+    await this.ensureAnalyticsTable();
 
-    // Create analytics record
-    await this.executeQuery(`
-      INSERT INTO content_analytics (content_id)
-      VALUES ($1)
-    `, [content.id]);
+    let content;
+    try {
+      content = await this.create(contentData);
+    } catch (error) {
+      console.error('Failed to create content record', { error, contentData });
+      throw error;
+    }
+
+    // Create analytics record (optional table)
+    if (ContentRepository.analyticsTableExists) {
+      await this.executeQuery(
+        `
+          INSERT INTO content_analytics (content_id)
+          VALUES ($1)
+        `,
+        [content.id]
+      );
+    }
 
     // Add URLs if provided
     if (urls && urls.length > 0) {
@@ -1450,5 +1484,166 @@ export class ContentRepository extends BaseRepository {
 
     const result = await this.executeQuery(query, params);
     return parseInt(result.rows[0].total, 10);
+  }
+
+  /**
+   * Find duplicate content using multiple detection strategies
+   * Supports title similarity (using pg_trgm), tag matching, and URL comparison
+   */
+  async findDuplicates(
+    userId: string,
+    threshold: number = 0.8,
+    fields: string[] = ['title', 'tags'],
+    contentId?: string
+  ): Promise<Array<{ content: Content; similarity: number; matchedFields: string[] }>> {
+    // First, get all user's content
+    const allContent = await this.findByUserId(userId, { viewerId: userId });
+
+    // If no content or only one item, return empty
+    if (allContent.length <= 1) {
+      return [];
+    }
+
+    // If contentId is specified, find duplicates for that specific content
+    let targetContent: Content | null = null;
+    if (contentId) {
+      targetContent = await this.findById(contentId);
+      if (!targetContent) {
+        throw new Error('Content not found');
+      }
+    }
+
+    // Find duplicates by comparing each content item
+    const duplicates: Array<{ content: Content; similarity: number; matchedFields: string[] }> = [];
+
+    for (const content of allContent) {
+      // Skip if comparing to itself
+      if (targetContent && content.id === targetContent.id) {
+        continue;
+      }
+
+      // If no target content, compare all items with each other
+      if (!targetContent) {
+        // For general duplicate detection without a specific target,
+        // we need to compare each item with every other item
+        // This is done by checking against all previous items
+        const previousContent = allContent.slice(0, allContent.indexOf(content));
+        for (const prevContent of previousContent) {
+          const result = await this.compareTwoContentItems(
+            prevContent,
+            content,
+            threshold,
+            fields
+          );
+          if (result.similarity >= threshold && result.matchedFields.length > 0) {
+            // Add to duplicates if not already present
+            const existing = duplicates.find(d => d.content.id === content.id);
+            if (!existing) {
+              duplicates.push({
+                content,
+                similarity: result.similarity,
+                matchedFields: result.matchedFields,
+              });
+            }
+          }
+        }
+        continue;
+      }
+
+      // Compare with target content
+      const result = await this.compareTwoContentItems(
+        targetContent,
+        content,
+        threshold,
+        fields
+      );
+
+      if (result.similarity >= threshold && result.matchedFields.length > 0) {
+        duplicates.push({
+          content,
+          similarity: result.similarity,
+          matchedFields: result.matchedFields,
+        });
+      }
+    }
+
+    // Sort by similarity (highest first)
+    return duplicates.sort((a, b) => b.similarity - a.similarity);
+  }
+
+  /**
+   * Compare two content items and calculate similarity
+   */
+  private async compareTwoContentItems(
+    content1: Content,
+    content2: Content,
+    threshold: number,
+    fields: string[]
+  ): Promise<{ similarity: number; matchedFields: string[] }> {
+    const matchedFields: string[] = [];
+    let totalSimilarity = 0;
+    let fieldCount = 0;
+
+    // Title similarity
+    if (fields.includes('title')) {
+      const titleSimilarityQuery = `SELECT similarity($1, $2) as score`;
+      const titleResult = await this.executeQuery(titleSimilarityQuery, [
+        content1.title,
+        content2.title,
+      ]);
+      const titleSimilarity = parseFloat(titleResult.rows[0].score);
+
+      if (titleSimilarity >= threshold) {
+        matchedFields.push('title');
+        totalSimilarity += titleSimilarity;
+        fieldCount++;
+      }
+    }
+
+    // Tag similarity
+    if (fields.includes('tags')) {
+      const tags1 = content1.tags || [];
+      const tags2 = content2.tags || [];
+
+      if (tags1.length > 0 && tags2.length > 0) {
+        const commonTags = tags1.filter(tag => tags2.includes(tag));
+        if (commonTags.length > 0) {
+          matchedFields.push('tags');
+          // Jaccard similarity for tags
+          const tagSimilarity = commonTags.length / Math.max(tags1.length, tags2.length);
+          totalSimilarity += tagSimilarity;
+          fieldCount++;
+        }
+      }
+    }
+
+    // URL similarity
+    if (fields.includes('urls')) {
+      const urls1 = content1.urls.map((u: any) =>
+        typeof u === 'string' ? u : (u.url || '')
+      ).filter(u => u);
+      const urls2 = content2.urls.map((u: any) =>
+        typeof u === 'string' ? u : (u.url || '')
+      ).filter(u => u);
+
+      if (urls1.length > 0 && urls2.length > 0) {
+        const commonUrls = urls1.filter((url: string) => urls2.includes(url));
+        if (commonUrls.length > 0) {
+          matchedFields.push('urls');
+          // Jaccard similarity for URLs
+          const urlSimilarity = commonUrls.length / Math.max(urls1.length, urls2.length);
+          totalSimilarity += urlSimilarity;
+          fieldCount++;
+        }
+      }
+    }
+
+    // Calculate average similarity
+    const avgSimilarity = fieldCount > 0 ? totalSimilarity / fieldCount : 0;
+
+    return {
+      similarity: avgSimilarity,
+      matchedFields,
+    };
   }
 }

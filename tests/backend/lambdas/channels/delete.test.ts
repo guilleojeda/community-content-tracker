@@ -1,38 +1,50 @@
 import { APIGatewayProxyEvent, Context } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/channels/delete';
-import { createMockPool, setupChannelMocks } from '../../../helpers/database-mocks';
+import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
+import { ChannelType } from '../../../../src/shared/types';
 
-// Mock the database service
-jest.mock('../../../../src/backend/services/database', () => ({
-  getDatabasePool: jest.fn(),
+// Mock database pool
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+  end: jest.fn(),
+  on: jest.fn(),
+};
+
+// Mock pg module
+jest.mock('pg', () => ({
+  Pool: jest.fn(() => mockPool),
 }));
 
+// Mock ChannelRepository
+jest.mock('../../../../src/backend/repositories/ChannelRepository');
+
 describe('Delete Channel Lambda', () => {
-  let mockQuery: jest.Mock;
+  let mockChannelRepo: jest.Mocked<ChannelRepository>;
   let testUserId: string;
   let testChannelId: string;
   let mockContext: Context;
 
-  beforeAll(async () => {
-    const { pool, mockQuery: query } = createMockPool();
-    mockQuery = query;
-
-    // Mock getDatabasePool to return our mock pool
-    const { getDatabasePool } = require('../../../../src/backend/services/database');
-    (getDatabasePool as jest.Mock).mockResolvedValue(pool);
-
-    // Setup channel mocks
-    setupChannelMocks(mockQuery);
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPool.query.mockReset();
 
     testUserId = 'user-123';
     testChannelId = 'channel-123';
     mockContext = {} as Context;
-  });
 
-  beforeEach(() => {
-    // Reset mocks before each test
-    mockQuery.mockClear();
-    setupChannelMocks(mockQuery);
+    // Create mock repository instance
+    mockChannelRepo = {
+      create: jest.fn(),
+      findByUserIdAndUrl: jest.fn(),
+      findById: jest.fn(),
+      findByUserId: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as any;
+
+    // Mock the constructor to return our mocked instance
+    (ChannelRepository as jest.MockedClass<typeof ChannelRepository>).mockImplementation(() => mockChannelRepo as any);
   });
 
   const createEvent = (channelId: string, userId: string = testUserId): APIGatewayProxyEvent => {
@@ -49,6 +61,21 @@ describe('Delete Channel Lambda', () => {
   };
 
   it('should delete channel successfully', async () => {
+    const existingChannel = {
+      id: testChannelId,
+      userId: testUserId,
+      channelType: ChannelType.BLOG,
+      url: 'https://example.com/feed',
+      enabled: true,
+      syncFrequency: 'daily' as const,
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    mockChannelRepo.findById.mockResolvedValue(existingChannel);
+    mockChannelRepo.delete.mockResolvedValue(true);
+
     const event = createEvent(testChannelId);
     const response = await handler(event, mockContext);
 
@@ -59,6 +86,8 @@ describe('Delete Channel Lambda', () => {
   });
 
   it('should return 404 for non-existent channel', async () => {
+    mockChannelRepo.findById.mockResolvedValue(null);
+
     const event = createEvent('00000000-0000-0000-0000-000000000000');
     const response = await handler(event, mockContext);
 
@@ -69,7 +98,21 @@ describe('Delete Channel Lambda', () => {
   });
 
   it('should return 403 when deleting another user channel', async () => {
-    const event = createEvent(testChannelId, 'different-user-id');
+    const existingChannel = {
+      id: testChannelId,
+      userId: 'different-user-id',
+      channelType: ChannelType.BLOG,
+      url: 'https://example.com/feed',
+      enabled: true,
+      syncFrequency: 'daily' as const,
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    mockChannelRepo.findById.mockResolvedValue(existingChannel);
+
+    const event = createEvent(testChannelId, testUserId);
     const response = await handler(event, mockContext);
 
     expect(response.statusCode).toBe(403);

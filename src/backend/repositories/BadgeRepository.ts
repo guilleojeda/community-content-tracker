@@ -7,6 +7,7 @@ export interface BadgeCreateData {
   badgeType: BadgeType;
   awardedBy?: string;
   awardedReason?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface BadgeUpdateData {
@@ -49,6 +50,11 @@ export class BadgeRepository extends BaseRepository {
       awardedAt: row.awarded_at,
       awardedBy: row.awarded_by ?? undefined,
       awardedReason: row.awarded_reason ?? undefined,
+      metadata: row.metadata ?? undefined,
+      isActive: row.is_active ?? true,
+      revokedAt: row.revoked_at ?? undefined,
+      revokedBy: row.revoked_by ?? undefined,
+      revokeReason: row.revoke_reason ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -68,6 +74,21 @@ export class BadgeRepository extends BaseRepository {
     if (data.awardedReason !== undefined) transformed.awarded_reason = data.awardedReason;
     if ('awardedAt' in data && data.awardedAt !== undefined) {
       transformed.awarded_at = data.awardedAt;
+    }
+    if (data.metadata !== undefined) {
+      transformed.metadata = data.metadata;
+    }
+    if ('isActive' in data && data.isActive !== undefined) {
+      transformed.is_active = data.isActive;
+    }
+    if ('revokedAt' in data && data.revokedAt !== undefined) {
+      transformed.revoked_at = data.revokedAt;
+    }
+    if ('revokedBy' in data && data.revokedBy !== undefined) {
+      transformed.revoked_by = data.revokedBy;
+    }
+    if ('revokeReason' in data && data.revokeReason !== undefined) {
+      transformed.revoke_reason = data.revokeReason;
     }
 
     return transformed;
@@ -95,7 +116,7 @@ export class BadgeRepository extends BaseRepository {
   async userHasBadge(userId: string, badgeType: BadgeType): Promise<boolean> {
     const query = `
       SELECT 1 FROM ${this.escapeIdentifier(this.tableName)}
-      WHERE user_id = $1 AND badge_type = $2
+      WHERE user_id = $1 AND badge_type = $2 AND is_active = true
       LIMIT 1
     `;
 
@@ -126,13 +147,26 @@ export class BadgeRepository extends BaseRepository {
   /**
    * Revoke a badge from a user
    */
-  async revokeBadge(userId: string, badgeType: BadgeType): Promise<boolean> {
+  async revokeBadge(userId: string, badgeType: BadgeType, options?: {
+    revokedBy?: string;
+    reason?: string;
+  }): Promise<boolean> {
     const query = `
-      DELETE FROM ${this.escapeIdentifier(this.tableName)}
-      WHERE user_id = $1 AND badge_type = $2
+      UPDATE ${this.escapeIdentifier(this.tableName)}
+      SET is_active = false,
+          revoked_at = NOW(),
+          revoked_by = $3,
+          revoke_reason = $4,
+          updated_at = NOW()
+      WHERE user_id = $1 AND badge_type = $2 AND is_active = true
     `;
 
-    const result = await this.executeQuery(query, [userId, badgeType]);
+    const result = await this.executeQuery(query, [
+      userId,
+      badgeType,
+      options?.revokedBy ?? null,
+      options?.reason ?? null,
+    ]);
     return result.rowCount > 0;
   }
 

@@ -170,7 +170,8 @@ export class AuditLogService {
     adminId: string,
     userId: string,
     badgeType: string,
-    reason?: string
+    reason?: string,
+    metadata?: Record<string, any>
   ): Promise<string> {
     return this.log({
       userId: adminId,
@@ -182,6 +183,7 @@ export class AuditLogService {
         badgeType,
         reason,
         grantedBy: adminId,
+        metadata: metadata ?? {},
       },
     });
   }
@@ -217,7 +219,9 @@ export class AuditLogService {
   async logAwsEmployeeChange(
     adminId: string,
     userId: string,
-    isAwsEmployee: boolean
+    isAwsEmployee: boolean,
+    reason?: string,
+    metadata?: Record<string, any>
   ): Promise<string> {
     return this.log({
       userId: adminId,
@@ -227,6 +231,8 @@ export class AuditLogService {
       newValues: {
         isAwsEmployee,
         changedBy: adminId,
+        reason,
+        metadata: metadata ?? {},
       },
     });
   }

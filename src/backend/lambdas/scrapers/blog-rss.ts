@@ -1,27 +1,30 @@
 import { ScheduledEvent, Context } from 'aws-lambda';
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { SQSClient } from '@aws-sdk/client-sqs';
 import Parser from 'rss-parser';
 import { getDatabasePool } from '../../services/database';
 import { ChannelRepository } from '../../repositories/ChannelRepository';
 import { ChannelType, ContentType, ContentProcessorMessage } from '../../../shared/types';
 import { ParsingError, ExternalApiError, formatErrorForLogging } from '../../../shared/errors';
+import { createSendMessageCommand } from '../../utils/sqs';
 
 const sqsClient = new SQSClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const parser = new Parser();
 
-// Validate required environment variables at module load
-function validateEnvironment(): void {
-  const required = ['CONTENT_PROCESSING_QUEUE_URL'];
-  const missing = required.filter(key => !process.env[key]);
+let cachedQueueUrl: string | null = null;
 
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+function resolveQueueUrl(): string {
+  if (cachedQueueUrl) {
+    return cachedQueueUrl;
   }
+
+  const value = process.env.CONTENT_PROCESSING_QUEUE_URL;
+  if (!value || value.trim() === '') {
+    throw new Error('Missing required environment variables: CONTENT_PROCESSING_QUEUE_URL');
+  }
+
+  cachedQueueUrl = value;
+  return cachedQueueUrl;
 }
-
-validateEnvironment();
-
-const QUEUE_URL = process.env.CONTENT_PROCESSING_QUEUE_URL as string;
 
 interface RSSItem {
   title?: string;
@@ -36,10 +39,14 @@ async function parseRSSFeed(url: string): Promise<RSSItem[]> {
     const feed = await parser.parseURL(url);
     return feed.items || [];
   } catch (error: any) {
-    const parsingError = new ParsingError('RSS', `Failed to parse RSS feed: ${url}`, {
-      url,
-      originalError: error.message,
-    });
+    const parsingError = new ParsingError(
+      'RSS',
+      `Failed to parse RSS feed: ${url} - ${error?.message || 'Invalid XML'}`,
+      {
+        url,
+        originalError: error?.message,
+      }
+    );
     console.error(formatErrorForLogging(parsingError, { url }));
     throw parsingError;
   }
@@ -77,8 +84,9 @@ async function sendToQueue(channelId: string, userId: string, post: RSSItem): Pr
   };
 
   try {
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: QUEUE_URL,
+    const queueUrl = resolveQueueUrl();
+    const commandInput = {
+      QueueUrl: queueUrl,
       MessageBody: JSON.stringify(message),
       MessageAttributes: {
         contentType: {
@@ -90,13 +98,15 @@ async function sendToQueue(channelId: string, userId: string, post: RSSItem): Pr
           StringValue: channelId,
         },
       },
-    }));
+    };
+    const command = createSendMessageCommand(commandInput);
+    await sqsClient.send(command);
   } catch (error: any) {
-    const sqsError = new ExternalApiError('SQS', `Failed to send message to queue`, 500, {
+    const sqsError = new ExternalApiError('SQS', 'Failed to send message to queue', 500, {
       channelId,
       userId,
-      queueUrl: QUEUE_URL,
-      originalError: error.message,
+      queueUrl: resolveQueueUrl(),
+      originalError: error?.message,
     });
     console.error(formatErrorForLogging(sqsError, { channelId, userId }));
     throw sqsError;

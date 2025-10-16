@@ -336,6 +336,53 @@ describe('GET /search Lambda handler', () => {
         false
       );
     });
+
+    it('should filter by visibility', async () => {
+      const event = createEvent({
+        q: 'AWS',
+        visibility: 'public,aws_only'
+      }, {
+        userId: 'user-123',
+        isAwsEmployee: 'true'
+      });
+
+      const mockResults = {
+        items: [],
+        total: 0,
+        limit: 10,
+        offset: 0
+      };
+
+      mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
+
+      await handler(event);
+
+      expect(mockSearchService.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: 'AWS',
+          filters: expect.objectContaining({
+            visibility: [Visibility.PUBLIC, Visibility.AWS_ONLY]
+          })
+        }),
+        true,
+        [],
+        true
+      );
+    });
+
+    it('should return 400 for invalid visibility values', async () => {
+      const event = createEvent({
+        q: 'AWS',
+        visibility: 'public,invalid'
+      });
+
+      const response = await handler(event) as APIGatewayProxyResult;
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.message).toContain('Invalid visibility value');
+    });
   });
 
   describe('when handling authentication', () => {

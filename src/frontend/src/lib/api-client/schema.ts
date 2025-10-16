@@ -149,25 +149,58 @@ export interface components {
         };
         PlatformStats: {
             /**
-             * @description Total number of contributors
-             * @example 5000
+             * @description Total number of registered users
+             * @example 5200
              */
-            contributors?: number;
+            totalUsers: number;
             /**
-             * @description Total number of content pieces
-             * @example 50000
+             * @description Total number of content pieces in the catalog
+             * @example 48000
              */
-            contentPieces?: number;
+            totalContent: number;
             /**
-             * @description Average daily content additions
-             * @example 100
+             * @description Active contributors with claimed content
+             * @example 1600
              */
-            dailyContent?: number;
+            topContributors: number;
             /**
-             * @description Weekly active users
-             * @example 1000
+             * @description Distribution of content by type (blog, youtube, github, etc.)
+             * @example {
+             *       "blog": 12000,
+             *       "youtube": 8500,
+             *       "github": 4200
+             *     }
              */
-            weeklyActiveUsers?: number;
+            contentByType: {
+                [key: string]: number;
+            };
+            recentActivity: {
+                /**
+                 * @description Number of content pieces added in the last 24 hours
+                 * @example 120
+                 */
+                last24h: number;
+                /**
+                 * @description Number of content pieces added in the last 7 days
+                 * @example 540
+                 */
+                last7d: number;
+                /**
+                 * @description Number of content pieces added in the last 30 days
+                 * @example 2200
+                 */
+                last30d: number;
+            };
+            /**
+             * @description Human readable uptime indicator
+             * @example 24/7
+             */
+            uptime: string;
+            /**
+             * Format: date-time
+             * @description ISO timestamp indicating when the stats were last refreshed
+             */
+            lastUpdated: string;
         };
         Error: {
             error: {
@@ -217,6 +250,8 @@ export interface operations {
                 tags?: string;
                 /** @description Filter by AWS program badges (comma-separated) */
                 badges?: string;
+                /** @description Filter by content visibility levels (comma-separated) */
+                visibility?: string;
                 /** @description Start date for date range filter (ISO 8601) */
                 startDate?: string;
                 /** @description End date for date range filter (ISO 8601) */

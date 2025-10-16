@@ -166,10 +166,13 @@ describe('Auth Integration Tests', () => {
       (cognitoError as any).name = 'UserNotFoundException';
 
       const response = mapCognitoError(cognitoError);
-      expect(response.statusCode).toBe(404);
+      // For security reasons, UserNotFoundException returns 401 instead of 404
+      // to prevent user enumeration attacks
+      expect(response.statusCode).toBe(401);
 
       const body = JSON.parse(response.body);
-      expect(body.error.code).toBe('NOT_FOUND');
+      expect(body.error.code).toBe('AUTH_INVALID');
+      expect(body.error.message).toBe('Invalid credentials');
     });
 
     test('should map TooManyRequestsException correctly', () => {

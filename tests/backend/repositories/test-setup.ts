@@ -2,6 +2,7 @@ import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers
 import { Pool } from 'pg';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { resetDatabaseCache } from '../../../src/backend/services/database';
 
 export interface TestDatabaseSetup {
   container: StartedPostgreSqlContainer;
@@ -13,6 +14,7 @@ export class TestDatabase {
   private static instance: TestDatabase;
   private container: StartedPostgreSqlContainer | null = null;
   private pool: Pool | null = null;
+  private usageCount = 0;
 
   private constructor() {}
 
@@ -24,34 +26,28 @@ export class TestDatabase {
   }
 
   public async setup(): Promise<TestDatabaseSetup> {
-    if (this.container && this.pool) {
-      return {
-        container: this.container,
-        pool: this.pool,
-        connectionString: this.container.getConnectionUri(),
-      };
+    this.usageCount += 1;
+
+    if (!this.container || !this.pool) {
+      console.log('Starting PostgreSQL test container...');
+
+      this.container = await new PostgreSqlContainer('pgvector/pgvector:pg15')
+        .withDatabase('test_db')
+        .withUsername('test_user')
+        .withPassword('test_password')
+        .withExposedPorts({ container: 5432, host: 0 })
+        .start();
+
+        const connectionString = this.container.getConnectionUri();
+        this.pool = new Pool({ connectionString });
+
+        await this.runMigrations();
     }
 
-    console.log('Starting PostgreSQL test container...');
-
-    // Use pgvector/pgvector image which includes the vector extension
-    // This avoids conflicts with the dev database on port 5432
-    this.container = await new PostgreSqlContainer('pgvector/pgvector:pg15')
-      .withDatabase('test_db')
-      .withUsername('test_user')
-      .withPassword('test_password')
-      .withExposedPorts({ container: 5432, host: 0 }) // Use random host port to avoid conflicts
-      .start();
-
-    const connectionString = this.container.getConnectionUri();
-    this.pool = new Pool({ connectionString });
-
-    // Run the schema migration
-    await this.runMigrations();
-
+    const connectionString = this.container!.getConnectionUri();
     return {
-      container: this.container,
-      pool: this.pool,
+      container: this.container!,
+      pool: this.pool!,
       connectionString,
     };
   }
@@ -82,6 +78,20 @@ export class TestDatabase {
     try {
       await client.query('BEGIN');
       await client.query(migrationSQL);
+
+      // Ensure analytics table exists for tests that depend on it
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS content_analytics (
+          content_id UUID PRIMARY KEY REFERENCES content(id) ON DELETE CASCADE,
+          views_count INTEGER DEFAULT 0,
+          likes_count INTEGER DEFAULT 0,
+          shares_count INTEGER DEFAULT 0,
+          comments_count INTEGER DEFAULT 0,
+          engagement_score NUMERIC DEFAULT 0,
+          last_updated TIMESTAMPTZ DEFAULT NOW() NOT NULL
+        );
+      `);
+
       await client.query('COMMIT');
       console.log('Database migrations completed.');
     } catch (error: any) {
@@ -99,15 +109,38 @@ export class TestDatabase {
   }
 
   public async cleanup(): Promise<void> {
+    if (this.usageCount > 0) {
+      this.usageCount -= 1;
+    }
+
+    if (this.usageCount > 0) {
+      return;
+    }
+
     if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
+      try {
+        await this.pool.end();
+      } catch (error: any) {
+        if (!error?.code || error.code !== '57P01') {
+          console.warn('Error while closing test database pool:', error);
+        }
+      } finally {
+        this.pool = null;
+      }
     }
 
     if (this.container) {
-      await this.container.stop();
-      this.container = null;
+      try {
+        await this.container.stop();
+      } catch (error) {
+        console.warn('Error while stopping test database container:', (error as Error).message);
+      } finally {
+        this.container = null;
+      }
     }
+
+    resetDatabaseCache();
+    this.usageCount = 0;
   }
 
   public async clearData(): Promise<void> {
@@ -115,20 +148,31 @@ export class TestDatabase {
       throw new Error('Pool not initialized');
     }
 
-    // Clear all data but keep schema
+    // Clear all data but keep schema - only truncate tables that exist
     const tables = [
       'audit_log',
-      'content_bookmarks',
-      'user_follows',
-      'content_analytics',
+      'content_bookmarks',  // May not exist yet
+      'user_follows',  // May not exist yet
+      'content_analytics',  // May not exist yet
+      'content_merge_history',  // Sprint 3
       'content_urls',
       'user_badges',
       'content',
+      'channels',  // Sprint 4
       'users'
     ];
 
     for (const table of tables) {
-      await this.pool.query(`TRUNCATE TABLE ${table} CASCADE`);
+      try {
+        await this.pool.query(`TRUNCATE TABLE ${table} CASCADE`);
+      } catch (error: any) {
+        // If table doesn't exist, skip it silently
+        if (error.code === '42P01') {  // undefined_table error code
+          console.log(`Table ${table} does not exist, skipping truncate`);
+        } else {
+          throw error;
+        }
+      }
     }
   }
 
@@ -202,21 +246,21 @@ export const createTestContent = async (pool: Pool, userId: string, overrides: P
   ]);
 
   return result.rows[0];
-};
+  };
 
-// Jest setup and teardown
-export const setupTestDatabase = async () => {
-  const setup = await testDb.setup();
+  // Jest setup and teardown
+  export const setupTestDatabase = async () => {
+    const setup = await testDb.setup();
 
   // Set environment variables for the database connection
   process.env.DATABASE_URL = setup.connectionString;
 
   return setup;
-};
+  };
 
-export const teardownTestDatabase = async () => {
+  export const teardownTestDatabase = async () => {
   await testDb.cleanup();
-};
+  };
 
 export const resetTestData = async () => {
   await testDb.clearData();

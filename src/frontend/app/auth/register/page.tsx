@@ -2,9 +2,8 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { components } from '@/api/schema';
-
-type RegisterRequest = components['schemas']['RegisterRequest'];
+import { RegisterRequest, RegisterResponse } from '@aws-community-hub/shared';
+import { getPublicApiClient } from '@/api/client';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -55,24 +54,13 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      const client = getPublicApiClient();
       const requestBody: RegisterRequest = {
         email: formData.email,
         username: formData.username,
         password: formData.password,
       };
-      const response = await fetch(`${apiUrl}/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Registration failed');
-      }
+      await client.register(requestBody);
 
       setSuccess(true);
       // Redirect to verify email page after 2 seconds

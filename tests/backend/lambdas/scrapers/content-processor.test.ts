@@ -1,27 +1,44 @@
 import { SQSEvent, SQSRecord, Context } from 'aws-lambda';
-import { ContentRepository } from '../../../../src/backend/repositories/ContentRepository';
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { ContentProcessorMessage, ContentType } from '../../../../src/shared/types';
 
-// Create mock functions that will be used
-const mockFindByUrl = jest.fn();
-const mockCreateContent = jest.fn();
-const mockUpdateWithEmbedding = jest.fn();
+// Mock database pool FIRST
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+  end: jest.fn(),
+  on: jest.fn(),
+};
+
+jest.mock('../../../../src/backend/services/database', () => ({
+  getDatabasePool: jest.fn().mockResolvedValue(mockPool),
+  closeDatabasePool: jest.fn(),
+  setTestDatabasePool: jest.fn(),
+  resetDatabaseCache: jest.fn(),
+}));
+
+// Mock ContentRepository with class pattern
+jest.mock('../../../../src/backend/repositories/ContentRepository', () => {
+  const mockFindByUrl = jest.fn();
+  const mockCreateContent = jest.fn();
+  const mockUpdateWithEmbedding = jest.fn();
+
+  class MockContentRepository {
+    findByUrl = mockFindByUrl;
+    createContent = mockCreateContent;
+    updateWithEmbedding = mockUpdateWithEmbedding;
+
+    static mockFindByUrl = mockFindByUrl;
+    static mockCreateContent = mockCreateContent;
+    static mockUpdateWithEmbedding = mockUpdateWithEmbedding;
+  }
+
+  return { ContentRepository: MockContentRepository };
+});
+
+
+// Create mock functions for AWS services
 const mockBedrockSend = jest.fn();
 const mockCloudWatchSend = jest.fn();
-const mockPoolQuery = jest.fn();
-
-// Mock dependencies - must be done before importing handler
-jest.mock('../../../../src/backend/repositories/ContentRepository', () => {
-  return {
-    ContentRepository: jest.fn().mockImplementation(() => ({
-      findByUrl: mockFindByUrl,
-      createContent: mockCreateContent,
-      updateWithEmbedding: mockUpdateWithEmbedding,
-    })),
-  };
-});
 
 jest.mock('@aws-sdk/client-bedrock-runtime', () => {
   return {
@@ -49,25 +66,31 @@ jest.mock('@aws-sdk/client-cloudwatch', () => {
 // Mock pg Pool
 jest.mock('pg', () => ({
   Pool: jest.fn().mockImplementation(() => ({
-    query: mockPoolQuery,
+    query: jest.fn(),
     connect: jest.fn(),
     end: jest.fn(),
   })),
 }));
 
-// Import handler AFTER mocks are set up
+// Import handler and services AFTER mocks are set up
 import { handler } from '../../../../src/backend/lambdas/scrapers/content-processor';
+import { ContentRepository } from '../../../../src/backend/repositories/ContentRepository';
+import { UserRepository } from '../../../../src/backend/repositories/UserRepository';
+import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 
 const mockContentRepository = ContentRepository as jest.MockedClass<typeof ContentRepository>;
 const mockBedrockClient = BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>;
 const mockCloudWatchClient = CloudWatchClient as jest.MockedClass<typeof CloudWatchClient>;
 
-// Get Pool mock
-const { Pool } = require('pg');
-const MockPool = Pool as jest.MockedClass<typeof Pool>;
+// Access the mock methods from the mocked class
+const mockFindByUrl = (mockContentRepository as any).mockFindByUrl;
+const mockCreateContent = (mockContentRepository as any).mockCreateContent;
+const mockUpdateWithEmbedding = (mockContentRepository as any).mockUpdateWithEmbedding;
 
 describe('Content Processor Lambda', () => {
   let mockContext: Context;
+  let defaultVisibilitySpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -76,6 +99,7 @@ describe('Content Processor Lambda', () => {
     process.env.BEDROCK_REGION = 'us-east-1';
     process.env.AWS_REGION = 'us-east-1';
     process.env.ENVIRONMENT = 'test';
+    defaultVisibilitySpy = jest.spyOn(UserRepository.prototype, 'getDefaultVisibility').mockResolvedValue('private');
   });
 
   const createSQSRecord = (message: ContentProcessorMessage): SQSRecord => ({
@@ -97,6 +121,10 @@ describe('Content Processor Lambda', () => {
 
   const createEvent = (messages: ContentProcessorMessage[]): SQSEvent => ({
     Records: messages.map(createSQSRecord),
+  });
+
+  afterEach(() => {
+    defaultVisibilitySpy.mockRestore();
   });
 
   describe('Success Cases - New Content', () => {
@@ -123,9 +151,6 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
-        rows: [{ default_visibility: 'private' }],
-      });
       mockBedrockSend.mockResolvedValue({
         body: new TextEncoder().encode(JSON.stringify({ embedding: mockEmbedding })),
       });
@@ -164,9 +189,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
-        rows: [{ default_visibility: 'public' }],
-      });
+      defaultVisibilitySpy.mockResolvedValueOnce('public');
       mockBedrockSend.mockResolvedValue({
         body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1, 0.2] })),
       });
@@ -194,9 +217,6 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
-        rows: [{ default_visibility: 'private' }],
-      });
       mockBedrockSend.mockResolvedValue({
         body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
       });
@@ -224,9 +244,6 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
-        rows: [{ default_visibility: 'private' }],
-      });
       mockBedrockSend.mockRejectedValue(new Error('Bedrock error'));
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockCloudWatchSend.mockResolvedValue({});
@@ -345,7 +362,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockResolvedValue({
@@ -379,7 +396,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockResolvedValue({
@@ -404,7 +421,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockRejectedValue(new Error('BEDROCK service unavailable'));
@@ -430,7 +447,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockResolvedValue({
@@ -467,7 +484,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockResolvedValue({
@@ -528,7 +545,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockRejectedValue(new Error('User query failed'));
+      mockPool.query.mockRejectedValue(new Error('User query failed'));
       mockCloudWatchSend.mockResolvedValue({});
 
       const event = createEvent([message]);
@@ -558,7 +575,7 @@ describe('Content Processor Lambda', () => {
         .mockRejectedValueOnce(new Error('Error on first'))
         .mockResolvedValueOnce(null);
 
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockResolvedValue({
@@ -602,7 +619,7 @@ describe('Content Processor Lambda', () => {
       ];
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockResolvedValue({
@@ -650,7 +667,7 @@ describe('Content Processor Lambda', () => {
         .mockRejectedValueOnce(new Error('Failed'))
         .mockResolvedValueOnce(null);
 
-      mockPoolQuery.mockResolvedValue({
+      mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
       mockBedrockSend.mockResolvedValue({
@@ -714,7 +731,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockPoolQuery.mockResolvedValue({ rows: [] }); // No user found
+      mockPool.query.mockResolvedValue({ rows: [] }); // No user found
       mockBedrockSend.mockResolvedValue({
         body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
       });

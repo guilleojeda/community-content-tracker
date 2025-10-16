@@ -82,6 +82,13 @@ paths:
           schema:
             type: string
             example: "hero,community_builder"
+        - name: visibility
+          in: query
+          required: false
+          description: Filter by content visibility levels (comma-separated)
+          schema:
+            type: string
+            example: "public,aws_community"
         - name: startDate
           in: query
           required: false
@@ -248,23 +255,63 @@ components:
 
     PlatformStats:
       type: object
+      required:
+        - totalUsers
+        - totalContent
+        - topContributors
+        - contentByType
+        - recentActivity
+        - uptime
+        - lastUpdated
       properties:
-        contributors:
+        totalUsers:
           type: integer
-          description: Total number of contributors
-          example: 5000
-        contentPieces:
+          description: Total number of registered users
+          example: 5200
+        totalContent:
           type: integer
-          description: Total number of content pieces
-          example: 50000
-        dailyContent:
+          description: Total number of content pieces in the catalog
+          example: 48000
+        topContributors:
           type: integer
-          description: Average daily content additions
-          example: 100
-        weeklyActiveUsers:
-          type: integer
-          description: Weekly active users
-          example: 1000
+          description: Active contributors with claimed content
+          example: 1600
+        contentByType:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Distribution of content by type (blog, youtube, github, etc.)
+          example:
+            blog: 12000
+            youtube: 8500
+            github: 4200
+        recentActivity:
+          type: object
+          required:
+            - last24h
+            - last7d
+            - last30d
+          properties:
+            last24h:
+              type: integer
+              description: Number of content pieces added in the last 24 hours
+              example: 120
+            last7d:
+              type: integer
+              description: Number of content pieces added in the last 7 days
+              example: 540
+            last30d:
+              type: integer
+              description: Number of content pieces added in the last 30 days
+              example: 2200
+        uptime:
+          type: string
+          description: Human readable uptime indicator
+          example: "24/7"
+        lastUpdated:
+          type: string
+          format: date-time
+          description: ISO timestamp indicating when the stats were last refreshed
 
     Error:
       type: object

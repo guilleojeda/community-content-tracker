@@ -70,14 +70,35 @@ export function createMockPoolClient() {
 
 /**
  * Mock database service (for getDatabasePool)
+ * Uses the new setTestDatabasePool injection method
  */
 export function mockDatabaseService() {
   const { pool, mockQuery } = createMockPool();
 
+  // Mock the database service module
   jest.mock('../../src/backend/services/database', () => ({
     getDatabasePool: jest.fn().mockResolvedValue(pool),
     closeDatabasePool: jest.fn().mockResolvedValue(undefined),
+    setTestDatabasePool: jest.fn(),
+    resetDatabaseCache: jest.fn(),
   }));
+
+  return { pool, mockQuery };
+}
+
+/**
+ * Setup database pool injection for tests
+ * This is the preferred method for new tests
+ */
+export function setupDatabasePoolInjection() {
+  const { pool, mockQuery } = createMockPool();
+
+  // Import and use setTestDatabasePool from the actual module
+  // This must be called BEFORE the handler/repository is imported
+  const databaseService = require('../../src/backend/services/database');
+  if (databaseService.setTestDatabasePool) {
+    databaseService.setTestDatabasePool(pool);
+  }
 
   return { pool, mockQuery };
 }
@@ -122,8 +143,30 @@ export function setupUserMocks(mockQuery: jest.Mock) {
 /**
  * Setup mock for channel operations
  */
-export function setupChannelMocks(mockQuery: jest.Mock, options?: { duplicateUrl?: string }) {
+export function setupChannelMocks(mockQuery: jest.Mock, options?: { duplicateUrl?: string; defaultUserId?: string }) {
   const existingUrls = new Set<string>(options?.duplicateUrl ? [options.duplicateUrl] : []);
+  const channels = new Map<string, any>();
+  let channelCounter = 1;
+
+  // Pre-populate with a test channel for the default user
+  if (options?.defaultUserId) {
+    const defaultChannel = {
+      id: 'channel-123',
+      user_id: options.defaultUserId,
+      channel_type: 'blog',
+      url: 'https://example.com/feed',
+      name: 'Test Channel',
+      enabled: true,
+      sync_frequency: 'daily',
+      metadata: {},
+      last_sync_at: null,
+      last_sync_status: null,
+      last_sync_error: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+    channels.set('channel-123', defaultChannel);
+  }
 
   mockQuery.mockImplementation((sql: string, params: any[]) => {
     // Check for duplicate URL by user (SELECT * FROM channels WHERE user_id = $1 AND url = $2)
@@ -131,9 +174,16 @@ export function setupChannelMocks(mockQuery: jest.Mock, options?: { duplicateUrl
       const userId = params[0];
       const url = params[1];
 
+      // Check if channel exists in our map
+      for (const [id, channel] of channels.entries()) {
+        if (channel.user_id === userId && channel.url === url) {
+          return Promise.resolve(createMockQueryResult([channel]));
+        }
+      }
+
       if (url && existingUrls.has(url)) {
         // Return existing channel (duplicate found)
-        return Promise.resolve(createMockQueryResult([{
+        const existingChannel = {
           id: 'existing-channel',
           user_id: userId,
           channel_type: 'blog',
@@ -147,7 +197,9 @@ export function setupChannelMocks(mockQuery: jest.Mock, options?: { duplicateUrl
           last_sync_error: null,
           created_at: new Date(),
           updated_at: new Date(),
-        }]));
+        };
+        channels.set('existing-channel', existingChannel);
+        return Promise.resolve(createMockQueryResult([existingChannel]));
       }
 
       // No duplicate found
@@ -160,12 +212,13 @@ export function setupChannelMocks(mockQuery: jest.Mock, options?: { duplicateUrl
         existingUrls.add(url);
       }
 
-      return Promise.resolve(createMockQueryResult([{
-        id: 'channel-123',
+      const channelId = `channel-${channelCounter++}`;
+      const newChannel = {
+        id: channelId,
         user_id: params[0],
         channel_type: params[1],
         url: params[2],
-        name: params[3],
+        name: params[3] || null,
         enabled: params[4] !== undefined ? params[4] : true,
         sync_frequency: params[5] || 'daily',
         metadata: typeof params[6] === 'string' ? JSON.parse(params[6]) : (params[6] || {}),
@@ -174,69 +227,95 @@ export function setupChannelMocks(mockQuery: jest.Mock, options?: { duplicateUrl
         last_sync_error: null,
         created_at: new Date(),
         updated_at: new Date(),
-      }]));
+      };
+
+      channels.set(channelId, newChannel);
+      return Promise.resolve(createMockQueryResult([newChannel]));
     }
 
     if (sql.includes('SELECT') && sql.includes('FROM channels') && sql.includes('WHERE id')) {
-      const channelId = params.find((p: any) => typeof p === 'string' && p.startsWith('channel-'));
+      const channelId = params[0];
 
       // Return null for non-existent channel ID
-      if (channelId === '00000000-0000-0000-0000-000000000000') {
+      if (channelId === '00000000-0000-0000-0000-000000000000' || !channels.has(channelId)) {
         return Promise.resolve(createMockQueryResult([]));
       }
 
-      // Return channel with different user ID if specified
-      const userId = params.find((p: any) => typeof p === 'string' && p.startsWith('user-'));
+      const channel = channels.get(channelId);
+      return Promise.resolve(createMockQueryResult([channel]));
+    }
 
-      return Promise.resolve(createMockQueryResult([{
-        id: channelId || 'channel-123',
-        user_id: userId || 'user-123',
-        channel_type: 'blog',
-        url: 'https://example.com/feed',
-        name: 'Test Channel',
-        enabled: true,
-        sync_frequency: 'daily',
-        metadata: {},
-        last_sync_at: null,
-        last_sync_status: null,
-        last_sync_error: null,
-        created_at: new Date(),
-        updated_at: new Date(),
-      }]));
+    if (sql.includes('SELECT') && sql.includes('FROM channels') && sql.includes('enabled') && sql.includes('channel_type')) {
+      // findActiveByType
+      const channelType = params[0];
+      const activeChannels = Array.from(channels.values()).filter(
+        (c: any) => c.channel_type === channelType && c.enabled === true
+      );
+      return Promise.resolve(createMockQueryResult(activeChannels));
+    }
+
+    if (sql.includes('SELECT') && sql.includes('FROM channels') && params.length === 1 && typeof params[0] === 'string') {
+      // findByUserId
+      const userId = params[0];
+      if (userId === '00000000-0000-0000-0000-000000000000') {
+        return Promise.resolve(createMockQueryResult([]));
+      }
+      const userChannels = Array.from(channels.values()).filter((c: any) => c.user_id === userId);
+      return Promise.resolve(createMockQueryResult(userChannels));
     }
 
     if (sql.includes('SELECT') && sql.includes('FROM channels')) {
-      return Promise.resolve(createMockQueryResult([{
-        id: 'channel-123',
-        user_id: 'user-123',
-        channel_type: 'blog',
-        url: 'https://example.com/feed',
-        name: 'Test Channel',
-        enabled: true,
-        sync_frequency: 'daily',
-        metadata: {},
-        last_sync_at: null,
-        last_sync_status: null,
-        last_sync_error: null,
-        created_at: new Date(),
-        updated_at: new Date(),
-      }]));
+      const allChannels = Array.from(channels.values());
+      return Promise.resolve(createMockQueryResult(allChannels));
     }
 
     if (sql.includes('UPDATE channels')) {
-      return Promise.resolve(createMockQueryResult([{
-        id: 'channel-123',
-        user_id: 'user-123',
-        channel_type: 'blog',
-        url: 'https://example.com/feed',
-        name: params[0] || 'Test Channel',
-        enabled: params.find((p: any) => typeof p === 'boolean') !== undefined ? params.find((p: any) => typeof p === 'boolean') : true,
-        sync_frequency: 'daily',
-        metadata: {},
-      }]));
+      // Find channel ID from WHERE clause (usually last param)
+      const channelId = params[params.length - 1];
+
+      if (channelId === '00000000-0000-0000-0000-000000000000' || !channels.has(channelId)) {
+        return Promise.resolve(createMockQueryResult([]));
+      }
+
+      const channel = channels.get(channelId);
+
+      // Update channel fields based on SQL query and params
+      if (sql.includes('last_sync_status')) {
+        channel.last_sync_status = params[0];
+        channel.last_sync_at = new Date();
+        if (params[1]) {
+          channel.last_sync_error = params[1];
+        } else {
+          channel.last_sync_error = null;
+        }
+      } else {
+        // Regular update - match params to fields
+        if (sql.includes('name')) channel.name = params[0];
+        if (sql.includes('enabled')) {
+          const enabledParam = params.find((p: any) => typeof p === 'boolean');
+          if (enabledParam !== undefined) channel.enabled = enabledParam;
+        }
+        if (sql.includes('sync_frequency')) {
+          const freqParam = params.find((p: any) => ['daily', 'weekly', 'manual'].includes(p));
+          if (freqParam) channel.sync_frequency = freqParam;
+        }
+        if (sql.includes('metadata')) {
+          const metadataParam = params.find((p: any) => typeof p === 'object' && !Array.isArray(p));
+          if (metadataParam) channel.metadata = metadataParam;
+        }
+      }
+
+      channel.updated_at = new Date();
+      channels.set(channelId, channel);
+      return Promise.resolve(createMockQueryResult([channel]));
     }
 
     if (sql.includes('DELETE FROM channels')) {
+      const channelId = params[0];
+      if (channelId === '00000000-0000-0000-0000-000000000000' || !channels.has(channelId)) {
+        return Promise.resolve(createMockQueryResult([], 0));
+      }
+      channels.delete(channelId);
       return Promise.resolve(createMockQueryResult([], 1));
     }
 

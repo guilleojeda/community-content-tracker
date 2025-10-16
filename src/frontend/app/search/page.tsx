@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { components } from '@/api/schema';
+import { components } from '@/lib/api-client/schema';
+import { getPublicApiClient } from '@/api/client';
 
 type SearchResponse = components['schemas']['SearchResponse'];
-type ContentSearchResult = components['schemas']['ContentSearchResult'];
+type ContentItem = components['schemas']['Content'];
 
 function SearchContent() {
   const searchParams = useSearchParams();
@@ -65,30 +66,26 @@ function SearchContent() {
       const page = options?.page || 1;
       const offset = (page - 1) * resultsPerPage;
 
-      const params = new URLSearchParams({
+      const params: Record<string, any> = {
         q: query,
-        limit: resultsPerPage.toString(),
-        offset: offset.toString()
-      });
-
-      if (options?.type) params.append('type', options.type);
-      if (options?.tags) params.append('tags', options.tags);
-      if (options?.badges) params.append('badges', options.badges);
-
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-      const response = await fetch(`${apiUrl}/search?${params.toString()}`);
-
-      if (!response.ok) {
-        throw new Error('Search failed');
-      }
-
-      const data: SearchResponse = await response.json();
-      // Map the API response to match the expected structure
-      const mappedData: SearchResponse = {
-        ...data,
-        results: data.results || []
+        limit: resultsPerPage,
+        offset,
       };
-      setResults(mappedData);
+
+      if (options?.type) params.type = options.type;
+      if (options?.tags) params.tags = options.tags;
+      if (options?.badges) params.badges = options.badges;
+
+      const client = getPublicApiClient();
+      const data: SearchResponse = await client.search(params as any);
+
+      // Normalize response to handle both 'items' and 'results' array formats
+      const normalizedData: SearchResponse = {
+        ...data,
+        items: (data as any).items ?? (data as any).results ?? [],
+      };
+
+      setResults(normalizedData);
 
       // Update URL with current search parameters
       const urlParams = new URLSearchParams({ q: query });
@@ -219,7 +216,7 @@ function SearchContent() {
             )}
           </div>
 
-          {results.results.length === 0 ? (
+          {!results?.items || results.items.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-xl text-gray-600">No results found</p>
               <p className="text-gray-500 mt-2">Try different search terms or filters</p>
@@ -227,7 +224,7 @@ function SearchContent() {
           ) : (
             <>
               <div className="space-y-6">
-                {results.results.map((item) => (
+                {results.items.map((item) => (
                   <div key={item.id} className="bg-white p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow">
                     <h3 className="text-xl font-bold mb-2 text-aws-blue">
                       <a href={item.urls[0]?.url} target="_blank" rel="noopener noreferrer" className="hover:text-aws-orange">

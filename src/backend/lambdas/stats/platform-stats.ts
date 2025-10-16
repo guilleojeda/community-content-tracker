@@ -25,26 +25,29 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   try {
     const pool = await getDatabasePool();
 
-    // Get platform statistics with a single optimized query
     const statsQuery = `
       SELECT
-        (SELECT COUNT(DISTINCT user_id) FROM content WHERE is_claimed = true) as contributors,
-        (SELECT COUNT(*) FROM content) as content_pieces,
-        (SELECT COUNT(*) FROM content WHERE created_at >= NOW() - INTERVAL '24 hours') as daily_content,
-        (SELECT COUNT(DISTINCT user_id) FROM users WHERE created_at >= NOW() - INTERVAL '7 days') as weekly_active_users
+        COUNT(DISTINCT user_id) FILTER (WHERE is_claimed = true) AS contributors,
+        COUNT(*) AS content_pieces,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') AS daily_content,
+        COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') AS weekly_active_users
+      FROM content
     `;
 
-    const result = await pool.query(statsQuery);
-    const stats = result.rows[0];
+    const [stats] = (await pool.query(statsQuery)).rows;
+    const contributors = Number(stats?.contributors) || 0;
+    const contentPieces = Number(stats?.content_pieces) || 0;
+    const dailyContent = Number(stats?.daily_content) || 0;
+    const weeklyActiveUsers = Number(stats?.weekly_active_users) || 0;
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        contributors: parseInt(stats.contributors, 10) || 0,
-        contentPieces: parseInt(stats.content_pieces, 10) || 0,
-        dailyContent: parseInt(stats.daily_content, 10) || 0,
-        weeklyActiveUsers: parseInt(stats.weekly_active_users, 10) || 0,
+        contributors,
+        contentPieces,
+        dailyContent,
+        weeklyActiveUsers,
         uptime: '24/7',
         lastUpdated: new Date().toISOString()
       })

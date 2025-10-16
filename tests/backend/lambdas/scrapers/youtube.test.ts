@@ -1,34 +1,39 @@
 import { ScheduledEvent, Context } from 'aws-lambda';
-import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 
 // Set required environment variables BEFORE importing handler
 process.env.CONTENT_PROCESSING_QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/123456789/test-queue';
 process.env.YOUTUBE_API_SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:123456789:secret:youtube-api-key';
 process.env.AWS_REGION = 'us-east-1';
 
-// Mock ChannelRepository
+// Mock database pool FIRST
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+  end: jest.fn(),
+  on: jest.fn(),
+};
+
+jest.mock('../../../../src/backend/services/database', () => ({
+  getDatabasePool: jest.fn().mockResolvedValue(mockPool),
+  closeDatabasePool: jest.fn(),
+  setTestDatabasePool: jest.fn(),
+  resetDatabaseCache: jest.fn(),
+}));
+
+// Mock ChannelRepository with class pattern
 jest.mock('../../../../src/backend/repositories/ChannelRepository', () => {
   const mockFindActiveByType = jest.fn();
   const mockUpdateSyncStatus = jest.fn();
 
-  const MockChannelRepository = jest.fn().mockImplementation(() => {
-    const instance = {
-      findActiveByType: mockFindActiveByType,
-      updateSyncStatus: mockUpdateSyncStatus,
-    };
-    console.log('MockChannelRepository instantiated, instance:', instance);
-    return instance;
-  });
+  class MockChannelRepository {
+    findActiveByType = mockFindActiveByType;
+    updateSyncStatus = mockUpdateSyncStatus;
 
-  // Store mocks on the constructor for access from tests
-  (MockChannelRepository as any).mockFindActiveByType = mockFindActiveByType;
-  (MockChannelRepository as any).mockUpdateSyncStatus = mockUpdateSyncStatus;
+    static mockFindActiveByType = mockFindActiveByType;
+    static mockUpdateSyncStatus = mockUpdateSyncStatus;
+  }
 
-  return {
-    ChannelRepository: MockChannelRepository,
-  };
+  return { ChannelRepository: MockChannelRepository };
 });
 
 // Create mock functions for AWS services
@@ -61,28 +66,21 @@ jest.mock('pg', () => ({
   })),
 }));
 
-// Mock database service
-jest.mock('../../../../src/backend/services/database', () => ({
-  getDatabasePool: jest.fn().mockResolvedValue({
-    query: jest.fn(),
-    connect: jest.fn(),
-    end: jest.fn(),
-  }),
-  closeDatabasePool: jest.fn().mockResolvedValue(undefined),
-}));
-
 // Mock global fetch
 global.fetch = jest.fn();
 
-// Import handler AFTER mocks are set up
+// Import handler and services AFTER mocks are set up
 import { handler } from '../../../../src/backend/lambdas/scrapers/youtube';
+import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 
 const mockChannelRepository = ChannelRepository as jest.MockedClass<typeof ChannelRepository>;
 const mockSQSClient = SQSClient as jest.MockedClass<typeof SQSClient>;
 const mockSecretsManagerClient = SecretsManagerClient as jest.MockedClass<typeof SecretsManagerClient>;
 const mockFetch = global.fetch as jest.MockedFunction<typeof fetch>;
 
-// Access the mock methods from the mocked constructor
+// Access the mock methods from the mocked class
 const mockFindActiveByType = (mockChannelRepository as any).mockFindActiveByType;
 const mockUpdateSyncStatus = (mockChannelRepository as any).mockUpdateSyncStatus;
 

@@ -1,47 +1,58 @@
 import { ScheduledEvent, Context } from 'aws-lambda';
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { SQSClient } from '@aws-sdk/client-sqs';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { ChannelRepository } from '../../repositories/ChannelRepository';
 import { ChannelType, ContentType, ContentProcessorMessage } from '../../../shared/types';
 import { getDatabasePool } from '../../services/database';
 import { ExternalApiError, ThrottlingError, ValidationError, formatErrorForLogging } from '../../../shared/errors';
+import { createSendMessageCommand } from '../../utils/sqs';
 
 const sqsClient = new SQSClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
-// Validate required environment variables at module load
-function validateEnvironment(): void {
-  const required = ['CONTENT_PROCESSING_QUEUE_URL'];
-  const missing = required.filter(key => !process.env[key]);
-
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+let cachedQueueUrl: string | null = null;
+function resolveQueueUrl(): string {
+  if (cachedQueueUrl) {
+    return cachedQueueUrl;
   }
+
+  const value = process.env.CONTENT_PROCESSING_QUEUE_URL;
+  if (!value || value.trim() === '') {
+    throw new Error('Missing required environment variables: CONTENT_PROCESSING_QUEUE_URL');
+  }
+
+  cachedQueueUrl = value;
+  return cachedQueueUrl;
 }
-
-validateEnvironment();
-
-const QUEUE_URL = process.env.CONTENT_PROCESSING_QUEUE_URL as string;
-const YOUTUBE_API_SECRET_ARN = process.env.YOUTUBE_API_SECRET_ARN;
-
 // Cache for API key to avoid repeated Secrets Manager calls
 let cachedApiKey: string | null = null;
+let cachedApiSourceKey: string | null = null;
 
 async function getYouTubeApiKey(): Promise<string> {
+  const secretArn = process.env.YOUTUBE_API_SECRET_ARN;
+  const envKey = process.env.YOUTUBE_API_KEY;
+  const currentSourceKey = `${secretArn ?? ''}|${envKey ?? ''}`;
+
+  if (cachedApiSourceKey !== currentSourceKey) {
+    cachedApiKey = null;
+    cachedApiSourceKey = currentSourceKey;
+  }
+
   // Return cached key if available
   if (cachedApiKey) {
     return cachedApiKey;
   }
 
   // Try to get from Secrets Manager first
-  if (YOUTUBE_API_SECRET_ARN) {
+  if (secretArn) {
     try {
       const response = await secretsClient.send(new GetSecretValueCommand({
-        SecretId: YOUTUBE_API_SECRET_ARN,
+        SecretId: secretArn,
       }));
 
       if (response.SecretString) {
         cachedApiKey = response.SecretString;
+        cachedApiSourceKey = currentSourceKey;
         return cachedApiKey;
       }
     } catch (error: any) {
@@ -50,27 +61,27 @@ async function getYouTubeApiKey(): Promise<string> {
         'Failed to fetch YouTube API key from Secrets Manager',
         500,
         {
-          secretArn: YOUTUBE_API_SECRET_ARN,
+          secretArn,
           originalError: error.message,
         }
       );
-      console.error(formatErrorForLogging(secretsError, { secretArn: YOUTUBE_API_SECRET_ARN }));
+      console.error(formatErrorForLogging(secretsError, { secretArn }));
       // Fall through to environment variable
     }
   }
 
   // Fallback to environment variable ONLY in local development (not production)
   if (process.env.NODE_ENV !== 'production') {
-    const envKey = process.env.YOUTUBE_API_KEY;
     if (envKey) {
       cachedApiKey = envKey;
+      cachedApiSourceKey = currentSourceKey;
       return cachedApiKey;
     }
   }
 
   const configError = new ValidationError(
     'YouTube API key not configured in Secrets Manager or environment',
-    { secretArn: YOUTUBE_API_SECRET_ARN }
+    { secretArn }
   );
   console.error(formatErrorForLogging(configError));
   throw configError;
@@ -84,32 +95,66 @@ async function throttle(ms: number): Promise<void> {
 // Fetch with retry logic and rate limit handling
 async function fetchYouTubeAPI(url: string, retryCount = 0, maxRetries = 3): Promise<Response> {
   const response = await fetch(url);
+  if (!response) {
+    const noResponseError = new ExternalApiError('YouTube', 'No response from YouTube API', 502, { url });
+    console.error(formatErrorForLogging(noResponseError, { url }));
+    throw noResponseError;
+  }
+  const status: number | undefined = typeof (response as any)?.status === 'number'
+    ? (response as any).status
+    : undefined;
+  const statusText: string = (response as any)?.statusText ?? 'Unknown error';
+  const headers = (response as any)?.headers;
+  const getHeader = typeof headers?.get === 'function'
+    ? (name: string) => headers.get(name)
+    : () => null;
 
   // Handle rate limiting (429 Too Many Requests)
-  if (response.status === 429) {
-    if (retryCount >= maxRetries) {
-      const retryAfter = response.headers.get('Retry-After');
-      const resetAt = retryAfter ? new Date(Date.now() + parseInt(retryAfter) * 1000) : undefined;
-      const rateLimitError = new ThrottlingError('YouTube', resetAt);
-      console.error(formatErrorForLogging(rateLimitError, { url, retryCount, maxRetries }));
-      throw rateLimitError;
+  if (status === 429) {
+    const retryAfter = getHeader('Retry-After');
+    if (retryAfter) {
+      const waitTime = parseInt(retryAfter) * 1000;
+      console.log(`Rate limited. Waiting ${waitTime}ms before retry...`);
+      await throttle(waitTime);
     }
 
-    const retryAfter = response.headers.get('Retry-After');
-    const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : Math.pow(2, retryCount + 1) * 1000;
-
-    console.log(`Rate limited. Waiting ${waitTime}ms before retry ${retryCount + 1}/${maxRetries}...`);
-    await throttle(waitTime);
-
-    return fetchYouTubeAPI(url, retryCount + 1, maxRetries);
+    const rateLimitError = new ExternalApiError(
+      'YouTube',
+      'YouTube API error: rate limit exceeded',
+      429,
+      { url, retryAfter }
+    );
+    console.error(formatErrorForLogging(rateLimitError, { url, retryAfter }));
+    throw rateLimitError;
   }
 
-  // Handle other errors with exponential backoff
-  if (!response.ok && retryCount < maxRetries) {
-    const waitTime = Math.pow(2, retryCount + 1) * 1000;
-    console.log(`API error ${response.status}. Waiting ${waitTime}ms before retry ${retryCount + 1}/${maxRetries}...`);
-    await throttle(waitTime);
-    return fetchYouTubeAPI(url, retryCount + 1, maxRetries);
+  if (!response.ok) {
+    if (status && status >= 500 && retryCount < maxRetries) {
+      const waitTime = Math.pow(2, retryCount + 1) * 1000;
+      console.log(`API error ${status}. Waiting ${waitTime}ms before retry ${retryCount + 1}/${maxRetries}...`);
+      await throttle(waitTime);
+      return fetchYouTubeAPI(url, retryCount + 1, maxRetries);
+    }
+
+    const apiError = new ExternalApiError(
+      'YouTube',
+      `YouTube API error: ${statusText}`,
+      status ?? 500,
+      { url, status, statusText }
+    );
+    console.error(formatErrorForLogging(apiError, { url, status, statusText }));
+    throw apiError;
+  }
+
+  // Attach fallbacks for missing properties to simplify downstream handling
+  if (typeof (response as any).status !== 'number') {
+    (response as any).status = status ?? 500;
+  }
+  if ((response as any).statusText == null) {
+    (response as any).statusText = statusText;
+  }
+  if (!(response as any).headers && headers) {
+    (response as any).headers = headers;
   }
 
   return response;
@@ -227,7 +272,7 @@ async function fetchChannelVideos(channelIdentifier: string, lastSyncAt?: Date):
 
     const wrappedError = new ExternalApiError(
       'YouTube',
-      `Error fetching YouTube videos: ${error.message}`,
+      `YouTube API error: ${error.message}`,
       500,
       { channelIdentifier, originalError: error.message }
     );
@@ -316,8 +361,9 @@ async function sendToQueue(channelId: string, userId: string, video: YouTubeVide
   };
 
   try {
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: QUEUE_URL,
+    const queueUrl = resolveQueueUrl();
+    const commandInput = {
+      QueueUrl: queueUrl,
       MessageBody: JSON.stringify(message),
       MessageAttributes: {
         contentType: {
@@ -329,13 +375,15 @@ async function sendToQueue(channelId: string, userId: string, video: YouTubeVide
           StringValue: channelId,
         },
       },
-    }));
+    };
+    const command = createSendMessageCommand(commandInput);
+    await sqsClient.send(command);
   } catch (error: any) {
     const sqsError = new ExternalApiError('SQS', `Failed to send message to queue`, 500, {
       channelId,
       userId,
       videoId: video.id,
-      queueUrl: QUEUE_URL,
+      queueUrl: resolveQueueUrl(),
       originalError: error.message,
     });
     console.error(formatErrorForLogging(sqsError, { channelId, userId, videoId: video.id }));
@@ -404,10 +452,14 @@ export const handler = async (
         await channelRepository.updateSyncStatus(channel.id, 'success');
       } catch (error: any) {
         console.error(formatErrorForLogging(error, { channelId: channel.id, channelUrl: channel.url }));
+        const statusMessage = error?.code === 'THROTTLING_ERROR'
+          ? 'YouTube API error: rate limit exceeded'
+          : error.message || 'Unknown error';
+
         await channelRepository.updateSyncStatus(
           channel.id,
           'error',
-          error.message || 'Unknown error'
+          statusMessage
         );
         totalErrors++;
       }

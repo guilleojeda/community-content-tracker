@@ -276,6 +276,56 @@ describe('SearchService', () => {
       expect(semanticCall[1].badges).toEqual([BadgeType.HERO, BadgeType.AMBASSADOR]);
     });
 
+    it('should return empty results when requested visibility is not permitted', async () => {
+      const request: SearchRequest = {
+        query: 'AWS',
+        filters: {
+          visibility: [Visibility.AWS_ONLY],
+        },
+        limit: 20,
+        offset: 0,
+      };
+
+      const result = await searchService.search(request, false);
+
+      expect(result).toEqual({
+        items: [],
+        total: 0,
+        limit: 20,
+        offset: 0,
+      });
+      expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
+      expect(mockContentRepo.semanticSearch).not.toHaveBeenCalled();
+      expect(mockContentRepo.keywordSearch).not.toHaveBeenCalled();
+      expect(mockContentRepo.countSearchResults).not.toHaveBeenCalled();
+    });
+
+    it('should honor requested visibility subset when permitted', async () => {
+      const request: SearchRequest = {
+        query: 'AWS',
+        filters: {
+          visibility: [Visibility.PUBLIC],
+        },
+        limit: 20,
+        offset: 0,
+      };
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockContentRepo.semanticSearch.mockResolvedValue([]);
+      mockContentRepo.keywordSearch.mockResolvedValue([]);
+      mockContentRepo.countSearchResults.mockResolvedValue(0);
+
+      await searchService.search(request, true, [BadgeType.HERO], true);
+
+      const semanticCall = mockContentRepo.semanticSearch.mock.calls[0];
+      const keywordCall = mockContentRepo.keywordSearch.mock.calls[0];
+      const countCall = mockContentRepo.countSearchResults.mock.calls[0];
+
+      expect(semanticCall[1].visibilityLevels).toEqual([Visibility.PUBLIC]);
+      expect(keywordCall[1].visibilityLevels).toEqual([Visibility.PUBLIC]);
+      expect(countCall[0].visibilityLevels).toEqual([Visibility.PUBLIC]);
+    });
+
     it('should handle pagination correctly', async () => {
       const request: SearchRequest = {
         query: 'AWS',

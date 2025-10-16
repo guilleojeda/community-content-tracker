@@ -1,29 +1,9 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { Pool } from 'pg';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { Visibility } from '@aws-community-hub/shared';
 import { createErrorResponse, createSuccessResponse, canAccessContent, getContentAccessLevel } from '../auth/utils';
-
-let pool: Pool | null = null;
-
-function getPool(): Pool {
-  if (!pool) {
-    if (!process.env.DATABASE_URL) {
-      throw new Error('DATABASE_URL environment variable is required');
-    }
-
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: 10,
-      min: 2,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    });
-  }
-
-  return pool;
-}
+import { getDatabasePool } from '../../services/database';
 
 function isValidUUID(id: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -61,7 +41,7 @@ export const handler = async (
     const userId = event.requestContext.authorizer?.claims?.sub;
 
     // Get database pool
-    const dbPool = getPool();
+    const dbPool = await getDatabasePool();
     const contentRepo = new ContentRepository(dbPool);
     const userRepo = new UserRepository(dbPool);
 

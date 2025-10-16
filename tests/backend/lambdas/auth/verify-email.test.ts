@@ -308,11 +308,13 @@ describe('Verify Email Lambda Handler', () => {
 
       const result = await handler(event, context) as APIGatewayProxyResult;
 
-      expect(result.statusCode).toBe(404);
+      // For security reasons, UserNotFoundException returns 401 instead of 404
+      // to prevent user enumeration attacks
+      expect(result.statusCode).toBe(401);
 
       const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('NOT_FOUND');
-      expect(body.error.message).toContain('User not found');
+      expect(body.error.code).toBe('AUTH_INVALID');
+      expect(body.error.message).toContain('Invalid credentials');
     });
 
     it('should return 400 for already confirmed user', async () => {
@@ -356,7 +358,7 @@ describe('Verify Email Lambda Handler', () => {
 
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('RATE_LIMITED');
-      expect(body.error.message).toContain('Too many attempts');
+      expect(body.error.message).toContain('Too many requests');
     });
   });
 

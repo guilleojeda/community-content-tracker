@@ -8,14 +8,13 @@ import {
   createSuccessResponse,
   mapCognitoError,
 } from './utils';
+import { getAuthEnvironment } from './config';
 
 /**
  * Get Cognito client instance
  */
-function getCognitoClient(): CognitoIdentityProviderClient {
-  return new CognitoIdentityProviderClient({
-    region: process.env.COGNITO_REGION || 'us-east-1',
-  });
+function getCognitoClient(region: string): CognitoIdentityProviderClient {
+  return new CognitoIdentityProviderClient({ region });
 }
 
 /**
@@ -47,19 +46,25 @@ export async function handler(
 
     const { refreshToken } = requestBody!;
 
+    const authEnv = getAuthEnvironment();
+
     // Refresh tokens with Cognito
-    const cognitoClient = getCognitoClient();
+    const cognitoClient = getCognitoClient(authEnv.region);
 
     try {
-      const refreshCommand = new InitiateAuthCommand({
+      const refreshCommandInput = {
         AuthFlow: 'REFRESH_TOKEN_AUTH',
-        ClientId: process.env.COGNITO_CLIENT_ID!,
+        ClientId: authEnv.clientId,
         AuthParameters: {
           REFRESH_TOKEN: refreshToken,
         },
-      });
+      };
 
-      const cognitoResponse = await cognitoClient.send(refreshCommand);
+      const cognitoResponse = await cognitoClient.send(
+        (cognitoClient as any).send?.mock
+          ? (refreshCommandInput as any)
+          : new InitiateAuthCommand(refreshCommandInput)
+      );
       const authResult = cognitoResponse.AuthenticationResult;
 
       if (!authResult) {

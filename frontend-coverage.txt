@@ -1,0 +1,11 @@
+
+> @aws-community-hub/frontend@0.1.0 test
+> jest --coverage --coverageReporters=text-summary
+
+
+=============================== Coverage summary ===============================
+Statements   : 87.9% ( 1439/1637 )
+Branches     : 75.23% ( 644/856 )
+Functions    : 86.47% ( 326/377 )
+Lines        : 89.7% ( 1385/1544 )
+================================================================================

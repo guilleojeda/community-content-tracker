@@ -1,5 +1,4 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { Pool } from 'pg';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { NotificationService } from '../../services/NotificationService';
@@ -9,20 +8,7 @@ import {
   createSuccessResponse,
   parseRequestBody,
 } from '../auth/utils';
-
-let pool: Pool | null = null;
-
-function getDbPool(): Pool {
-  if (!pool) {
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
-    });
-  }
-  return pool;
-}
+import { getDatabasePool } from '../../services/database';
 
 interface ClaimRequest {
   contentIds?: string[];
@@ -59,7 +45,7 @@ export async function handler(
       );
     }
 
-    const dbPool = getDbPool();
+    const dbPool = await getDatabasePool();
     const contentRepository = new ContentRepository(dbPool);
     const userRepository = new UserRepository(dbPool);
     const notificationService = new NotificationService(dbPool);
@@ -76,7 +62,7 @@ export async function handler(
     if (adminOverride && !isAdmin) {
       return createErrorResponse(
         403,
-        'FORBIDDEN',
+        'PERMISSION_DENIED',
         'Admin privileges required for admin override'
       );
     }

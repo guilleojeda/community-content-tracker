@@ -21,6 +21,10 @@ export interface UserCreateData {
   defaultVisibility?: Visibility;
   isAdmin?: boolean;
   isAwsEmployee?: boolean;
+  bio?: string | null;
+  receiveNewsletter?: boolean;
+  receiveContentNotifications?: boolean;
+  receiveCommunityUpdates?: boolean;
 }
 
 export interface UserUpdateData {
@@ -30,6 +34,10 @@ export interface UserUpdateData {
   defaultVisibility?: Visibility;
   isAdmin?: boolean;
   isAwsEmployee?: boolean;
+  bio?: string | null;
+  receiveNewsletter?: boolean;
+  receiveContentNotifications?: boolean;
+  receiveCommunityUpdates?: boolean;
 }
 
 export interface GDPRExportData {
@@ -65,6 +73,10 @@ export class UserRepository extends BaseRepository {
       defaultVisibility: row.default_visibility as Visibility,
       isAdmin: row.is_admin,
       isAwsEmployee: row.is_aws_employee,
+      bio: row.bio ?? undefined,
+      receiveNewsletter: row.receive_newsletter ?? undefined,
+      receiveContentNotifications: row.receive_content_notifications ?? undefined,
+      receiveCommunityUpdates: row.receive_community_updates ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -83,6 +95,12 @@ export class UserRepository extends BaseRepository {
     if (data.defaultVisibility !== undefined) transformed.default_visibility = data.defaultVisibility;
     if (data.isAdmin !== undefined) transformed.is_admin = data.isAdmin;
     if (data.isAwsEmployee !== undefined) transformed.is_aws_employee = data.isAwsEmployee;
+    if (data.bio !== undefined) transformed.bio = data.bio;
+    if (data.receiveNewsletter !== undefined) transformed.receive_newsletter = data.receiveNewsletter;
+    if (data.receiveContentNotifications !== undefined) {
+      transformed.receive_content_notifications = data.receiveContentNotifications;
+    }
+    if (data.receiveCommunityUpdates !== undefined) transformed.receive_community_updates = data.receiveCommunityUpdates;
 
     return transformed;
   }
@@ -157,6 +175,20 @@ export class UserRepository extends BaseRepository {
    */
   async updateDefaultVisibility(userId: string, visibility: Visibility): Promise<User | null> {
     return this.update(userId, { defaultVisibility: visibility });
+  }
+
+  /**
+   * Update user notification preferences
+   */
+  async updatePreferences(
+    userId: string,
+    preferences: {
+      receiveNewsletter?: boolean;
+      receiveContentNotifications?: boolean;
+      receiveCommunityUpdates?: boolean;
+    }
+  ): Promise<User | null> {
+    return this.update(userId, preferences);
   }
 
   /**
@@ -469,8 +501,12 @@ export class UserRepository extends BaseRepository {
    */
   async getDefaultVisibility(userId: string): Promise<Visibility> {
     try {
-      const user = await this.findById(userId);
-      return user?.defaultVisibility || Visibility.PRIVATE;
+      const result = await this.pool.query<{ default_visibility: Visibility }>(
+        'SELECT default_visibility FROM users WHERE id = $1',
+        [userId]
+      );
+      const visibility = result.rows[0]?.default_visibility;
+      return visibility || Visibility.PRIVATE;
     } catch (error) {
       console.error('Error fetching user default visibility:', error);
       return Visibility.PRIVATE;

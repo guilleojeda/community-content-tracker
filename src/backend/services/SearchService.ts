@@ -69,16 +69,40 @@ export class SearchService {
       // Determine visibility levels based on authentication and badges
       const visibilityLevels = this.determineVisibility(isAuthenticated, userBadges, isAwsEmployee);
 
+      const requestedVisibility = filters.visibility?.filter(visibility =>
+        visibilityLevels.includes(visibility)
+      );
+
+      if (filters.visibility && (!requestedVisibility || requestedVisibility.length === 0)) {
+        return {
+          items: [],
+          total: 0,
+          limit,
+          offset,
+        };
+      }
+
+      const effectiveVisibilityLevels =
+        requestedVisibility && requestedVisibility.length > 0 ? requestedVisibility : visibilityLevels;
+
+      const normalizedFilters = {
+        contentTypes: filters.contentTypes,
+        tags: filters.tags,
+        badges: filters.badges,
+        dateRange: filters.dateRange,
+        visibility: requestedVisibility && requestedVisibility.length > 0 ? requestedVisibility : undefined,
+      };
+
       // Generate embedding for semantic search
       const queryEmbedding = await this.embeddingService.generateEmbedding(query.trim());
 
       // Build search options from filters
       const searchOptions = {
-        visibilityLevels,
-        contentTypes: filters.contentTypes,
-        tags: filters.tags,
-        badges: filters.badges,
-        dateRange: filters.dateRange,
+        visibilityLevels: effectiveVisibilityLevels,
+        contentTypes: normalizedFilters.contentTypes,
+        tags: normalizedFilters.tags,
+        badges: normalizedFilters.badges,
+        dateRange: normalizedFilters.dateRange,
         limit: limit * 2, // Fetch more for merging
         offset: 0, // We'll handle pagination after merging
       };
@@ -88,11 +112,11 @@ export class SearchService {
         this.contentRepo.semanticSearch(queryEmbedding, searchOptions),
         this.contentRepo.keywordSearch(query.trim(), searchOptions),
         this.contentRepo.countSearchResults({
-          visibilityLevels,
-          contentTypes: filters.contentTypes,
-          tags: filters.tags,
-          badges: filters.badges,
-          dateRange: filters.dateRange,
+          visibilityLevels: effectiveVisibilityLevels,
+          contentTypes: normalizedFilters.contentTypes,
+          tags: normalizedFilters.tags,
+          badges: normalizedFilters.badges,
+          dateRange: normalizedFilters.dateRange,
         }),
       ]);
 

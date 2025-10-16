@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { getPublicApiClient } from '@/api/client';
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
@@ -16,19 +17,8 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-      const response = await fetch(`${apiUrl}/auth/forgot-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Failed to send reset code');
-      }
+      const client = getPublicApiClient();
+      await client.forgotPassword({ email });
 
       setSuccess(true);
       // Redirect to reset password page after 2 seconds

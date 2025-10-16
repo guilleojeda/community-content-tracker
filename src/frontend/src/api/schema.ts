@@ -12,10 +12,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Search for community content
-         * @description Performs semantic search using Amazon Bedrock embeddings to find relevant
-         *     AWS community content. Supports filtering by content type, badges, tags,
-         *     and date ranges.
+         * Search for content
+         * @description Search for community content using semantic and keyword search.
+         *     Supports filtering by content type, tags, badges, and date range.
+         *     Returns public content for anonymous users, additional content for authenticated users.
          *
          */
         get: operations["searchContent"];
@@ -36,131 +36,11 @@ export interface paths {
         };
         /**
          * Get platform statistics
-         * @description Returns aggregate statistics about the platform including contributor count, content pieces, and activity metrics
+         * @description Returns aggregated statistics about the platform
          */
-        get: operations["getPlatformStats"];
+        get: operations["getStats"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/register": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Register a new user
-         * @description Creates a new user account with AWS Cognito and the application database
-         */
-        post: operations["registerUser"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Login user
-         * @description Authenticates user credentials and returns JWT tokens
-         */
-        post: operations["loginUser"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/verify-email": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Verify email address
-         * @description Verifies user email with confirmation code sent during registration
-         */
-        post: operations["verifyEmail"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Refresh access token
-         * @description Obtains new access and ID tokens using a refresh token
-         */
-        post: operations["refreshToken"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/forgot-password": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Request password reset
-         * @description Sends a password reset confirmation code to the user's email
-         */
-        post: operations["forgotPassword"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/reset-password": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reset password with confirmation code
-         * @description Resets user password using the confirmation code from email
-         */
-        post: operations["resetPassword"];
         delete?: never;
         options?: never;
         head?: never;
@@ -171,190 +51,183 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /**
-         * @description Type of content
-         * @enum {string}
-         */
-        ContentType: "blog" | "youtube" | "github" | "conference_talk" | "podcast";
-        /**
-         * @description AWS community badge type
-         * @enum {string}
-         */
-        BadgeType: "community_builder" | "hero" | "ambassador" | "user_group_leader";
-        /**
-         * @description Content visibility level
-         * @enum {string}
-         */
-        Visibility: "private" | "aws_only" | "aws_community" | "public";
         SearchResponse: {
-            results: components["schemas"]["ContentSearchResult"][];
-            /** @description Total number of results matching the query */
+            items: components["schemas"]["Content"][];
+            /**
+             * @description Total number of results matching the query
+             * @example 245
+             */
             total: number;
-            /** @description Maximum results per page */
+            /**
+             * @description Number of results returned in this response
+             * @example 10
+             */
             limit: number;
-            /** @description Number of results skipped */
+            /**
+             * @description Pagination offset
+             * @example 0
+             */
             offset: number;
         };
-        ContentSearchResult: {
-            /** Format: uuid */
-            id: string;
-            title: string;
-            description?: string | null;
-            contentType: components["schemas"]["ContentType"];
-            visibility: components["schemas"]["Visibility"];
-            /** Format: date-time */
-            publishDate?: string | null;
-            /** Format: date-time */
-            captureDate: string;
-            tags: string[];
-            isClaimed: boolean;
-            originalAuthor?: string | null;
-            urls: components["schemas"]["ContentUrl"][];
-            author?: components["schemas"]["ContentAuthor"];
+        Content: {
             /**
-             * Format: float
-             * @description Relevance score (0-1)
+             * Format: uuid
+             * @description Unique content identifier
+             * @example 550e8400-e29b-41d4-a716-446655440000
              */
-            score?: number;
-        };
-        ContentUrl: {
             id: string;
-            /** Format: uri */
-            url: string;
-        };
-        ContentAuthor: {
-            username: string;
-            profileSlug: string;
-            badges?: components["schemas"]["BadgeType"][];
+            /**
+             * Format: uuid
+             * @description User who created/owns the content
+             * @example 660e8400-e29b-41d4-a716-446655440000
+             */
+            userId: string;
+            /**
+             * @description Content title
+             * @example Building Serverless APIs with AWS Lambda
+             */
+            title: string;
+            /**
+             * @description Content description
+             * @example Learn how to build scalable serverless APIs using AWS Lambda and API Gateway
+             */
+            description?: string | null;
+            /**
+             * @description Type of content
+             * @enum {string}
+             */
+            contentType: "blog" | "youtube" | "github" | "conference_talk" | "podcast" | "social" | "whitepaper" | "tutorial" | "workshop" | "book";
+            /**
+             * @description Visibility level of the content
+             * @enum {string}
+             */
+            visibility: "public" | "aws_community" | "aws_only" | "private";
+            /**
+             * Format: date-time
+             * @description Original publication date
+             */
+            publishDate?: string | null;
+            /**
+             * Format: date-time
+             * @description Date the content was captured by our system
+             */
+            captureDate?: string;
+            /** @description Engagement metrics */
+            metrics?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description Tags associated with the content
+             * @example [
+             *       "serverless",
+             *       "lambda",
+             *       "api-gateway",
+             *       "aws"
+             *     ]
+             */
+            tags: string[];
+            /** @description Whether the content has been claimed by its author */
+            isClaimed?: boolean;
+            /** @description Original author if different from user */
+            originalAuthor?: string | null;
+            /** @description URLs associated with the content */
+            urls: {
+                id?: string;
+                /** Format: uri */
+                url?: string;
+            }[];
+            /**
+             * Format: date-time
+             * @description Timestamp when content was added to the system
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description Timestamp when content was last updated
+             */
+            updatedAt: string;
         };
         PlatformStats: {
-            /** @description Total number of active contributors */
-            contributors: number;
-            /** @description Total number of content pieces */
-            contentPieces: number;
-            /** @description Content added in last 24 hours */
-            dailyContent: number;
-            /** @description Users created in last 7 days */
-            weeklyActiveUsers: number;
-            /** @description Platform uptime */
+            /**
+             * @description Total number of registered users
+             * @example 5200
+             */
+            totalUsers: number;
+            /**
+             * @description Total number of content pieces in the catalog
+             * @example 48000
+             */
+            totalContent: number;
+            /**
+             * @description Active contributors with claimed content
+             * @example 1600
+             */
+            topContributors: number;
+            /**
+             * @description Distribution of content by type (blog, youtube, github, etc.)
+             * @example {
+             *       "blog": 12000,
+             *       "youtube": 8500,
+             *       "github": 4200
+             *     }
+             */
+            contentByType: {
+                [key: string]: number;
+            };
+            recentActivity: {
+                /**
+                 * @description Number of content pieces added in the last 24 hours
+                 * @example 120
+                 */
+                last24h: number;
+                /**
+                 * @description Number of content pieces added in the last 7 days
+                 * @example 540
+                 */
+                last7d: number;
+                /**
+                 * @description Number of content pieces added in the last 30 days
+                 * @example 2200
+                 */
+                last30d: number;
+            };
+            /**
+             * @description Human readable uptime indicator
+             * @example 24/7
+             */
             uptime: string;
             /**
              * Format: date-time
-             * @description Timestamp of last stats update
+             * @description ISO timestamp indicating when the stats were last refreshed
              */
             lastUpdated: string;
         };
-        RegisterRequest: {
-            /** Format: email */
-            email: string;
-            /**
-             * Format: password
-             * @description Must contain uppercase, lowercase, numbers, and symbols
-             */
-            password: string;
-            /** @description Alphanumeric, hyphens, and underscores only */
-            username: string;
-        };
-        RegisterResponse: {
-            /** Format: uuid */
-            userId: string;
-            message: string;
-        };
-        LoginRequest: {
-            /** Format: email */
-            email: string;
-            /** Format: password */
-            password: string;
-        };
-        LoginResponse: {
-            /** @description JWT access token for API authentication */
-            accessToken: string;
-            /** @description JWT ID token containing user information */
-            idToken: string;
-            /** @description Token for refreshing access/ID tokens */
-            refreshToken: string;
-            /** @description Token expiration time in seconds */
-            expiresIn: number;
-            user: components["schemas"]["UserProfile"];
-        };
-        UserProfile: {
-            /** Format: uuid */
-            id: string;
-            /** Format: email */
-            email: string;
-            username: string;
-            profileSlug: string;
-            isAdmin: boolean;
-            isAwsEmployee: boolean;
-        };
-        VerifyEmailRequest: {
-            /** Format: email */
-            email: string;
-            /** @description 6-digit confirmation code from email */
-            confirmationCode: string;
-        };
-        VerifyEmailResponse: {
-            message: string;
-            verified: boolean;
-        };
-        RefreshTokenRequest: {
-            refreshToken: string;
-        };
-        RefreshTokenResponse: {
-            accessToken: string;
-            idToken: string;
-            expiresIn: number;
-        };
-        ErrorResponse: {
+        Error: {
             error: {
-                /** @description Machine-readable error code */
-                code: string;
-                /** @description Human-readable error message */
+                /**
+                 * @description Machine-readable error code
+                 * @example VALIDATION_ERROR
+                 * @enum {string}
+                 */
+                code: "VALIDATION_ERROR" | "AUTHENTICATION_ERROR" | "AUTHORIZATION_ERROR" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMIT_EXCEEDED" | "INTERNAL_ERROR";
+                /**
+                 * @description Human-readable error message
+                 * @example Missing required query parameter: q
+                 */
                 message: string;
-                /** @description Additional error context */
+                /**
+                 * @description Field that caused the error (if applicable)
+                 * @example q
+                 */
+                field?: string;
+                /** @description Additional error details */
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
     };
-    responses: {
-        /** @description Validation error */
-        ValidationError: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                /** @example {
-                 *       "error": {
-                 *         "code": "VALIDATION_ERROR",
-                 *         "message": "Validation failed",
-                 *         "details": {
-                 *           "fields": {
-                 *             "email": "Invalid email format"
-                 *           }
-                 *         }
-                 *       }
-                 *     } */
-                "application/json": components["schemas"]["ErrorResponse"];
-            };
-        };
-        /** @description Internal server error */
-        InternalError: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                /** @example {
-                 *       "error": {
-                 *         "code": "INTERNAL_ERROR",
-                 *         "message": "An unexpected error occurred"
-                 *       }
-                 *     } */
-                "application/json": components["schemas"]["ErrorResponse"];
-            };
-        };
-    };
+    responses: never;
     parameters: never;
     requestBodies: never;
     headers: never;
@@ -365,45 +238,21 @@ export interface operations {
     searchContent: {
         parameters: {
             query: {
-                /**
-                 * @description Search query string
-                 * @example lambda performance optimization
-                 */
+                /** @description Search query string */
                 q: string;
-                /**
-                 * @description Maximum number of results to return
-                 * @example 20
-                 */
+                /** @description Number of results to return (max 100) */
                 limit?: number;
-                /**
-                 * @description Number of results to skip for pagination
-                 * @example 0
-                 */
+                /** @description Pagination offset */
                 offset?: number;
-                /**
-                 * @description Filter by content types (comma-separated)
-                 * @example blog,youtube
-                 */
+                /** @description Filter by content types (comma-separated) */
                 type?: string;
-                /**
-                 * @description Filter by tags (comma-separated)
-                 * @example serverless,containers
-                 */
+                /** @description Filter by tags (comma-separated) */
                 tags?: string;
-                /**
-                 * @description Filter by contributor badges (comma-separated)
-                 * @example hero,community_builder
-                 */
+                /** @description Filter by AWS program badges (comma-separated) */
                 badges?: string;
-                /**
-                 * @description Start date for date range filter (ISO 8601)
-                 * @example 2024-01-01
-                 */
+                /** @description Start date for date range filter (ISO 8601) */
                 startDate?: string;
-                /**
-                 * @description End date for date range filter (ISO 8601)
-                 * @example 2024-12-31
-                 */
+                /** @description End date for date range filter (ISO 8601) */
                 endDate?: string;
             };
             header?: never;
@@ -412,56 +261,36 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Search results */
+            /** @description Successful search response */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    /** @example {
-                     *       "results": [
-                     *         {
-                     *           "id": "123e4567-e89b-12d3-a456-426614174000",
-                     *           "title": "Optimizing Lambda Cold Starts",
-                     *           "description": "A comprehensive guide to reducing Lambda cold starts",
-                     *           "contentType": "blog",
-                     *           "visibility": "public",
-                     *           "publishDate": "2024-09-15T00:00:00Z",
-                     *           "captureDate": "2024-09-16T10:30:00Z",
-                     *           "tags": [
-                     *             "serverless",
-                     *             "lambda",
-                     *             "performance"
-                     *           ],
-                     *           "isClaimed": true,
-                     *           "urls": [
-                     *             {
-                     *               "id": "url-123",
-                     *               "url": "https://example.com/blog/lambda-optimization"
-                     *             }
-                     *           ],
-                     *           "author": {
-                     *             "username": "johndoe",
-                     *             "profileSlug": "johndoe",
-                     *             "badges": [
-                     *               "hero"
-                     *             ]
-                     *           },
-                     *           "score": 0.95
-                     *         }
-                     *       ],
-                     *       "total": 42,
-                     *       "limit": 10,
-                     *       "offset": 0
-                     *     } */
                     "application/json": components["schemas"]["SearchResponse"];
                 };
             };
-            400: components["responses"]["ValidationError"];
-            500: components["responses"]["InternalError"];
+            /** @description Invalid request parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
-    getPlatformStats: {
+    getStats: {
         parameters: {
             query?: never;
             header?: never;
@@ -476,299 +305,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    /** @example {
-                     *       "contributors": 5000,
-                     *       "contentPieces": 50000,
-                     *       "dailyContent": 100,
-                     *       "weeklyActiveUsers": 1000,
-                     *       "uptime": "24/7",
-                     *       "lastUpdated": "2024-10-03T12:00:00Z"
-                     *     } */
                     "application/json": components["schemas"]["PlatformStats"];
                 };
             };
-            500: components["responses"]["InternalError"];
-        };
-    };
-    registerUser: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /** @example {
-                 *       "email": "user@example.com",
-                 *       "password": "SecurePass123!@#",
-                 *       "username": "johndoe"
-                 *     } */
-                "application/json": components["schemas"]["RegisterRequest"];
-            };
-        };
-        responses: {
-            /** @description User successfully registered */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "userId": "123e4567-e89b-12d3-a456-426614174000",
-                     *       "message": "Please check your email to verify your account"
-                     *     } */
-                    "application/json": components["schemas"]["RegisterResponse"];
-                };
-            };
-            400: components["responses"]["ValidationError"];
-            /** @description User already exists */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "error": {
-                     *         "code": "DUPLICATE_RESOURCE",
-                     *         "message": "User already exists - email: Email already registered"
-                     *       }
-                     *     } */
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            500: components["responses"]["InternalError"];
-        };
-    };
-    loginUser: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /** @example {
-                 *       "email": "user@example.com",
-                 *       "password": "SecurePass123!@#"
-                 *     } */
-                "application/json": components["schemas"]["LoginRequest"];
-            };
-        };
-        responses: {
-            /** @description Successfully authenticated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                     *       "idToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                     *       "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                     *       "expiresIn": 3600,
-                     *       "user": {
-                     *         "id": "123e4567-e89b-12d3-a456-426614174000",
-                     *         "email": "user@example.com",
-                     *         "username": "johndoe",
-                     *         "profileSlug": "johndoe",
-                     *         "isAdmin": false,
-                     *         "isAwsEmployee": false
-                     *       }
-                     *     } */
-                    "application/json": components["schemas"]["LoginResponse"];
-                };
-            };
-            400: components["responses"]["ValidationError"];
-            /** @description Invalid credentials */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "error": {
-                     *         "code": "AUTH_INVALID",
-                     *         "message": "Invalid email or password"
-                     *       }
-                     *     } */
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            500: components["responses"]["InternalError"];
-        };
-    };
-    verifyEmail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /** @example {
-                 *       "email": "user@example.com",
-                 *       "confirmationCode": "123456"
-                 *     } */
-                "application/json": components["schemas"]["VerifyEmailRequest"];
-            };
-        };
-        responses: {
-            /** @description Email successfully verified */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "message": "Email verified successfully",
-                     *       "verified": true
-                     *     } */
-                    "application/json": components["schemas"]["VerifyEmailResponse"];
-                };
-            };
-            400: components["responses"]["ValidationError"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    refreshToken: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /** @example {
-                 *       "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                 *     } */
-                "application/json": components["schemas"]["RefreshTokenRequest"];
-            };
-        };
-        responses: {
-            /** @description Tokens successfully refreshed */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                     *       "idToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                     *       "expiresIn": 3600
-                     *     } */
-                    "application/json": components["schemas"]["RefreshTokenResponse"];
-                };
-            };
-            400: components["responses"]["ValidationError"];
-            /** @description Invalid refresh token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "error": {
-                     *         "code": "AUTH_INVALID",
-                     *         "message": "Invalid or expired refresh token"
-                     *       }
-                     *     } */
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            500: components["responses"]["InternalError"];
-        };
-    };
-    forgotPassword: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /** @example {
-                 *       "email": "user@example.com"
-                 *     } */
-                "application/json": {
-                    /**
-                     * Format: email
-                     * @description Email address of the account
-                     */
-                    email: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Password reset code sent */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "message": "Password reset code sent to email"
-                     *     } */
-                    "application/json": {
-                        message?: string;
-                    };
-                };
-            };
-            400: components["responses"]["ValidationError"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    resetPassword: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /** @example {
-                 *       "email": "user@example.com",
-                 *       "confirmationCode": "123456",
-                 *       "newPassword": "NewSecurePass123!@#"
-                 *     } */
-                "application/json": {
-                    /**
-                     * Format: email
-                     * @description Email address of the account
-                     */
-                    email: string;
-                    /** @description 6-digit confirmation code from email */
-                    confirmationCode: string;
-                    /**
-                     * Format: password
-                     * @description New password (min 12 characters)
-                     */
-                    newPassword: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Password successfully reset */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example {
-                     *       "message": "Password reset successful"
-                     *     } */
-                    "application/json": {
-                        message?: string;
-                    };
-                };
-            };
-            400: components["responses"]["ValidationError"];
-            500: components["responses"]["InternalError"];
         };
     };
 }

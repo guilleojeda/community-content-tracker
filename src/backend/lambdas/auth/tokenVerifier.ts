@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+import jwt, { JwtHeader } from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 import { UserRepository } from '../../repositories/UserRepository';
 import { User } from '../../../shared/types';
@@ -186,18 +186,6 @@ function validateClaims(claims: any): TokenVerificationError | null {
 }
 
 /**
- * Decode JWT header to get key ID
- */
-function getKeyIdFromToken(token: string): string | null {
-  try {
-    const decoded = jwt.decode(token, { complete: true });
-    return decoded?.header?.kid || null;
-  } catch (error) {
-    return null;
-  }
-}
-
-/**
  * Verify JWT token against Cognito
  */
 export async function verifyJwtToken(
@@ -218,6 +206,17 @@ export async function verifyJwtToken(
       };
     }
 
+    if (token.length > 4096) {
+      return {
+        isValid: false,
+        error: {
+          code: 'INVALID_TOKEN',
+          message: 'Token is invalid or malformed',
+          details: 'Token length exceeds maximum supported size',
+        },
+      };
+    }
+
     // Validate configuration
     try {
       validateConfig(config);
@@ -232,44 +231,19 @@ export async function verifyJwtToken(
       };
     }
 
-    // Get key ID from token
-    const kid = getKeyIdFromToken(token);
-    if (!kid) {
-      return {
-        isValid: false,
-        error: {
-          code: 'INVALID_TOKEN',
-          message: 'Token is invalid or malformed',
-          details: 'Cannot extract key ID from token header',
-        },
-      };
-    }
-
-    // Get signing key
-    let signingKey: string;
-    try {
-      signingKey = await getSigningKey(kid, config);
-    } catch (keyError: any) {
-      if (keyError.code === 'ETIMEDOUT' || keyError.code === 'ENOTFOUND') {
-        return {
-          isValid: false,
-          error: {
-            code: 'NETWORK_ERROR',
-            message: 'Network error while retrieving signing key',
-            details: keyError.message,
-          },
-        };
+    const signingKeyResolver = (
+      header: JwtHeader | undefined,
+      callback: (err: Error | null, key?: string | Buffer) => void
+    ): void => {
+      if (!header || !header.kid) {
+        callback(new Error('Missing key ID in token header'));
+        return;
       }
 
-      return {
-        isValid: false,
-        error: {
-          code: 'INVALID_TOKEN',
-          message: 'Cannot retrieve signing key',
-          details: keyError.message,
-        },
-      };
-    }
+      getSigningKey(header.kid, config)
+        .then((signingKey) => callback(null, signingKey))
+        .catch((err) => callback(err as Error));
+    };
 
     // Verify token
     let claims: CognitoTokenClaims;
@@ -277,7 +251,7 @@ export async function verifyJwtToken(
       claims = await new Promise<CognitoTokenClaims>((resolve, reject) => {
         jwt.verify(
           token,
-          signingKey,
+          signingKeyResolver as any,
           {
             algorithms: ['RS256'],
             audience: config.allowedAudiences,
@@ -293,6 +267,28 @@ export async function verifyJwtToken(
         );
       });
     } catch (verifyError: any) {
+      if (verifyError?.code === 'ETIMEDOUT' || verifyError?.code === 'ENOTFOUND') {
+        return {
+          isValid: false,
+          error: {
+            code: 'NETWORK_ERROR',
+            message: 'Network error while retrieving signing key',
+            details: verifyError.message,
+          },
+        };
+      }
+
+      if (verifyError?.message?.includes('Missing key ID')) {
+        return {
+          isValid: false,
+          error: {
+            code: 'INVALID_TOKEN',
+            message: 'Token is invalid or malformed',
+            details: verifyError.message,
+          },
+        };
+      }
+
       if (verifyError.name === 'TokenExpiredError') {
         return {
           isValid: false,

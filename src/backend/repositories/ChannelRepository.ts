@@ -42,22 +42,37 @@ export class ChannelRepository extends BaseRepository {
   }
 
   async create(data: Omit<CreateChannelRequest, 'userId'> & { userId: string; enabled?: boolean }): Promise<Channel> {
-    const result = await this.pool.query<ChannelRow>(
-      `INSERT INTO channels (user_id, channel_type, url, name, enabled, sync_frequency, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [
-        data.userId,
-        data.channelType,
-        data.url,
-        data.name || null,
-        data.enabled !== undefined ? data.enabled : true,
-        data.syncFrequency || 'daily',
-        JSON.stringify(data.metadata || {}),
-      ]
-    );
+    const existing = await this.findByUserIdAndUrl(data.userId, data.url);
+    if (existing) {
+      return existing;
+    }
 
-    return this.mapRowToChannel(result.rows[0]);
+    try {
+      const result = await this.pool.query<ChannelRow>(
+        `INSERT INTO channels (user_id, channel_type, url, name, enabled, sync_frequency, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          data.userId,
+          data.channelType,
+          data.url,
+          data.name || null,
+          data.enabled !== undefined ? data.enabled : true,
+          data.syncFrequency || 'daily',
+          JSON.stringify(data.metadata || {}),
+        ]
+      );
+
+      return this.mapRowToChannel(result.rows[0]);
+    } catch (error: any) {
+      if (error?.code === '23505') {
+        const duplicate = await this.findByUserIdAndUrl(data.userId, data.url);
+        if (duplicate) {
+          return duplicate;
+        }
+      }
+      throw error;
+    }
   }
 
   async findById(id: string): Promise<Channel | null> {

@@ -9,9 +9,23 @@ import { UserRepository } from '../../../src/backend/repositories/UserRepository
 import { Visibility } from '@aws-community-hub/shared';
 
 // Mock dependencies
-jest.mock('@aws-sdk/client-cognito-identity-provider');
+jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
+    const actual = jest.requireActual('@aws-sdk/client-cognito-identity-provider');
+    return {
+        ...actual,
+        CognitoIdentityProviderClient: jest.fn(),
+    };
+});
 jest.mock('pg');
 jest.mock('../../../src/backend/repositories/UserRepository');
+
+const loadScript = () => require('../../../src/backend/scripts/bootstrap-admin');
+
+const defaultArgs = {
+    email: 'admin@example.com',
+    username: 'admin',
+    password: 'SecurePassword123!',
+};
 
 describe('Admin Bootstrap Script', () => {
     let mockCognitoClient: jest.Mocked<CognitoIdentityProviderClient>;
@@ -23,7 +37,14 @@ describe('Admin Bootstrap Script', () => {
     let consoleErrorSpy: jest.SpyInstance;
     let processExitSpy: jest.SpyInstance;
 
+    const defaultDeps = () => ({
+        pool: mockPool as any,
+        userRepository: mockUserRepo as any,
+        cognitoClient: mockCognitoClient as any,
+    });
+
     beforeEach(() => {
+        jest.resetModules();
         // Save original environment
         originalEnv = { ...process.env };
         originalArgv = [...process.argv];
@@ -80,10 +101,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject when email is missing', () => {
             process.argv = ['node', 'script', '--username', 'admin', '--password', 'SecurePass123!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Usage: npm run bootstrap:admin')
             );
@@ -92,10 +112,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject when username is missing', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--password', 'SecurePass123!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Usage: npm run bootstrap:admin')
             );
@@ -104,10 +123,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject when password is missing', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Usage: npm run bootstrap:admin')
             );
@@ -116,10 +134,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject password shorter than 12 characters', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'Short1!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 'Password must be at least 12 characters long'
             );
@@ -128,10 +145,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject password without lowercase letters', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'UPPERCASE123!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 'Password must contain lowercase, uppercase, numbers, and special characters'
             );
@@ -140,10 +156,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject password without uppercase letters', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'lowercase123!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 'Password must contain lowercase, uppercase, numbers, and special characters'
             );
@@ -152,10 +167,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject password without numbers', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'NoNumbersHere!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 'Password must contain lowercase, uppercase, numbers, and special characters'
             );
@@ -164,10 +178,9 @@ describe('Admin Bootstrap Script', () => {
         test('should reject password without special characters', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'NoSpecialChar123'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const script = loadScript();
 
+            expect(() => script.parseArgs()).toThrow('INVALID_ARGUMENTS');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 'Password must contain lowercase, uppercase, numbers, and special characters'
             );
@@ -176,9 +189,7 @@ describe('Admin Bootstrap Script', () => {
         test('should accept valid arguments', () => {
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'ValidPassword123!'];
 
-            // This should not throw an error for argument parsing
-            // (It may throw later for other reasons, but not for args)
-            const parseArgs = require('../../../src/backend/scripts/bootstrap-admin').parseArgs;
+            const { parseArgs } = loadScript();
             const result = parseArgs();
 
             expect(result).toEqual({
@@ -194,10 +205,9 @@ describe('Admin Bootstrap Script', () => {
             delete process.env.COGNITO_USER_POOL_ID;
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const { validateEnvironment } = loadScript();
 
+            expect(() => validateEnvironment()).toThrow('INVALID_ENVIRONMENT');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 'Missing required environment variables: COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID'
             );
@@ -207,45 +217,37 @@ describe('Admin Bootstrap Script', () => {
             delete process.env.COGNITO_CLIENT_ID;
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
 
-            expect(() => {
-                require('../../../src/backend/scripts/bootstrap-admin');
-            }).toThrow('Process exited with code 1');
+            const { validateEnvironment } = loadScript();
 
+            expect(() => validateEnvironment()).toThrow('INVALID_ENVIRONMENT');
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 'Missing required environment variables: COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID'
             );
         });
 
-        test('should use default DATABASE_URL when not provided', () => {
+        test('should derive DATABASE_URL from connection parts when not provided', () => {
             delete process.env.DATABASE_URL;
+            process.env.DB_HOST = 'localhost';
+            process.env.DB_PORT = '5432';
+            process.env.DB_NAME = 'contenthub';
+            process.env.DB_USER = 'contentuser';
+            process.env.DB_PASSWORD = 'secret';
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
 
-            // Mock successful execution
-            mockUserRepo.findByEmail.mockResolvedValue(null);
-            mockCognitoClient.send.mockResolvedValue({
-                User: { Username: 'test-sub' }
-            });
-            mockUserRepo.createUser.mockResolvedValue({
-                id: 'test-id',
-                email: 'admin@example.com',
-                username: 'admin',
-                isAdmin: true
-            });
+            const { validateEnvironment } = loadScript();
+            const env = validateEnvironment();
 
-            // Should use default connection string
-            expect(Pool).toHaveBeenCalledWith({
-                connectionString: 'postgresql://postgres:postgres@localhost:5432/content_hub_dev'
-            });
+            expect(env.databaseUrl).toBe('postgresql://contentuser:secret@localhost:5432/contenthub');
         });
 
         test('should use default AWS_REGION when not provided', () => {
             delete process.env.AWS_REGION;
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
 
-            // Should use default region
-            expect(CognitoIdentityProviderClient).toHaveBeenCalledWith({
-                region: 'us-east-1'
-            });
+            const { validateEnvironment } = loadScript();
+            const env = validateEnvironment();
+
+            expect(env.region).toBe('us-east-1');
         });
     });
 
@@ -262,7 +264,7 @@ describe('Admin Bootstrap Script', () => {
 
             // Cognito operations succeed
             mockCognitoClient.send.mockImplementation((command) => {
-                if (command instanceof AdminCreateUserCommand) {
+                if (command?.constructor?.name === 'AdminCreateUserCommand') {
                     return Promise.resolve({ User: { Username: 'cognito-sub-123' } });
                 }
                 return Promise.resolve({});
@@ -278,23 +280,40 @@ describe('Admin Bootstrap Script', () => {
                 isAwsEmployee: false
             });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(defaultArgs, defaultDeps());
 
-            // Verify Cognito user creation
-            expect(mockCognitoClient.send).toHaveBeenCalledWith(
-                expect.any(AdminCreateUserCommand)
-            );
+            expect(mockCognitoClient.send).toHaveBeenCalledTimes(3);
 
-            // Verify password setting
-            expect(mockCognitoClient.send).toHaveBeenCalledWith(
-                expect.any(AdminSetUserPasswordCommand)
-            );
+            const createCommand = mockCognitoClient.send.mock.calls.find(
+                ([command]) => command?.constructor?.name === 'AdminCreateUserCommand'
+            )?.[0];
+            const passwordCommand = mockCognitoClient.send.mock.calls.find(
+                ([command]) => command?.constructor?.name === 'AdminSetUserPasswordCommand'
+            )?.[0];
+            const groupCommand = mockCognitoClient.send.mock.calls.find(
+                ([command]) => command?.constructor?.name === 'AdminAddUserToGroupCommand'
+            )?.[0];
 
-            // Verify admin group addition
-            expect(mockCognitoClient.send).toHaveBeenCalledWith(
-                expect.any(AdminAddUserToGroupCommand)
+            expect(createCommand?.input?.UserAttributes).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ Name: 'email', Value: 'admin@example.com' }),
+                    expect.objectContaining({ Name: 'email_verified', Value: 'true' }),
+                    expect.objectContaining({ Name: 'custom:username', Value: 'admin' }),
+                    expect.objectContaining({ Name: 'custom:is_admin', Value: 'true' }),
+                ])
             );
+            expect(createCommand?.input?.MessageAction).toBe('SUPPRESS');
+
+            expect(passwordCommand?.input).toMatchObject({
+                Username: 'admin@example.com',
+                Permanent: true,
+            });
+
+            expect(groupCommand?.input).toMatchObject({
+                GroupName: 'admin',
+                Username: 'admin@example.com',
+            });
 
             // Verify database user creation
             expect(mockUserRepo.createUser).toHaveBeenCalledWith({
@@ -309,7 +328,7 @@ describe('Admin Bootstrap Script', () => {
 
             // Verify success message
             expect(consoleLogSpy).toHaveBeenCalledWith(
-                expect.stringContaining('Admin bootstrap completed successfully!')
+                expect.stringContaining('Admin bootstrap completed successfully.')
             );
         });
 
@@ -322,8 +341,8 @@ describe('Admin Bootstrap Script', () => {
                 isAdmin: true
             });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(defaultArgs, defaultDeps());
 
             // Should not create user in Cognito
             expect(mockCognitoClient.send).not.toHaveBeenCalled();
@@ -333,7 +352,7 @@ describe('Admin Bootstrap Script', () => {
 
             // Should log idempotent message
             expect(consoleLogSpy).toHaveBeenCalledWith(
-                '✅ Admin user already exists. Script is idempotent, no action needed.'
+                'Admin user already exists. Script is idempotent, no action needed.'
             );
         });
 
@@ -353,15 +372,15 @@ describe('Admin Bootstrap Script', () => {
                 isAdmin: true
             });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(defaultArgs, defaultDeps());
 
             // Should promote to admin
             expect(mockUserRepo.promoteToAdmin).toHaveBeenCalledWith('existing-id');
 
             // Should log promotion message
             expect(consoleLogSpy).toHaveBeenCalledWith(
-                '✅ User promoted to admin successfully.'
+                'User promoted to admin successfully.'
             );
         });
 
@@ -371,7 +390,7 @@ describe('Admin Bootstrap Script', () => {
 
             // Cognito user already exists
             mockCognitoClient.send.mockImplementation((command) => {
-                if (command instanceof AdminCreateUserCommand) {
+                if (command?.constructor?.name === 'AdminCreateUserCommand') {
                     const error = new Error('User already exists');
                     error.name = 'UsernameExistsException';
                     return Promise.reject(error);
@@ -379,18 +398,23 @@ describe('Admin Bootstrap Script', () => {
                 return Promise.resolve({});
             });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(defaultArgs, defaultDeps());
 
             // Should update user attributes
-            expect(mockCognitoClient.send).toHaveBeenCalledWith(
-                expect.any(AdminUpdateUserAttributesCommand)
+            const attributeCommand = mockCognitoClient.send.mock.calls.find(
+                ([command]) => command?.constructor?.name === 'AdminUpdateUserAttributesCommand'
+            )?.[0];
+            expect(attributeCommand?.input?.UserAttributes).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ Name: 'custom:is_admin', Value: 'true' })
+                ])
             );
 
-            // Should add to admin group
-            expect(mockCognitoClient.send).toHaveBeenCalledWith(
-                expect.any(AdminAddUserToGroupCommand)
-            );
+            const groupCommand = mockCognitoClient.send.mock.calls.find(
+                ([command]) => command?.constructor?.name === 'AdminAddUserToGroupCommand'
+            )?.[0];
+            expect(groupCommand?.input?.GroupName).toBe('admin');
         });
 
         test('should detect AWS employee from email domain @amazon.com', async () => {
@@ -399,8 +423,12 @@ describe('Admin Bootstrap Script', () => {
             mockUserRepo.findByEmail.mockResolvedValue(null);
             mockCognitoClient.send.mockResolvedValue({ User: { Username: 'sub-123' } });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin({
+                email: 'admin@amazon.com',
+                username: 'admin',
+                password: 'SecurePassword123!'
+            }, defaultDeps());
 
             // Should set isAwsEmployee to true
             expect(mockUserRepo.createUser).toHaveBeenCalledWith(
@@ -416,8 +444,12 @@ describe('Admin Bootstrap Script', () => {
             mockUserRepo.findByEmail.mockResolvedValue(null);
             mockCognitoClient.send.mockResolvedValue({ User: { Username: 'sub-123' } });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin({
+                email: 'admin@aws.com',
+                username: 'admin',
+                password: 'SecurePassword123!'
+            }, defaultDeps());
 
             // Should set isAwsEmployee to true
             expect(mockUserRepo.createUser).toHaveBeenCalledWith(
@@ -430,13 +462,13 @@ describe('Admin Bootstrap Script', () => {
         test('should handle general errors gracefully', async () => {
             mockUserRepo.findByEmail.mockRejectedValue(new Error('Database connection failed'));
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
+            const { bootstrapAdmin } = loadScript();
 
-            await expect(bootstrapAdmin()).rejects.toThrow('Database connection failed');
+            await expect(bootstrapAdmin(defaultArgs, defaultDeps())).rejects.toThrow('Database connection failed');
 
             // Should log error
             expect(consoleErrorSpy).toHaveBeenCalledWith(
-                '❌ Bootstrap failed:',
+                'Bootstrap failed:',
                 expect.any(Error)
             );
 
@@ -448,34 +480,32 @@ describe('Admin Bootstrap Script', () => {
             mockUserRepo.findByEmail.mockResolvedValue(null);
             mockCognitoClient.send.mockResolvedValue({ User: { Username: 'sub-123' } });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(defaultArgs, defaultDeps());
 
-            // Verify MessageAction is SUPPRESS
-            const createUserCall = mockCognitoClient.send.mock.calls.find(
-                call => call[0] instanceof AdminCreateUserCommand
-            );
+            const createCommand = mockCognitoClient.send.mock.calls.find(
+                ([command]) => command?.constructor?.name === 'AdminCreateUserCommand'
+            )?.[0];
 
-            expect(createUserCall[0].input.MessageAction).toBe('SUPPRESS');
+            expect(createCommand?.input?.MessageAction).toBe('SUPPRESS');
         });
 
         test('should set email_verified to true', async () => {
             mockUserRepo.findByEmail.mockResolvedValue(null);
             mockCognitoClient.send.mockResolvedValue({ User: { Username: 'sub-123' } });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(defaultArgs, defaultDeps());
 
-            // Verify email_verified attribute
-            const createUserCall = mockCognitoClient.send.mock.calls.find(
-                call => call[0] instanceof AdminCreateUserCommand
+            const createCommand = mockCognitoClient.send.mock.calls.find(
+                ([command]) => command?.constructor?.name === 'AdminCreateUserCommand'
+            )?.[0];
+
+            const emailVerifiedAttr = createCommand?.input?.UserAttributes?.find(
+                (attr: any) => attr.Name === 'email_verified'
             );
 
-            const emailVerifiedAttr = createUserCall[0].input.UserAttributes.find(
-                attr => attr.Name === 'email_verified'
-            );
-
-            expect(emailVerifiedAttr.Value).toBe('true');
+            expect(emailVerifiedAttr?.Value).toBe('true');
         });
 
         test('should generate proper profile slug', async () => {
@@ -484,8 +514,12 @@ describe('Admin Bootstrap Script', () => {
             mockUserRepo.findByEmail.mockResolvedValue(null);
             mockCognitoClient.send.mockResolvedValue({ User: { Username: 'sub-123' } });
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
-            await bootstrapAdmin();
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin({
+                email: 'admin@example.com',
+                username: 'Admin-User_123',
+                password: 'SecurePassword123!'
+            }, defaultDeps());
 
             // Should generate slug from username
             expect(mockUserRepo.createUser).toHaveBeenCalledWith(
@@ -500,19 +534,19 @@ describe('Admin Bootstrap Script', () => {
         test('should exit with code 1 on fatal errors', async () => {
             mockUserRepo.findByEmail.mockRejectedValue(new Error('Fatal database error'));
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
+            const { bootstrapAdmin } = loadScript();
 
-            await expect(bootstrapAdmin()).rejects.toThrow('Fatal database error');
+            await expect(bootstrapAdmin(defaultArgs, defaultDeps())).rejects.toThrow('Fatal database error');
 
-            expect(consoleErrorSpy).toHaveBeenCalledWith('Fatal error:', expect.any(Error));
+            expect(consoleErrorSpy).toHaveBeenCalledWith('Bootstrap failed:', expect.any(Error));
         });
 
         test('should always close database pool even on error', async () => {
             mockUserRepo.findByEmail.mockRejectedValue(new Error('Some error'));
 
-            const bootstrapAdmin = require('../../../src/backend/scripts/bootstrap-admin').bootstrapAdmin;
+            const { bootstrapAdmin } = loadScript();
 
-            await expect(bootstrapAdmin()).rejects.toThrow('Some error');
+            await expect(bootstrapAdmin(defaultArgs, defaultDeps())).rejects.toThrow('Some error');
 
             // Pool should be closed
             expect(mockPool.end).toHaveBeenCalled();

@@ -1,29 +1,9 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { Pool } from 'pg';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { ContentType, Visibility } from '@aws-community-hub/shared';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
-
-let pool: Pool | null = null;
-
-function getPool(): Pool {
-  if (!pool) {
-    if (!process.env.DATABASE_URL) {
-      throw new Error('DATABASE_URL environment variable is required');
-    }
-
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: 10,
-      min: 2,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    });
-  }
-
-  return pool;
-}
+import { getDatabasePool } from '../../services/database';
 
 interface UnclaimedQueryParams {
   limit?: string;
@@ -51,7 +31,7 @@ export const handler = async (
     }
 
     // Get database pool
-    const dbPool = getPool();
+    const dbPool = await getDatabasePool();
     const contentRepo = new ContentRepository(dbPool);
     const userRepo = new UserRepository(dbPool);
 

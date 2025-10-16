@@ -16,20 +16,29 @@ import { UserRepository } from '../../../../src/backend/repositories/UserReposit
 import { BadgeType, User, Visibility } from '../../../../src/shared/types';
 import * as tokenVerifier from '../../../../src/backend/lambdas/auth/tokenVerifier';
 import * as authUtils from '../../../../src/backend/lambdas/auth/utils';
+import * as database from '../../../../src/backend/services/database';
 
 // Mock dependencies
 jest.mock('../../../../src/backend/repositories/UserRepository');
 jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier');
 jest.mock('../../../../src/backend/lambdas/auth/utils');
+jest.mock('../../../../src/backend/services/database', () => ({
+  getDatabasePool: jest.fn(),
+  setTestDatabasePool: jest.fn(),
+  closeDatabasePool: jest.fn(),
+  resetDatabaseCache: jest.fn(),
+}));
 jest.mock('pg');
 
 const mockTokenVerifier = tokenVerifier as jest.Mocked<typeof tokenVerifier>;
 const mockAuthUtils = authUtils as jest.Mocked<typeof authUtils>;
 const MockUserRepository = UserRepository as jest.MockedClass<typeof UserRepository>;
+const mockDatabase = database as jest.Mocked<typeof database>;
 
 describe('API Gateway Authorizer Lambda', () => {
   let mockUserRepository: jest.Mocked<UserRepository>;
   let mockPool: jest.Mocked<Pool>;
+  const actualAuthUtils = jest.requireActual('../../../../src/backend/lambdas/auth/utils');
 
   const validUser: User = {
     id: 'user-123',
@@ -128,6 +137,9 @@ describe('API Gateway Authorizer Lambda', () => {
     mockUserRepository = new MockUserRepository(mockPool) as jest.Mocked<UserRepository>;
     MockUserRepository.mockImplementation(() => mockUserRepository);
 
+    // Mock database pool
+    mockDatabase.getDatabasePool.mockResolvedValue(mockPool);
+
     // Reset all mocks
     jest.clearAllMocks();
 
@@ -150,6 +162,10 @@ describe('API Gateway Authorizer Lambda', () => {
     });
 
     mockAuthUtils.getUserBadges.mockResolvedValue(mockUserBadges);
+    mockAuthUtils.validateMethodArn.mockImplementation(actualAuthUtils.validateMethodArn);
+    mockAuthUtils.generatePolicyDocument.mockImplementation(actualAuthUtils.generatePolicyDocument);
+    mockAuthUtils.logSecurityEvent.mockImplementation(actualAuthUtils.logSecurityEvent);
+    mockAuthUtils.detectSuspiciousActivity.mockImplementation(actualAuthUtils.detectSuspiciousActivity);
 
     // Default environment variables
     process.env.COGNITO_USER_POOL_ID = 'us-east-1_test';

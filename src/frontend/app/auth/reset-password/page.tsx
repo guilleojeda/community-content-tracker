@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { getPublicApiClient } from '@/api/client';
 
 function ResetPasswordContent() {
   const searchParams = useSearchParams();
@@ -62,23 +63,12 @@ function ResetPasswordContent() {
     setLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-      const response = await fetch(`${apiUrl}/auth/reset-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: formData.email,
-          confirmationCode: formData.code,
-          newPassword: formData.password,
-        }),
+      const client = getPublicApiClient();
+      await client.resetPassword({
+        email: formData.email,
+        confirmationCode: formData.code,
+        newPassword: formData.password,
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Password reset failed');
-      }
 
       setSuccess(true);
       // Redirect to login page after 2 seconds

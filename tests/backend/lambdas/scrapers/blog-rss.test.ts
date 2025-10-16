@@ -3,19 +3,46 @@ import { ChannelRepository } from '../../../../src/backend/repositories/ChannelR
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import Parser from 'rss-parser';
 
-// Create mock functions that will be used
-const mockFindActiveByType = jest.fn();
-const mockUpdateSyncStatus = jest.fn();
+// Create mock functions for SQS and Parser (these are external to jest.mock)
 const mockSend = jest.fn();
 const mockParseURL = jest.fn();
 
+// Mock database service FIRST - must be done BEFORE importing handler
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+  end: jest.fn(),
+  on: jest.fn(),
+};
+
+jest.mock('../../../../src/backend/services/database', () => ({
+  getDatabasePool: jest.fn().mockResolvedValue(mockPool),
+  closeDatabasePool: jest.fn(),
+  setTestDatabasePool: jest.fn(),
+  resetDatabaseCache: jest.fn(),
+}));
+
 // Mock dependencies - must be done BEFORE importing handler
+// Use a factory to ensure fresh mock instances
 jest.mock('../../../../src/backend/repositories/ChannelRepository', () => {
+  const mockFindActiveByType = jest.fn();
+  const mockUpdateSyncStatus = jest.fn();
+
+  class MockChannelRepository {
+    findActiveByType = mockFindActiveByType;
+    updateSyncStatus = mockUpdateSyncStatus;
+
+    constructor(pool: any) {
+      // Constructor called with pool
+    }
+
+    // Make mocks accessible to tests
+    static mockFindActiveByType = mockFindActiveByType;
+    static mockUpdateSyncStatus = mockUpdateSyncStatus;
+  }
+
   return {
-    ChannelRepository: jest.fn().mockImplementation(() => ({
-      findActiveByType: mockFindActiveByType,
-      updateSyncStatus: mockUpdateSyncStatus,
-    })),
+    ChannelRepository: MockChannelRepository,
   };
 });
 
@@ -34,20 +61,16 @@ jest.mock('rss-parser', () => {
   }));
 });
 
-jest.mock('pg', () => ({
-  Pool: jest.fn(() => ({
-    query: jest.fn(),
-    connect: jest.fn(),
-    end: jest.fn(),
-  })),
-}));
-
 // Import handler AFTER mocks are set up
 import { handler } from '../../../../src/backend/lambdas/scrapers/blog-rss';
 
 const mockChannelRepository = ChannelRepository as jest.MockedClass<typeof ChannelRepository>;
 const mockSQSClient = SQSClient as jest.MockedClass<typeof SQSClient>;
 const mockParser = Parser as jest.MockedClass<typeof Parser>;
+
+// Get the mock methods from the constructor
+const mockFindActiveByType = (mockChannelRepository as any).mockFindActiveByType as jest.Mock;
+const mockUpdateSyncStatus = (mockChannelRepository as any).mockUpdateSyncStatus as jest.Mock;
 
 describe('Blog RSS Scraper Lambda', () => {
   let mockContext: Context;
@@ -56,6 +79,16 @@ describe('Blog RSS Scraper Lambda', () => {
     jest.clearAllMocks();
     mockContext = {} as Context;
     process.env.CONTENT_PROCESSING_QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/123456789/test-queue';
+
+    // Provide default mock implementations
+    if (mockFindActiveByType) {
+      mockFindActiveByType.mockResolvedValue([]);
+    }
+    if (mockUpdateSyncStatus) {
+      mockUpdateSyncStatus.mockResolvedValue(undefined);
+    }
+    mockSend.mockResolvedValue({});
+    mockParseURL.mockResolvedValue({ items: [] });
   });
 
   const createEvent = (): ScheduledEvent => ({

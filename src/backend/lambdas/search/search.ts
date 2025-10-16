@@ -1,7 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
 import { SearchService } from '../../services/SearchService';
-import { ContentType, BadgeType } from '@aws-community-hub/shared';
+import { ContentType, BadgeType, Visibility } from '@aws-community-hub/shared';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 
 /**
@@ -169,6 +169,34 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           })
         };
       }
+    }
+
+    // Visibility filter
+    if (event.queryStringParameters?.visibility) {
+      const visibilityValues = event.queryStringParameters.visibility
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean);
+
+      const validVisibility = Object.values(Visibility);
+      const invalidVisibility = visibilityValues.filter(
+        value => !validVisibility.includes(value as Visibility)
+      );
+
+      if (invalidVisibility.length > 0) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: `Invalid visibility value(s): ${invalidVisibility.join(', ')}`
+            }
+          })
+        };
+      }
+
+      filters.visibility = visibilityValues as Visibility[];
     }
 
     // Get viewer information from authorizer

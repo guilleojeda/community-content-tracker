@@ -6,6 +6,8 @@
 process.env.AWS_REGION = 'us-east-1';
 process.env.CDK_DEFAULT_REGION = 'us-east-1';
 process.env.CDK_DEFAULT_ACCOUNT = '123456789012';
+// Mock DATABASE_URL for tests that don't use real database
+process.env.DATABASE_URL = 'postgresql://testuser:testpass@localhost:5432/test_db';
 
 // Mock AWS SDK to prevent actual AWS calls and async cleanup issues
 // jest.mock('@aws-sdk/client-s3');

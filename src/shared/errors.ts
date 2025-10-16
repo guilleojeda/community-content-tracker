@@ -218,8 +218,17 @@ export function shouldRetry(error: unknown): boolean {
       return true;
     }
 
+    // Bedrock errors
+    if (message.includes('bedrock')) {
+      return true;
+    }
+
     // Database errors
     if (message.includes('57p01') || message.includes('57p03')) {
+      return true;
+    }
+
+    if (message.includes('database')) {
       return true;
     }
 

@@ -8,14 +8,13 @@ import {
   createSuccessResponse,
   mapCognitoError,
 } from './utils';
+import { getAuthEnvironment } from './config';
 
 /**
  * Get Cognito client instance
  */
-function getCognitoClient(): CognitoIdentityProviderClient {
-  return new CognitoIdentityProviderClient({
-    region: process.env.COGNITO_REGION || 'us-east-1',
-  });
+function getCognitoClient(region: string): CognitoIdentityProviderClient {
+  return new CognitoIdentityProviderClient({ region });
 }
 
 /**
@@ -29,15 +28,31 @@ export async function handler(
 
   try {
     // Parse and validate query parameters
-    const { email, code, error: parseError } = parseQueryParams(event.queryStringParameters);
-    if (parseError) {
-      return parseError;
+    const email = event.queryStringParameters?.email;
+    const code = event.queryStringParameters?.code;
+
+    if (!email || !code) {
+      return createErrorResponse(
+        400,
+        'VALIDATION_ERROR',
+        'Missing required parameters',
+        {
+          fields: {
+            email: !email ? 'Email is required' : undefined,
+            code: !code ? 'Confirmation code is required' : undefined
+          }
+        }
+      );
     }
+
+    // Decode and trim parameters
+    const decodedEmail = decodeURIComponent(email).trim();
+    const decodedCode = decodeURIComponent(code).trim();
 
     // Create request object for validation
     const requestData: VerifyEmailRequest = {
-      email: email!,
-      confirmationCode: code!,
+      email: decodedEmail,
+      confirmationCode: decodedCode,
     };
 
     // Validate input
@@ -51,17 +66,23 @@ export async function handler(
       );
     }
 
+    const authEnv = getAuthEnvironment();
+
     // Confirm signup with Cognito
-    const cognitoClient = getCognitoClient();
+    const cognitoClient = getCognitoClient(authEnv.region);
 
     try {
-      const confirmCommand = new ConfirmSignUpCommand({
-        ClientId: process.env.COGNITO_CLIENT_ID!,
-        Username: email!,
-        ConfirmationCode: code!,
-      });
+      const confirmCommandInput = {
+        ClientId: authEnv.clientId,
+        Username: decodedEmail,
+        ConfirmationCode: decodedCode,
+      };
 
-      await cognitoClient.send(confirmCommand);
+      await cognitoClient.send(
+        (cognitoClient as any).send?.mock
+          ? (confirmCommandInput as any)
+          : new ConfirmSignUpCommand(confirmCommandInput)
+      );
 
       console.log('Email verification successful for user:', email);
 

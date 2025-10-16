@@ -1,15 +1,37 @@
 import { ScheduledEvent, Context } from 'aws-lambda';
 import { ChannelType } from '../../../../src/shared/types';
-import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
-import { LambdaClient } from '@aws-sdk/client-lambda';
-import { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
+
+// Mock database pool FIRST
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+  end: jest.fn(),
+  on: jest.fn(),
+};
+
+jest.mock('../../../../src/backend/services/database', () => ({
+  getDatabasePool: jest.fn().mockResolvedValue(mockPool),
+  closeDatabasePool: jest.fn(),
+  setTestDatabasePool: jest.fn(),
+  resetDatabaseCache: jest.fn(),
+}));
+
+// Mock ChannelRepository with class pattern
+jest.mock('../../../../src/backend/repositories/ChannelRepository', () => {
+  const mockFindAllActiveForSync = jest.fn();
+
+  class MockChannelRepository {
+    findAllActiveForSync = mockFindAllActiveForSync;
+
+    static mockFindAllActiveForSync = mockFindAllActiveForSync;
+  }
+
+  return { ChannelRepository: MockChannelRepository };
+});
 
 // Create shared mock functions that will be used across tests
 const mockLambdaSend = jest.fn();
 const mockCloudWatchSend = jest.fn();
-const mockFindAllActiveForSync = jest.fn();
-
-jest.mock('../../../../src/backend/repositories/ChannelRepository');
 
 jest.mock('@aws-sdk/client-lambda', () => {
   const actual = jest.requireActual('@aws-sdk/client-lambda');
@@ -38,8 +60,6 @@ jest.mock('pg', () => ({
   })),
 }));
 
-import { StandardUnit } from '@aws-sdk/client-cloudwatch';
-
 // Set environment variables BEFORE importing handler
 // (handler reads these at module load time)
 process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
@@ -59,12 +79,18 @@ global.setTimeout = ((callback: any, delay?: number) => {
   return 0 as any;
 }) as any;
 
-// Import handler AFTER mocks and env vars are set up
+// Import handler and services AFTER mocks and env vars are set up
 import { handler } from '../../../../src/backend/lambdas/scrapers/orchestrator';
+import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
+import { LambdaClient } from '@aws-sdk/client-lambda';
+import { CloudWatchClient, StandardUnit } from '@aws-sdk/client-cloudwatch';
 
 const mockChannelRepository = ChannelRepository as jest.MockedClass<typeof ChannelRepository>;
 const mockLambdaClient = LambdaClient as jest.MockedClass<typeof LambdaClient>;
 const mockCloudWatchClientClass = CloudWatchClient as jest.MockedClass<typeof CloudWatchClient>;
+
+// Access the mock methods from the mocked class
+const mockFindAllActiveForSync = (mockChannelRepository as any).mockFindAllActiveForSync;
 
 describe('Scraper Orchestrator Lambda', () => {
   let mockContext: Context;
@@ -78,9 +104,6 @@ describe('Scraper Orchestrator Lambda', () => {
     jest.clearAllMocks();
     setTimeoutDelays.length = 0; // Clear delay tracking
     mockContext = {} as Context;
-
-    // Set up ChannelRepository prototype method
-    mockChannelRepository.prototype.findAllActiveForSync = mockFindAllActiveForSync;
   });
 
   const createEvent = (): ScheduledEvent => ({

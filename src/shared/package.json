@@ -1,12 +1,11 @@
 {
     "name": "@aws-community-hub/shared",
     "version": "0.1.0",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
+    "main": "dist/types/index.js",
+    "types": "dist/types/index.d.ts",
     "scripts": {
       "build": "tsc",
-      "typecheck": "tsc --noEmit",
-      "test": "jest"
+      "typecheck": "tsc --noEmit"
     },
     "devDependencies": {
       "typescript": "^5.0.0"

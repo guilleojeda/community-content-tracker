@@ -1,4 +1,3 @@
-import { Pool } from 'pg';
 import { UserRepository } from '../../repositories/UserRepository';
 import { verifyJwtToken, TokenVerifierConfig } from './tokenVerifier';
 import {
@@ -16,6 +15,8 @@ import {
   RateLimitInfo,
   UserBadge
 } from './utils';
+import { getDatabasePool } from '../../services/database';
+import { getAuthEnvironment } from './config';
 
 /**
  * API Gateway Authorizer Event
@@ -112,53 +113,24 @@ export interface AuthorizerConfig {
   allowedAudiences: string[];
   issuer: string;
   rateLimitPerHour: number;
-  dbConnectionString: string;
-}
-
-/**
- * Database connection pool (singleton)
- */
-let dbPool: Pool | null = null;
-
-/**
- * Get database pool instance
- */
-function getDbPool(connectionString: string): Pool {
-  if (!dbPool) {
-    dbPool = new Pool({
-      connectionString,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    });
-  }
-  return dbPool;
+  tokenVerificationTimeoutMs: number;
 }
 
 /**
  * Load configuration from environment variables
  */
 function loadConfig(): AuthorizerConfig {
-  const requiredVars = [
-    'COGNITO_USER_POOL_ID',
-    'COGNITO_REGION',
-    'ALLOWED_AUDIENCES',
-    'DATABASE_URL',
-  ];
-
-  for (const varName of requiredVars) {
-    if (!process.env[varName]) {
-      throw new Error(`Missing required environment variable: ${varName}`);
-    }
-  }
+  const authEnv = getAuthEnvironment();
+  const allowedAudiences =
+    authEnv.allowedAudiences.length > 0 ? authEnv.allowedAudiences : [authEnv.clientId];
 
   return {
-    cognitoUserPoolId: process.env.COGNITO_USER_POOL_ID!,
-    cognitoRegion: process.env.COGNITO_REGION!,
-    allowedAudiences: process.env.ALLOWED_AUDIENCES!.split(','),
-    issuer: `https://cognito-idp.${process.env.COGNITO_REGION}.amazonaws.com/${process.env.COGNITO_USER_POOL_ID}`,
+    cognitoUserPoolId: authEnv.userPoolId,
+    cognitoRegion: authEnv.region,
+    allowedAudiences,
+    issuer: `https://cognito-idp.${authEnv.region}.amazonaws.com/${authEnv.userPoolId}`,
     rateLimitPerHour: parseInt(process.env.RATE_LIMIT_PER_HOUR || '1000', 10),
-    dbConnectionString: process.env.DATABASE_URL!,
+    tokenVerificationTimeoutMs: authEnv.tokenVerificationTimeoutMs,
   };
 }
 
@@ -229,11 +201,21 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     console.log('Authorizer event:', JSON.stringify(event, null, 2));
 
     // Validate method ARN
-    if (!validateMethodArn(event.methodArn)) {
+    const methodArnValid = validateMethodArn(event.methodArn);
+    if (!methodArnValid) {
       return createUnauthorizedResponse(
         event.methodArn,
         'INVALID_REQUEST',
         'Invalid method ARN format'
+      );
+    }
+
+    // Basic environment validation before loading config
+    if (!process.env.COGNITO_USER_POOL_ID || process.env.COGNITO_USER_POOL_ID.trim() === '') {
+      return createUnauthorizedResponse(
+        event.methodArn,
+        'CONFIGURATION_ERROR',
+        'Missing required environment variables: COGNITO_USER_POOL_ID'
       );
     }
 
@@ -260,7 +242,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     }
 
     // Setup database connection
-    const pool = getDbPool(config.dbConnectionString);
+    const pool = await getDatabasePool();
     const userRepository = new UserRepository(pool);
 
     // Verify JWT token
@@ -271,7 +253,21 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
       issuer: config.issuer,
     };
 
-    const tokenResult = await verifyJwtToken(token, tokenConfig, userRepository);
+    const tokenResult = await Promise.race([
+      verifyJwtToken(token, tokenConfig, userRepository),
+      new Promise<Awaited<ReturnType<typeof verifyJwtToken>>>((resolve) => {
+        setTimeout(() => {
+          resolve({
+            isValid: false,
+            error: {
+              code: 'NETWORK_ERROR',
+              message: 'Authorization timeout',
+              details: 'Request took too long',
+            },
+          } as any);
+        }, config.tokenVerificationTimeoutMs);
+      }),
+    ]);
 
     if (!tokenResult.isValid || !tokenResult.user) {
       return createUnauthorizedResponse(
@@ -297,7 +293,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
 
       return createUnauthorizedResponse(
         event.methodArn,
-        'PERMISSION_DENIED',
+        'INSUFFICIENT_PRIVILEGES',
         'Admin privileges required for this endpoint'
       );
     }
@@ -317,11 +313,13 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
         timestamp: new Date(),
       });
 
-      return createUnauthorizedResponse(
+      const rateLimitResponse = createUnauthorizedResponse(
         event.methodArn,
         'RATE_LIMIT_EXCEEDED',
         'Too many requests'
       );
+      rateLimitResponse.context.rateLimitRemaining = enrichedContext.rateLimitInfo.remainingRequests.toString();
+      return rateLimitResponse;
     }
 
     // Detect suspicious activity

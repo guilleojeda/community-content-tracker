@@ -1,17 +1,116 @@
+// @ts-nocheck
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { ciTestHelpers } from '../setup';
+import { handlePipelineResult } from '../../src/backend/utils/pipeline';
 
-// Mock GitHub Actions core
+jest.mock('@actions/core', () => ciTestHelpers.mockGitHubActions);
+jest.mock('@actions/github', () => ({
+  context: ciTestHelpers.mockWorkflowContext,
+}));
+
 const mockCore = ciTestHelpers.mockGitHubActions;
 const mockContext = ciTestHelpers.mockWorkflowContext;
 
-jest.mock('@actions/core', () => mockCore);
-jest.mock('@actions/github', () => ({
-  context: mockContext,
-}));
+type SmokeTestResult = {
+  success: boolean;
+  tests: Record<string, string>;
+};
+
+type PerformanceResult = {
+  success: boolean;
+  metrics: Record<string, number>;
+  thresholds: Record<string, number>;
+};
+
+type NotificationResult = {
+  success: boolean;
+  notifications: Array<{ channel: string; message: string; sent: boolean }>;
+};
+
+type BuildFailureResult = {
+  success: boolean;
+  error: string;
+  exitCode: number;
+  logs: string[];
+};
+
+type DeployFailureResult = {
+  success: boolean;
+  error: string;
+  rollback: {
+    initiated: boolean;
+    status: string;
+  };
+};
+
+type TestFailureResult = {
+  success: boolean;
+  failedTests: number;
+  totalTests: number;
+  coverage: number;
+};
+
+type CDKDiffResult = {
+  success: boolean;
+  changes: Record<string, { additions: number; modifications: number; deletions: number }>;
+};
+
+type DeployResult = {
+  success: boolean;
+  stackName: string;
+};
+
+type DbIntegrationResult = {
+  success: boolean;
+  tests: Record<string, string>;
+};
+
+type ApiTestResult = {
+  success: boolean;
+  endpoints: Record<string, { status: number; response: string }>;
+};
+
+type E2EResult = {
+  success: boolean;
+  scenarios: Record<string, string>;
+};
+
+type BlueGreenDeployResult = {
+  success: boolean;
+  strategy: string;
+  environments: Record<string, string>;
+  switchover: boolean;
+};
+
+type RollingDeployResult = {
+  success: boolean;
+  strategy: string;
+  progress: { total: number; completed: number; failed: number };
+};
+
+type RollbackResult = {
+  success: boolean;
+  previousVersion: string;
+  currentVersion: string;
+  reason: string;
+};
+
+type ProdDeployResult = {
+  success: boolean;
+  environment: string;
+  approvals: {
+    required: boolean;
+    approved: boolean;
+    approver: string;
+  };
+};
+
+const createAsyncMock = <T>() => jest.fn<() => Promise<T>>();
+const createSyncMock = <T>() => jest.fn<() => T>();
+const createArgMock = <TArgs extends any[], TResult>() => jest.fn<(...args: TArgs) => TResult>();
 
 describe('CI/CD Pipeline Tests', () => {
   let originalEnv: NodeJS.ProcessEnv;
@@ -47,7 +146,7 @@ describe('CI/CD Pipeline Tests', () => {
 
   describe('GitHub Actions Workflow Configuration', () => {
     it('should have valid workflow YAML structure', () => {
-      const workflowPath = '.github/workflows/ci-cd.yml';
+      const workflowPath = '.github/workflows/ci.yml';
       
       // Mock the workflow file content
       const mockWorkflow = {
@@ -265,7 +364,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should perform diff analysis before deployment', () => {
-      const mockCDKDiff = jest.fn().mockReturnValue({
+      const mockCDKDiff = createSyncMock<CDKDiffResult>();
+      mockCDKDiff.mockReturnValue({
         success: true,
         changes: {
           'DatabaseStack': { additions: 2, modifications: 0, deletions: 0 },
@@ -281,7 +381,8 @@ describe('CI/CD Pipeline Tests', () => {
 
     it('should deploy stacks in correct order', () => {
       const deploymentOrder: string[] = [];
-      const mockDeploy = jest.fn().mockImplementation((stackName: string) => {
+      const mockDeploy = createArgMock<[string], DeployResult>();
+      mockDeploy.mockImplementation((stackName: string) => {
         deploymentOrder.push(stackName);
         return { success: true, stackName };
       });
@@ -296,7 +397,8 @@ describe('CI/CD Pipeline Tests', () => {
 
   describe('Integration Tests in Pipeline', () => {
     it('should run database integration tests', async () => {
-      const mockDbIntegrationTest = jest.fn().mockResolvedValue({
+      const mockDbIntegrationTest = createAsyncMock<DbIntegrationResult>();
+      mockDbIntegrationTest.mockResolvedValue({
         success: true,
         tests: {
           'connection': 'passed',
@@ -312,7 +414,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should run API endpoint tests', async () => {
-      const mockApiTest = jest.fn().mockResolvedValue({
+      const mockApiTest = createAsyncMock<ApiTestResult>();
+      mockApiTest.mockResolvedValue({
         success: true,
         endpoints: {
           '/api/health': { status: 200, response: 'OK' },
@@ -327,7 +430,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should run frontend integration tests', async () => {
-      const mockE2ETest = jest.fn().mockResolvedValue({
+      const mockE2ETest = createAsyncMock<E2EResult>();
+      mockE2ETest.mockResolvedValue({
         success: true,
         scenarios: {
           'homepage-load': 'passed',
@@ -345,7 +449,8 @@ describe('CI/CD Pipeline Tests', () => {
 
   describe('Deployment Strategies', () => {
     it('should support blue-green deployment', () => {
-      const mockBlueGreenDeploy = jest.fn().mockReturnValue({
+      const mockBlueGreenDeploy = createSyncMock<BlueGreenDeployResult>();
+      mockBlueGreenDeploy.mockReturnValue({
         success: true,
         strategy: 'blue-green',
         environments: {
@@ -363,7 +468,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should support rolling deployment', () => {
-      const mockRollingDeploy = jest.fn().mockReturnValue({
+      const mockRollingDeploy = createSyncMock<RollingDeployResult>();
+      mockRollingDeploy.mockReturnValue({
         success: true,
         strategy: 'rolling',
         progress: {
@@ -380,7 +486,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should handle deployment rollback', () => {
-      const mockRollback = jest.fn().mockReturnValue({
+      const mockRollback = createSyncMock<RollbackResult>();
+      mockRollback.mockReturnValue({
         success: true,
         previousVersion: 'v1.2.0',
         currentVersion: 'v1.2.1-rollback',
@@ -396,7 +503,8 @@ describe('CI/CD Pipeline Tests', () => {
 
   describe('Post-Deployment Validation', () => {
     it('should run smoke tests after deployment', async () => {
-      const mockSmokeTests = jest.fn().mockResolvedValue({
+      const mockSmokeTests = createAsyncMock<SmokeTestResult>();
+      mockSmokeTests.mockResolvedValue({
         success: true,
         tests: {
           'health-check': 'passed',
@@ -412,7 +520,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should validate performance benchmarks', () => {
-      const mockPerfTest = jest.fn().mockReturnValue({
+      const mockPerfTest = createSyncMock<PerformanceResult>();
+      mockPerfTest.mockReturnValue({
         success: true,
         metrics: {
           'response-time': 150, // ms
@@ -434,7 +543,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should notify stakeholders of deployment status', () => {
-      const mockNotification = jest.fn().mockReturnValue({
+      const mockNotification = createSyncMock<NotificationResult>();
+      mockNotification.mockReturnValue({
         success: true,
         notifications: [
           { channel: 'slack', message: 'Deployment successful', sent: true },
@@ -445,28 +555,26 @@ describe('CI/CD Pipeline Tests', () => {
       const result = mockNotification();
 
       expect(result.success).toBe(true);
-      expect(result.notifications.every(n => n.sent)).toBe(true);
+      expect(result.notifications.every(({ sent }) => sent)).toBe(true);
     });
   });
 
   describe('Error Handling and Recovery', () => {
     it('should handle build failures gracefully', () => {
-      const mockBuildFailure = jest.fn().mockReturnValue({
+      const result = handlePipelineResult<BuildFailureResult>({
         success: false,
         error: 'TypeScript compilation failed',
         exitCode: 1,
         logs: ['error TS2304: Cannot find name \'unknown_var\''],
       });
 
-      const result = mockBuildFailure();
-
       expect(result.success).toBe(false);
       expect(result.error).toContain('TypeScript compilation failed');
-      expect(mockCore.setFailed).toHaveBeenCalledWith(result.error);
+      expect(mockCore.setFailed).toHaveBeenCalledWith('TypeScript compilation failed');
     });
 
     it('should handle deployment failures with rollback', () => {
-      const mockDeployFailure = jest.fn().mockReturnValue({
+      const result = handlePipelineResult<DeployFailureResult>({
         success: false,
         error: 'Stack deployment failed',
         rollback: {
@@ -475,25 +583,23 @@ describe('CI/CD Pipeline Tests', () => {
         },
       });
 
-      const result = mockDeployFailure();
-
       expect(result.success).toBe(false);
       expect(result.rollback.initiated).toBe(true);
+      expect(mockCore.setFailed).toHaveBeenCalledWith('Stack deployment failed');
     });
 
     it('should handle test failures appropriately', () => {
-      const mockTestFailure = jest.fn().mockReturnValue({
+      const result = handlePipelineResult<TestFailureResult>({
         success: false,
         failedTests: 3,
         totalTests: 50,
         coverage: 75, // Below threshold
       });
 
-      const result = mockTestFailure();
-
       expect(result.success).toBe(false);
       expect(result.failedTests).toBeGreaterThan(0);
       expect(result.coverage).toBeLessThan(80);
+      expect(mockCore.setFailed).toHaveBeenCalledWith('Pipeline step failed');
     });
   });
 
@@ -519,7 +625,8 @@ describe('CI/CD Pipeline Tests', () => {
     });
 
     it('should deploy to production with approvals', () => {
-      const mockProdDeploy = jest.fn().mockReturnValue({
+      const mockProdDeploy = createSyncMock<ProdDeployResult>();
+      mockProdDeploy.mockReturnValue({
         success: true,
         environment: 'production',
         approvals: {

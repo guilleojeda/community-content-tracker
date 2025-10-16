@@ -2,6 +2,11 @@
 -- Migration: Create channels table for content ingestion sources
 -- Sprint: 4
 -- Date: 2024-01-15
+--
+-- NOTE: Migration 003 intentionally skipped.
+-- Sprint 3 database changes were fully covered by migration 002_sprint_3_additions.sql
+-- (soft delete, merge history, content claiming, optimistic locking, etc.).
+-- This migration introduces Sprint 4 features: content ingestion channels.
 
 -- Create channel_type enum
 CREATE TYPE channel_type_enum AS ENUM ('blog', 'youtube', 'github');

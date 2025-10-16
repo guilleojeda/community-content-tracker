@@ -1,12 +1,23 @@
 import { APIGatewayProxyEvent, Context } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/channels/create';
+import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
 import { ChannelType } from '../../../../src/shared/types';
-import { createMockPool, setupChannelMocks } from '../../../helpers/database-mocks';
 
-// Mock the database service
-jest.mock('../../../../src/backend/services/database', () => ({
-  getDatabasePool: jest.fn(),
+// Mock database pool
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+  end: jest.fn(),
+  on: jest.fn(),
+};
+
+// Mock pg module
+jest.mock('pg', () => ({
+  Pool: jest.fn(() => mockPool),
 }));
+
+// Mock ChannelRepository
+jest.mock('../../../../src/backend/repositories/ChannelRepository');
 
 // Mock fetch for URL accessibility check
 global.fetch = jest.fn(() =>
@@ -17,28 +28,13 @@ global.fetch = jest.fn(() =>
 ) as jest.Mock;
 
 describe('Create Channel Lambda', () => {
-  let mockQuery: jest.Mock;
+  let mockChannelRepo: jest.Mocked<ChannelRepository>;
   let testUserId: string;
   let mockContext: Context;
 
-  beforeAll(async () => {
-    const { pool, mockQuery: query } = createMockPool();
-    mockQuery = query;
-
-    // Mock getDatabasePool to return our mock pool
-    const { getDatabasePool } = require('../../../../src/backend/services/database');
-    (getDatabasePool as jest.Mock).mockResolvedValue(pool);
-
-    // Setup channel mocks
-    setupChannelMocks(mockQuery);
-
-    testUserId = 'user-123';
-    mockContext = {} as Context;
-  });
-
   beforeEach(() => {
-    // Reset mocks before each test
-    mockQuery.mockClear();
+    jest.clearAllMocks();
+    mockPool.query.mockReset();
     (fetch as jest.Mock).mockClear();
 
     // Mock successful fetch by default
@@ -47,7 +43,21 @@ describe('Create Channel Lambda', () => {
       ok: true,
     } as Response);
 
-    setupChannelMocks(mockQuery);
+    testUserId = 'user-123';
+    mockContext = {} as Context;
+
+    // Create mock repository instance
+    mockChannelRepo = {
+      create: jest.fn(),
+      findByUserIdAndUrl: jest.fn(),
+      findById: jest.fn(),
+      findByUserId: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as any;
+
+    // Mock the constructor to return our mocked instance
+    (ChannelRepository as jest.MockedClass<typeof ChannelRepository>).mockImplementation(() => mockChannelRepo as any);
   });
 
   const createEvent = (body: any, userId: string = testUserId): APIGatewayProxyEvent => {
@@ -62,6 +72,22 @@ describe('Create Channel Lambda', () => {
   };
 
   it('should create a new channel successfully', async () => {
+    const mockChannel = {
+      id: 'channel-123',
+      userId: testUserId,
+      channelType: ChannelType.BLOG,
+      url: 'https://example.com/feed',
+      name: 'My Blog',
+      enabled: true,
+      syncFrequency: 'daily' as const,
+      metadata: { platform: 'wordpress' },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    mockChannelRepo.findByUserIdAndUrl.mockResolvedValue(null);
+    mockChannelRepo.create.mockResolvedValue(mockChannel);
+
     const event = createEvent({
       channelType: ChannelType.BLOG,
       url: 'https://example.com/feed',
@@ -71,10 +97,6 @@ describe('Create Channel Lambda', () => {
     });
 
     const response = await handler(event, mockContext);
-
-    if (response.statusCode !== 201) {
-      console.log('Response body:', response.body);
-    }
 
     expect(response.statusCode).toBe(201);
 
@@ -87,6 +109,21 @@ describe('Create Channel Lambda', () => {
   });
 
   it('should auto-detect channel type from URL', async () => {
+    const mockChannel = {
+      id: 'channel-123',
+      userId: testUserId,
+      channelType: ChannelType.YOUTUBE,
+      url: 'https://youtube.com/channel/UC123',
+      enabled: true,
+      syncFrequency: 'daily' as const,
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    mockChannelRepo.findByUserIdAndUrl.mockResolvedValue(null);
+    mockChannelRepo.create.mockResolvedValue(mockChannel);
+
     const event = createEvent({
       channelType: ChannelType.YOUTUBE,
       url: 'https://youtube.com/channel/UC123',
@@ -116,7 +153,8 @@ describe('Create Channel Lambda', () => {
 
   it('should return 400 for missing required fields', async () => {
     const event = createEvent({
-      url: 'https://example.com/feed',
+      channelType: ChannelType.BLOG,
+      // Missing URL
     });
 
     const response = await handler(event, mockContext);
@@ -130,13 +168,20 @@ describe('Create Channel Lambda', () => {
   it('should return 409 for duplicate URL', async () => {
     const url = 'https://example.com/duplicate-feed';
 
-    // Create first channel
-    await handler(createEvent({
+    const existingChannel = {
+      id: 'existing-channel',
+      userId: testUserId,
       channelType: ChannelType.BLOG,
       url,
-    }), mockContext);
+      enabled: true,
+      syncFrequency: 'daily' as const,
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-    // Try to create duplicate
+    mockChannelRepo.findByUserIdAndUrl.mockResolvedValue(existingChannel);
+
     const response = await handler(createEvent({
       channelType: ChannelType.BLOG,
       url,

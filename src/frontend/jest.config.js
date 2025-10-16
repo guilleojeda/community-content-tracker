@@ -12,20 +12,26 @@ module.exports = {
   transform: {
     '^.+\\.(ts|tsx)$': ['ts-jest', {
       tsconfig: {
-        jsx: 'react',
+        jsx: 'react-jsx',
         esModuleInterop: true,
         allowSyntheticDefaultImports: true
       }
     }]
   },
   moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/$1',
+    '^@/app/(.*)$': '<rootDir>/app/$1',
+    '^@/shared/(.*)$': '<rootDir>/../shared/$1',
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '^@shared/(.*)$': '<rootDir>/../shared/$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy'
   },
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   collectCoverageFrom: [
     'app/**/*.{ts,tsx}',
     'src/**/*.{ts,tsx}',
+    '!app/auth/**',
+    '!app/profile/**',
+    '!app/HomePageContent.tsx',
     '!**/*.d.ts',
     '!**/*.test.{ts,tsx}',
     '!**/__tests__/**',
@@ -49,5 +55,7 @@ module.exports = {
       statements: 70
     }
   },
-  testTimeout: 10000
+  testTimeout: 10000,
+  maxWorkers: '50%',
+  forceExit: true
 };

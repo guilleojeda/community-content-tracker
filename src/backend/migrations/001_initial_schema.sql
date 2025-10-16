@@ -1,15 +1,16 @@
 -- 001_initial_schema.sql
 -- Migration: Create initial database schema for AWS Community Content Hub
--- Author: AI Agent
+-- Sprint: 1-2
 -- Date: 2024-01-01
 
--- Enable UUID extension
+-- Enable required PostgreSQL extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Create enums that match our TypeScript types exactly
+-- Create enums that match TypeScript types exactly (from src/shared/types/index.ts)
 CREATE TYPE visibility_enum AS ENUM ('private', 'aws_only', 'aws_community', 'public');
-CREATE TYPE content_type_enum AS ENUM ('blog', 'youtube', 'github', 'conference_talk', 'podcast');
+CREATE TYPE content_type_enum AS ENUM ('blog', 'youtube', 'github', 'conference_talk', 'podcast', 'social', 'whitepaper', 'tutorial', 'workshop', 'book');
 CREATE TYPE badge_enum AS ENUM ('community_builder', 'hero', 'ambassador', 'user_group_leader');
 
 -- Users table
@@ -20,10 +21,10 @@ CREATE TABLE users (
   username VARCHAR(100) UNIQUE NOT NULL,
   profile_slug VARCHAR(100) UNIQUE NOT NULL,
   default_visibility visibility_enum NOT NULL DEFAULT 'private',
-  is_admin BOOLEAN DEFAULT false,
-  is_aws_employee BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  is_admin BOOLEAN DEFAULT false NOT NULL,
+  is_aws_employee BOOLEAN DEFAULT false NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
 -- Content table
@@ -35,73 +36,72 @@ CREATE TABLE content (
   content_type content_type_enum NOT NULL,
   visibility visibility_enum NOT NULL,
   publish_date TIMESTAMPTZ,
-  capture_date TIMESTAMPTZ DEFAULT NOW(),
-  metrics JSONB DEFAULT '{}',
-  tags TEXT[] DEFAULT '{}',
+  capture_date TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  metrics JSONB DEFAULT '{}' NOT NULL,
+  tags TEXT[] DEFAULT '{}' NOT NULL,
   embedding vector(1536),
-  is_claimed BOOLEAN DEFAULT true,
+  is_claimed BOOLEAN DEFAULT true NOT NULL,
   original_author VARCHAR(255),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
--- Content URLs table (normalized for better structure)
+-- Content URLs table (normalized for multiple URLs per content)
 CREATE TABLE content_urls (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  content_id UUID REFERENCES content(id) ON DELETE CASCADE,
+  content_id UUID REFERENCES content(id) ON DELETE CASCADE NOT NULL,
   url TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   UNIQUE(content_id, url)
-);
-
--- User badges table (many-to-many relationship)
-CREATE TABLE user_badges (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  badge_type badge_enum NOT NULL,
-  awarded_at TIMESTAMPTZ DEFAULT NOW(),
-  awarded_by UUID REFERENCES users(id),
-  awarded_reason TEXT,
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, badge_type)
-);
-
--- Content analytics table for performance metrics
-CREATE TABLE content_analytics (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  content_id UUID REFERENCES content(id) ON DELETE CASCADE,
-  views_count INTEGER DEFAULT 0,
-  likes_count INTEGER DEFAULT 0,
-  shares_count INTEGER DEFAULT 0,
-  comments_count INTEGER DEFAULT 0,
-  engagement_score DECIMAL(5,2) DEFAULT 0.0,
-  last_updated TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(content_id)
-);
-
--- User follows table for social features
-CREATE TABLE user_follows (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  follower_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  following_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(follower_id, following_id),
-  CHECK (follower_id != following_id)
 );
 
 -- Content bookmarks table
 CREATE TABLE content_bookmarks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  content_id UUID REFERENCES content(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  content_id UUID REFERENCES content(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   UNIQUE(user_id, content_id)
 );
 
--- System audit log
+-- User follows table
+CREATE TABLE user_follows (
+  follower_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  following_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  PRIMARY KEY (follower_id, following_id)
+);
+
+-- Content analytics table
+CREATE TABLE IF NOT EXISTS content_analytics (
+  content_id UUID PRIMARY KEY REFERENCES content(id) ON DELETE CASCADE,
+  views_count INTEGER DEFAULT 0,
+  likes_count INTEGER DEFAULT 0,
+  shares_count INTEGER DEFAULT 0,
+  comments_count INTEGER DEFAULT 0,
+  engagement_score NUMERIC DEFAULT 0,
+  last_updated TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+-- User badges table
+CREATE TABLE user_badges (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  badge_type badge_enum NOT NULL,
+  awarded_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  awarded_by UUID REFERENCES users(id),
+  awarded_reason TEXT,
+  metadata JSONB DEFAULT '{}' NOT NULL,
+  is_active BOOLEAN DEFAULT true NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  revoked_by UUID REFERENCES users(id),
+  revoke_reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  UNIQUE(user_id, badge_type)
+);
+
+-- Audit log table for compliance and security
 CREATE TABLE audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -112,7 +112,7 @@ CREATE TABLE audit_log (
   new_values JSONB,
   ip_address INET,
   user_agent TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
 -- Create indexes for performance optimization
@@ -136,32 +136,33 @@ CREATE INDEX idx_content_is_claimed ON content(is_claimed);
 CREATE INDEX idx_content_tags ON content USING GIN(tags);
 CREATE INDEX idx_content_metrics ON content USING GIN(metrics);
 CREATE INDEX idx_content_title_fts ON content USING GIN(to_tsvector('english', title));
-CREATE INDEX idx_content_description_fts ON content USING GIN(to_tsvector('english', description));
+CREATE INDEX idx_content_description_fts ON content USING GIN(to_tsvector('english', COALESCE(description, '')));
 
--- Vector similarity search index (for AI embeddings)
+-- Vector similarity search index (for semantic search with embeddings)
 CREATE INDEX idx_content_embedding ON content USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- Composite indexes for common query patterns
+CREATE INDEX idx_content_user_visibility ON content(user_id, visibility);
+CREATE INDEX idx_content_type_visibility ON content(content_type, visibility);
+CREATE INDEX idx_content_publish_visibility ON content(publish_date, visibility) WHERE publish_date IS NOT NULL;
 
 -- Content URLs indexes
 CREATE INDEX idx_content_urls_content_id ON content_urls(content_id);
 CREATE INDEX idx_content_urls_url ON content_urls(url);
 
+-- Content bookmarks indexes
+CREATE INDEX idx_content_bookmarks_user_id ON content_bookmarks(user_id);
+CREATE INDEX idx_content_bookmarks_content_id ON content_bookmarks(content_id);
+
+-- User follows indexes
+CREATE INDEX idx_user_follows_follower ON user_follows(follower_id);
+CREATE INDEX idx_user_follows_following ON user_follows(following_id);
+
 -- User badges indexes
 CREATE INDEX idx_user_badges_user_id ON user_badges(user_id);
 CREATE INDEX idx_user_badges_badge_type ON user_badges(badge_type);
 CREATE INDEX idx_user_badges_awarded_at ON user_badges(awarded_at);
-
--- Content analytics indexes
-CREATE INDEX idx_content_analytics_content_id ON content_analytics(content_id);
-CREATE INDEX idx_content_analytics_views_count ON content_analytics(views_count);
-CREATE INDEX idx_content_analytics_engagement_score ON content_analytics(engagement_score);
-
--- User follows indexes
-CREATE INDEX idx_user_follows_follower_id ON user_follows(follower_id);
-CREATE INDEX idx_user_follows_following_id ON user_follows(following_id);
-
--- Content bookmarks indexes
-CREATE INDEX idx_content_bookmarks_user_id ON content_bookmarks(user_id);
-CREATE INDEX idx_content_bookmarks_content_id ON content_bookmarks(content_id);
+CREATE INDEX idx_user_badges_is_active ON user_badges(is_active) WHERE is_active = true;
 
 -- Audit log indexes
 CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
@@ -170,19 +171,14 @@ CREATE INDEX idx_audit_log_resource_type ON audit_log(resource_type);
 CREATE INDEX idx_audit_log_resource_id ON audit_log(resource_id);
 CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
 
--- Create composite indexes for common query patterns
-CREATE INDEX idx_content_user_visibility ON content(user_id, visibility);
-CREATE INDEX idx_content_type_visibility ON content(content_type, visibility);
-CREATE INDEX idx_content_publish_visibility ON content(publish_date, visibility) WHERE publish_date IS NOT NULL;
-
--- Create updated_at triggers for automatic timestamp updates
+-- Create triggers for automatic updated_at timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -193,7 +189,9 @@ CREATE TRIGGER update_content_updated_at BEFORE UPDATE ON content
 CREATE TRIGGER update_user_badges_updated_at BEFORE UPDATE ON user_badges
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Create function for GDPR data export
+-- Create GDPR compliance functions
+
+-- Function to export all user data (GDPR Article 15 - Right of Access)
 CREATE OR REPLACE FUNCTION export_user_data(user_uuid UUID)
 RETURNS JSON AS $$
 DECLARE
@@ -204,7 +202,10 @@ BEGIN
         'content', COALESCE(content_array.content, '[]'::json),
         'badges', COALESCE(badges_array.badges, '[]'::json),
         'bookmarks', COALESCE(bookmarks_array.bookmarks, '[]'::json),
-        'follows', COALESCE(follows_array.follows, '[]'::json),
+        'follows', json_build_object(
+          'following', COALESCE(following_array.following, '[]'::json),
+          'followers', COALESCE(followers_array.followers, '[]'::json)
+        ),
         'export_date', NOW()
     ) INTO result
     FROM users u
@@ -227,48 +228,50 @@ BEGIN
         GROUP BY user_id
     ) bookmarks_array ON u.id = bookmarks_array.user_id
     LEFT JOIN (
-        SELECT follower_id as user_id, json_agg(to_json(uf.*)) as follows
+        SELECT follower_id as user_id, json_agg(to_json(uf.*)) as following
         FROM user_follows uf
         WHERE uf.follower_id = user_uuid
         GROUP BY follower_id
-    ) follows_array ON u.id = follows_array.user_id
+    ) following_array ON u.id = following_array.user_id
+    LEFT JOIN (
+        SELECT following_id as user_id, json_agg(to_json(uf.*)) as followers
+        FROM user_follows uf
+        WHERE uf.following_id = user_uuid
+        GROUP BY following_id
+    ) followers_array ON u.id = followers_array.user_id
     WHERE u.id = user_uuid;
 
     RETURN result;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create function for GDPR data deletion
+-- Function to delete all user data (GDPR Article 17 - Right to Erasure)
 CREATE OR REPLACE FUNCTION delete_user_data(user_uuid UUID)
 RETURNS BOOLEAN AS $$
+DECLARE
+    user_deleted BOOLEAN := FALSE;
 BEGIN
     -- Delete in correct order due to foreign key constraints
+    -- Cascading deletes will handle user_badges, content_urls, and content
     DELETE FROM content_bookmarks WHERE user_id = user_uuid;
     DELETE FROM user_follows WHERE follower_id = user_uuid OR following_id = user_uuid;
-    DELETE FROM user_badges WHERE user_id = user_uuid;
-    DELETE FROM content_analytics WHERE content_id IN (SELECT id FROM content WHERE user_id = user_uuid);
-    DELETE FROM content_urls WHERE content_id IN (SELECT id FROM content WHERE user_id = user_uuid);
-    DELETE FROM content WHERE user_id = user_uuid;
 
-    -- Anonymize audit log entries instead of deleting them
+    DELETE FROM content WHERE user_id = user_uuid;
+    DELETE FROM users WHERE id = user_uuid RETURNING TRUE INTO user_deleted;
+
+    -- Anonymize audit log entries (retain for compliance/security)
     UPDATE audit_log SET user_id = NULL WHERE user_id = user_uuid;
 
-    -- Finally delete the user
-    DELETE FROM users WHERE id = user_uuid;
-
-    RETURN FOUND;
+    RETURN user_deleted;
 END;
 $$ LANGUAGE plpgsql;
 
--- Add comments for documentation
-COMMENT ON TABLE users IS 'Core user accounts linked to Cognito identities';
+-- Add table comments for documentation
+COMMENT ON TABLE users IS 'User accounts linked to AWS Cognito identities';
 COMMENT ON TABLE content IS 'User-generated content (blogs, videos, talks, etc.)';
 COMMENT ON TABLE content_urls IS 'URLs associated with content items';
-COMMENT ON TABLE user_badges IS 'Badges awarded to users for community contributions';
-COMMENT ON TABLE content_analytics IS 'Performance metrics for content items';
-COMMENT ON TABLE user_follows IS 'Social following relationships between users';
-COMMENT ON TABLE content_bookmarks IS 'User bookmarks of content items';
+COMMENT ON TABLE user_badges IS 'AWS program badges awarded to users';
 COMMENT ON TABLE audit_log IS 'System audit trail for compliance and debugging';
 
-COMMENT ON FUNCTION export_user_data(UUID) IS 'GDPR compliant user data export';
-COMMENT ON FUNCTION delete_user_data(UUID) IS 'GDPR compliant user data deletion with referential integrity';
+COMMENT ON FUNCTION export_user_data(UUID) IS 'GDPR compliant user data export - Article 15 Right of Access';
+COMMENT ON FUNCTION delete_user_data(UUID) IS 'GDPR compliant user data deletion - Article 17 Right to Erasure';

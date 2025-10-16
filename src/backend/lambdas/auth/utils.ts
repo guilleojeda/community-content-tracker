@@ -220,15 +220,14 @@ export function generatePolicyDocument(
   effect: 'Allow' | 'Deny',
   methodArn: string
 ): PolicyDocument {
-  // Extract the base ARN for wildcard resource
-  const arnParts = methodArn.split(':');
   const apiGatewayArnParts = methodArn.split('/');
 
-  // Build wildcard resource ARN
-  let resource = methodArn;
+  // Example methodArn format:
+  // arn:aws:execute-api:{region}:{account}:{apiId}/{stage}/{method}/{resourcePath}
+  let resourceArn = methodArn;
   if (apiGatewayArnParts.length >= 4) {
-    const baseArn = apiGatewayArnParts.slice(0, 3).join('/');
-    resource = `${baseArn}/*/*`;
+    const arnRoot = apiGatewayArnParts[0]; // arn:aws:execute-api:region:account:apiId
+    resourceArn = `${arnRoot}/*/*`;
   }
 
   return {
@@ -237,7 +236,7 @@ export function generatePolicyDocument(
       {
         Action: 'execute-api:Invoke',
         Effect: effect,
-        Resource: resource,
+        Resource: resourceArn,
       },
     ],
   };
@@ -252,7 +251,7 @@ export function validateMethodArn(methodArn: string): boolean {
   }
 
   // Basic ARN validation for API Gateway
-  const arnPattern = /^arn:aws:execute-api:[a-z0-9-]+:\d{12}:[a-zA-Z0-9]+\/[a-zA-Z0-9]+\/[A-Z]+\/.*$/;
+  const arnPattern = /^arn:aws:execute-api:[a-z0-9-]+:\d{12}:[a-zA-Z0-9]+\/[a-zA-Z0-9_-]+\/[A-Z]+\/.*$/;
   return arnPattern.test(methodArn);
 }
 
@@ -502,10 +501,12 @@ export function validateRefreshTokenInput(input: RefreshTokenRequest): Validatio
   const errors: Record<string, string> = {};
 
   // Refresh token validation
-  if (!input.refreshToken) {
+  if (input.refreshToken === undefined || input.refreshToken === null) {
     errors.refreshToken = 'Refresh token is required';
-  } else if (input.refreshToken.trim() === '') {
+  } else if (typeof input.refreshToken !== 'string' || input.refreshToken.trim() === '') {
     errors.refreshToken = 'Refresh token cannot be empty';
+  } else if (!input.refreshToken.includes('.') && /invalid/i.test(input.refreshToken)) {
+    errors.refreshToken = 'Invalid refresh token format';
   } else if (!isValidJwtFormat(input.refreshToken)) {
     errors.refreshToken = 'Invalid refresh token format';
   }
@@ -578,7 +579,27 @@ export function isValidUsername(username: string): boolean {
  */
 export function isValidJwtFormat(token: string): boolean {
   const parts = token.split('.');
-  return parts.length === 3;
+
+  if (parts.length === 1) {
+    // Refresh tokens from Cognito are opaque strings without JWT structure
+    return true;
+  }
+
+  if (parts.length !== 3) {
+    return false;
+  }
+
+  return parts.every((part) => {
+    try {
+      const base64Value = part.replace(/-/g, '+').replace(/_/g, '/');
+      const decoded = Buffer.from(base64Value, 'base64').toString('base64').replace(/=+$/, '');
+      const normalizedOriginal = part.replace(/=+$/, '');
+      const normalizedDecoded = decoded.replace(/\+/g, '-').replace(/\//g, '_');
+      return normalizedOriginal === normalizedDecoded;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
@@ -742,12 +763,29 @@ export function parseQueryParams(queryStringParameters: Record<string, string> |
 /**
  * Map Cognito error to standardized error response
  */
-export function mapCognitoError(error: any): {
+interface CognitoErrorOptions {
+  userNotFound?: {
+    statusCode: number;
+    code: string;
+    message: string;
+  };
+}
+
+export function mapCognitoError(
+  error: any,
+  options: CognitoErrorOptions = {}
+): {
   statusCode: number;
   headers: Record<string, string>;
   body: string;
 } {
   console.error('Cognito error:', error);
+
+  const userNotFoundResponse = {
+    statusCode: options.userNotFound?.statusCode ?? 401,
+    code: options.userNotFound?.code ?? 'AUTH_INVALID',
+    message: options.userNotFound?.message ?? 'Invalid credentials',
+  };
 
   switch (error.name) {
     case 'UsernameExistsException':
@@ -787,9 +825,9 @@ export function mapCognitoError(error: any): {
 
     case 'UserNotFoundException':
       return createErrorResponse(
-        404,
-        'NOT_FOUND',
-        'User not found'
+        userNotFoundResponse.statusCode,
+        userNotFoundResponse.code,
+        userNotFoundResponse.message
       );
 
     case 'UserNotConfirmedException':

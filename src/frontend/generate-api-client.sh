@@ -24,10 +24,11 @@ npx openapi-typescript ../backend/openapi.yaml -o ./src/lib/api-client/schema.ts
 cat > ./src/lib/api-client/index.ts << 'EOF'
 import createClient from 'openapi-fetch';
 import type { paths } from './schema';
+import { getApiBaseUrl } from '../env';
 
 // Create typed API client
 export const apiClient = createClient<paths>({
-  baseUrl: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api',
+  baseUrl: `${getApiBaseUrl()}/api`,
   headers: {
     'Content-Type': 'application/json',
   },

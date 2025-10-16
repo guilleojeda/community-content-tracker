@@ -1,4 +1,4 @@
-With [X] = 6
+With [X] = 6.5
 You are implementing Sprint [X] of the AWS Community Content Hub.
 
 ## Project Documentation - READ THESE FIRST
@@ -22,11 +22,12 @@ Read docs/plan/sprint_[X].md to understand:
 For each task in the sprint:
 1. Write tests FIRST (TDD is mandatory)
 2. Make sure the tests cover every requirement in the task, and not more
-3. Test files go in appropriate test directories
-4. Then write the implementation code to pass those tests. Do not write implementation code beyond what is in the requirements and the tests. Remember that we're using TDD.
-5. Implementation goes in src/ directories
-6. Follow acceptance criteria exactly
-7. Use types from src/shared/types/index.ts without modification
+3. Make sure the tests are testing for behavior, not implementation details
+4. Test files go in appropriate test directories
+5. Then write the implementation code to pass those tests. Do not write implementation code beyond what is in the requirements and the tests. Remember that we're using TDD.
+6. Implementation goes in src/ directories
+7. Follow acceptance criteria exactly
+8. Use types from src/shared/types/index.ts without modification
 
 ## Critical Project Rules (AWS Community Content Hub Specific)
 

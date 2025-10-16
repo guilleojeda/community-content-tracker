@@ -146,11 +146,11 @@ Users can now only see content based on their badges and permissions.
 1. Clone the repository
 2. Install dependencies: `npm install`
 3. Start local database: `docker-compose up -d`
-4. Run migrations: `npm run migrate:dev`
+4. Run migrations: `npm run db:migrate`
 5. Start development servers:
    ```bash
-   npm run dev:api    # Backend
-   npm run dev:web    # Frontend
+   npm run dev:backend    # Backend
+   npm run dev:frontend   # Frontend
    ```
 
 ### Running Tests
@@ -159,16 +159,13 @@ Users can now only see content based on their badges and permissions.
 # All tests
 npm test
 
-# Specific suites
-npm run test:unit
-npm run test:integration
-npm run test:e2e
+# Backend workspace
+npm run test --workspace=src/backend
+npm run test --workspace=src/backend -- --coverage
 
-# Watch mode
-npm run test:watch
-
-# Coverage
-npm run test:coverage
+# Frontend workspace
+npm run test --workspace=src/frontend
+npm run test --workspace=src/frontend -- --coverage
 ```
 
 ### Code Quality Checks

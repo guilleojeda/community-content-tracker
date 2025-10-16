@@ -2,9 +2,8 @@
 
 import React, { useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { components } from '@/api/schema';
-
-type VerifyEmailRequest = components['schemas']['VerifyEmailRequest'];
+import { VerifyEmailRequest, VerifyEmailResponse } from '@aws-community-hub/shared';
+import { getPublicApiClient } from '@/api/client';
 
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
@@ -34,23 +33,12 @@ function VerifyEmailContent() {
     setLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      const client = getPublicApiClient();
       const requestBody: VerifyEmailRequest = {
         email,
         confirmationCode: code,
       };
-      const response = await fetch(`${apiUrl}/auth/verify-email`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Verification failed');
-      }
+      await client.verifyEmail(requestBody);
 
       setSuccess(true);
       setTimeout(() => {
@@ -69,19 +57,8 @@ function VerifyEmailContent() {
     setResendLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-      const response = await fetch(`${apiUrl}/auth/resend-verification`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Failed to resend verification email');
-      }
+      const client = getPublicApiClient();
+      await client.resendVerification({ email });
 
       setResendMessage('Verification email sent! Please check your inbox.');
     } catch (err: any) {

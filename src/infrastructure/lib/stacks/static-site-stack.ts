@@ -35,11 +35,11 @@ export interface StaticSiteStackProps extends cdk.StackProps {
 
 /**
  * Static Site Stack for AWS Community Content Hub Frontend
- * 
+ *
  * Creates:
  * - S3 bucket for static site hosting with proper security
  * - CloudFront distribution with optimized caching
- * - Origin Access Identity for secure S3 access
+ * - Origin Access Control (OAC) for secure S3 access
  * - WAF Web ACL for protection (optional)
  * - Custom cache policies for different content types
  * - Security headers for enhanced protection
@@ -47,7 +47,6 @@ export interface StaticSiteStackProps extends cdk.StackProps {
 export class StaticSiteStack extends cdk.Stack {
   public readonly bucket: s3.Bucket;
   public readonly distribution: cloudfront.Distribution;
-  public readonly originAccessIdentity: cloudfront.OriginAccessIdentity;
   public readonly webAcl?: wafv2.CfnWebACL;
   public readonly websiteUrl: string;
 
@@ -74,24 +73,8 @@ export class StaticSiteStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
     });
 
-    // Create Origin Access Identity for secure S3 access
-    this.originAccessIdentity = new cloudfront.OriginAccessIdentity(this, 'OriginAccessIdentity', {
-      comment: `Community Content Hub ${environment} OAI`,
-    });
-
-    // Grant CloudFront access to S3 bucket
-    this.bucket.addToResourcePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        principals: [
-          new iam.CanonicalUserPrincipal(
-            this.originAccessIdentity.cloudFrontOriginAccessIdentityS3CanonicalUserId
-          ),
-        ],
-        actions: ['s3:GetObject'],
-        resources: [this.bucket.arnForObjects('*')],
-      })
-    );
+    // Note: Origin Access Control (OAC) will be automatically created
+    // by S3BucketOrigin.withOriginAccessControl() for secure S3 access
 
     // Create cache policies for different content types
     const noCachePolicy = new cloudfront.CachePolicy(this, 'NoCachePolicy', {
@@ -219,9 +202,7 @@ export class StaticSiteStack extends cdk.Stack {
     // Configure CloudFront distribution
     const distributionConfig: cloudfront.DistributionProps = {
       defaultBehavior: {
-        origin: new origins.S3Origin(this.bucket, {
-          originAccessIdentity: this.originAccessIdentity,
-        }),
+        origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: htmlCachePolicy,
         responseHeadersPolicy: securityHeadersPolicy,
@@ -229,43 +210,33 @@ export class StaticSiteStack extends cdk.Stack {
       },
       additionalBehaviors: {
         '/api/*': {
-          origin: new origins.S3Origin(this.bucket, {
-            originAccessIdentity: this.originAccessIdentity,
-          }),
+          origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: noCachePolicy,
           compress: true,
         },
         '*.js': {
-          origin: new origins.S3Origin(this.bucket, {
-            originAccessIdentity: this.originAccessIdentity,
-          }),
+          origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: staticAssetsPolicy,
           responseHeadersPolicy: securityHeadersPolicy,
           compress: true,
         },
         '*.css': {
-          origin: new origins.S3Origin(this.bucket, {
-            originAccessIdentity: this.originAccessIdentity,
-          }),
+          origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: staticAssetsPolicy,
           responseHeadersPolicy: securityHeadersPolicy,
           compress: true,
         },
         '*.woff*': {
-          origin: new origins.S3Origin(this.bucket, {
-            originAccessIdentity: this.originAccessIdentity,
-          }),
+          origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: staticAssetsPolicy,
           compress: false, // Fonts are already compressed
         },
         '*.ico': {
-          origin: new origins.S3Origin(this.bucket, {
-            originAccessIdentity: this.originAccessIdentity,
-          }),
+          origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: staticAssetsPolicy,
           compress: true,

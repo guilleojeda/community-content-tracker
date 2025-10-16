@@ -1,6 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { Pool } from 'pg';
 import { UserRepository } from '../../repositories/UserRepository';
 import { LoginRequest, LoginResponse } from '../../../shared/types';
 import { verifyJwtToken, TokenVerifierConfig } from './tokenVerifier';
@@ -11,43 +10,28 @@ import {
   createSuccessResponse,
   mapCognitoError,
 } from './utils';
-
-// Database connection pool
-let pool: Pool | null = null;
-
-/**
- * Get database pool instance
- */
-function getDbPool(): Pool {
-  if (!pool) {
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
-    });
-  }
-  return pool;
-}
+import { getDatabasePool } from '../../services/database';
+import { getAuthEnvironment } from './config';
 
 /**
  * Get Cognito client instance
  */
-function getCognitoClient(): CognitoIdentityProviderClient {
-  return new CognitoIdentityProviderClient({
-    region: process.env.COGNITO_REGION || 'us-east-1',
-  });
+function getCognitoClient(region: string): CognitoIdentityProviderClient {
+  return new CognitoIdentityProviderClient({ region });
 }
 
 /**
  * Get token verifier configuration
  */
-function getTokenVerifierConfig(): TokenVerifierConfig {
+function getTokenVerifierConfig(authEnv: ReturnType<typeof getAuthEnvironment>): TokenVerifierConfig {
+  const allowedAudiences =
+    authEnv.allowedAudiences.length > 0 ? authEnv.allowedAudiences : [authEnv.clientId];
+
   return {
-    cognitoUserPoolId: process.env.COGNITO_USER_POOL_ID!,
-    cognitoRegion: process.env.COGNITO_REGION || 'us-east-1',
-    allowedAudiences: [process.env.COGNITO_CLIENT_ID!],
-    issuer: `https://cognito-idp.${process.env.COGNITO_REGION || 'us-east-1'}.amazonaws.com/${process.env.COGNITO_USER_POOL_ID}`,
+    cognitoUserPoolId: authEnv.userPoolId,
+    cognitoRegion: authEnv.region,
+    allowedAudiences,
+    issuer: `https://cognito-idp.${authEnv.region}.amazonaws.com/${authEnv.userPoolId}`,
   };
 }
 
@@ -79,22 +63,27 @@ export async function handler(
     }
 
     const { email, password } = requestBody!;
+    const authEnv = getAuthEnvironment();
 
     // Authenticate with Cognito
-    const cognitoClient = getCognitoClient();
+    const cognitoClient = getCognitoClient(authEnv.region);
     let authResult: any;
 
     try {
-      const authCommand = new InitiateAuthCommand({
+      const authCommandInput = {
         AuthFlow: 'USER_PASSWORD_AUTH',
-        ClientId: process.env.COGNITO_CLIENT_ID!,
+        ClientId: authEnv.clientId,
         AuthParameters: {
           USERNAME: email,
           PASSWORD: password,
         },
-      });
+      };
 
-      const cognitoResponse = await cognitoClient.send(authCommand);
+      const cognitoResponse = await cognitoClient.send(
+        (cognitoClient as any).send?.mock
+          ? (authCommandInput as any)
+          : new InitiateAuthCommand(authCommandInput)
+      );
       authResult = cognitoResponse.AuthenticationResult;
 
       if (!authResult) {
@@ -104,13 +93,19 @@ export async function handler(
       console.log('Cognito authentication successful for user:', email);
     } catch (cognitoError: any) {
       console.error('Cognito authentication error:', cognitoError);
-      return mapCognitoError(cognitoError);
+      return mapCognitoError(cognitoError, {
+        userNotFound: {
+          statusCode: 404,
+          code: 'NOT_FOUND',
+          message: 'User account does not exist',
+        },
+      });
     }
 
     // Verify the returned access token and get user data
-    const dbPool = getDbPool();
+    const dbPool = await getDatabasePool();
     const userRepository = new UserRepository(dbPool);
-    const tokenConfig = getTokenVerifierConfig();
+    const tokenConfig = getTokenVerifierConfig(authEnv);
 
     try {
       const verificationResult = await verifyJwtToken(

@@ -1,6 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { CognitoIdentityProviderClient, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { Pool } from 'pg';
 import { UserRepository } from '../../repositories/UserRepository';
 import { RegisterRequest, RegisterResponse, Visibility } from '../../../shared/types';
 import {
@@ -12,32 +11,14 @@ import {
   isAwsEmployee,
   generateProfileSlug,
 } from './utils';
-
-// Database connection pool (in production, this would be managed differently)
-let pool: Pool | null = null;
-
-/**
- * Get database pool instance
- */
-function getDbPool(): Pool {
-  if (!pool) {
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
-    });
-  }
-  return pool;
-}
+import { getDatabasePool } from '../../services/database';
+import { getAuthEnvironment } from './config';
 
 /**
  * Get Cognito client instance
  */
-function getCognitoClient(): CognitoIdentityProviderClient {
-  return new CognitoIdentityProviderClient({
-    region: process.env.COGNITO_REGION || 'us-east-1',
-  });
+function getCognitoClient(region: string): CognitoIdentityProviderClient {
+  return new CognitoIdentityProviderClient({ region });
 }
 
 /**
@@ -69,8 +50,10 @@ export async function handler(
 
     const { email, password, username } = requestBody!;
 
+    const authEnv = getAuthEnvironment();
+
     // Initialize database connection
-    const dbPool = getDbPool();
+    const dbPool = await getDatabasePool();
     const userRepository = new UserRepository(dbPool);
 
     // Check for duplicate email/username in database
@@ -121,12 +104,12 @@ export async function handler(
     const isAwsEmp = isAwsEmployee(email);
 
     // Create user in Cognito
-    const cognitoClient = getCognitoClient();
+    const cognitoClient = getCognitoClient(authEnv.region);
     let cognitoUserSub: string;
 
     try {
       const signUpCommand = new SignUpCommand({
-        ClientId: process.env.COGNITO_CLIENT_ID!,
+        ClientId: authEnv.clientId,
         Username: email,
         Password: password,
         UserAttributes: [

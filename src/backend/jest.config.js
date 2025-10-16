@@ -4,8 +4,13 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   displayName: 'Backend Tests',
-  // Sprint 2: Authentication Lambda functions implementation
-  roots: ['<rootDir>/src', '<rootDir>/../../tests'],
+  // Only include backend-specific test suites
+  roots: [
+    '<rootDir>/src',
+    '<rootDir>/../../tests/backend',
+    '<rootDir>/../../tests/integration',
+    '<rootDir>/../../tests/ci'
+  ],
   testMatch: [
     '**/tests/**/*.test.{ts,tsx}',
     '**/__tests__/**/*.{ts,tsx}',
@@ -13,6 +18,12 @@ module.exports = {
   ],
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest'
+  },
+  globals: {
+    'ts-jest': {
+      tsconfig: '<rootDir>/tsconfig.jest.json',
+      diagnostics: false
+    }
   },
   collectCoverageFrom: [
     'lambdas/**/*.{ts,tsx}',
@@ -60,16 +71,17 @@ module.exports = {
   testTimeout: 30000,
   maxWorkers: 1, // Serialize database tests
   verbose: true,
+  forceExit: true,
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^@tests/(.*)$': '<rootDir>/tests/$1',
-    '^@handlers/(.*)$': '<rootDir>/src/handlers/$1',
-    '^@services/(.*)$': '<rootDir>/src/services/$1',
-    '^@models/(.*)$': '<rootDir>/src/models/$1',
-    '^@utils/(.*)$': '<rootDir>/src/utils/$1',
-    '^@config/(.*)$': '<rootDir>/src/config/$1',
-    '^@auth/(.*)$': '<rootDir>/src/backend/lambdas/auth/$1',
-    '^@repo/(.*)$': '<rootDir>/src/backend/repositories/$1',
+    '^@tests/(.*)$': '<rootDir>/../tests/backend/$1',
+    '^@handlers/(.*)$': '<rootDir>/handlers/$1',
+    '^@services/(.*)$': '<rootDir>/services/$1',
+    '^@models/(.*)$': '<rootDir>/models/$1',
+    '^@utils/(.*)$': '<rootDir>/utils/$1',
+    '^@config/(.*)$': '<rootDir>/config/$1',
+    '^@auth/(.*)$': '<rootDir>/lambdas/auth/$1',
+    '^@repo/(.*)$': '<rootDir>/repositories/$1',
     '^@aws-community-hub/shared$': '<rootDir>/../shared/types'
   },
   clearMocks: true,

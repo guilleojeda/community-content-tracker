@@ -2,10 +2,8 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { components } from '@/api/schema';
-
-type LoginRequest = components['schemas']['LoginRequest'];
-type LoginResponse = components['schemas']['LoginResponse'];
+import { LoginRequest, LoginResponse } from '@aws-community-hub/shared';
+import { getPublicApiClient } from '@/api/client';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,25 +21,12 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      const client = getPublicApiClient();
       const requestBody: LoginRequest = {
         email: formData.email,
         password: formData.password,
       };
-      const response = await fetch(`${apiUrl}/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Login failed');
-      }
-
-      const data: LoginResponse = await response.json();
+      const data: LoginResponse = await client.login(requestBody);
       // Store tokens based on "Remember Me" preference
       const storage = rememberMe ? localStorage : sessionStorage;
       storage.setItem('accessToken', data.accessToken);

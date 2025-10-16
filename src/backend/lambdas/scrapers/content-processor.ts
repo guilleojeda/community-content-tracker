@@ -27,7 +27,7 @@ const ENVIRONMENT = process.env.ENVIRONMENT || 'dev';
 
 async function publishMetric(metricName: string, value: number, unit: StandardUnit = StandardUnit.Count): Promise<void> {
   try {
-    await cloudWatchClient.send(new PutMetricDataCommand({
+    const commandInput = {
       Namespace: 'CommunityContentHub/ContentProcessor',
       MetricData: [
         {
@@ -43,7 +43,12 @@ async function publishMetric(metricName: string, value: number, unit: StandardUn
           ],
         },
       ],
-    }));
+    };
+    const command = new PutMetricDataCommand(commandInput);
+    if (!(command as any).input) {
+      (command as any).input = commandInput;
+    }
+    await cloudWatchClient.send(command);
   } catch (error: any) {
     console.error(formatErrorForLogging(error, { metricName, context: 'publishMetric' }));
     // Don't fail the main process if metrics fail
@@ -52,14 +57,19 @@ async function publishMetric(metricName: string, value: number, unit: StandardUn
 
 async function generateEmbedding(text: string): Promise<number[]> {
   try {
-    const response = await bedrockClient.send(new InvokeModelCommand({
+    const commandInput = {
       modelId: BEDROCK_MODEL_ID,
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify({
         inputText: text,
       }),
-    }));
+    };
+    const command = new InvokeModelCommand(commandInput);
+    if (!(command as any).input) {
+      (command as any).input = commandInput;
+    }
+    const response = await bedrockClient.send(command);
 
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
     return responseBody.embedding;

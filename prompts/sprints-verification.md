@@ -1,4 +1,4 @@
-With [X] = 5
+With [X] = 6.5
 You are verifying the implementation of Sprint [X] of the AWS Community Content Hub project.
 
 ## Project Documentation - READ THESE FIRST
@@ -10,7 +10,7 @@ You are verifying the implementation of Sprint [X] of the AWS Community Content 
 5. docs/api-errors.md - Error handling standards
 6. docs/implementation-notes.md - Critical patterns and AWS-specific rules
 
-## Sprint [X] Implementation
+## Sprint [X] Review
 
 Read docs/plan/sprint_[X].md to understand:
 - Sprint goal
@@ -19,12 +19,14 @@ Read docs/plan/sprint_[X].md to understand:
 - Required test coverage (90% minimum)
 
 For each task in the sprint:
-1. Carefully analyze the tests that is written
+1. Carefully analyze the tests that are written
 2. Verify whether the tests cover every requirement in the task, and not more
+3. Verify whether the tests are testing for behavior, not implementation details
 4. Read through the implementation code. Note that there should not be implementation code beyond what is in the requirements and the tests.
 5. Implementation is in src/ directories
 6. Verify whether acceptance criteria are followed exactly
 7. Verify that the code uses types from src/shared/types/index.ts without modification
+8. Verify that the code is real (not a placeholder, a mock or a To Do) and actually fulfills the requirements in a real way
 
 ## Critical Project Rules (AWS Community Content Hub Specific) that you must verify are adhered to
 

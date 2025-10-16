@@ -2,18 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { getPublicApiClient } from '@/api/client';
 
-interface PlatformStats {
-  totalUsers: number;
-  totalContent: number;
-  contentByType: { [key: string]: number };
-  recentActivity: {
-    last24h: number;
-    last7d: number;
-    last30d: number;
-  };
-  topContributors: number;
-}
+import type { components } from '@/api/schema';
+
+type PlatformStats = components['schemas']['PlatformStats'];
 
 export default function HomePageContent() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -25,15 +18,9 @@ export default function HomePageContent() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-        const response = await fetch(`${apiUrl}/stats`);
-        if (response.ok) {
-          const data = await response.json();
-          setStats(data);
-        } else {
-          console.error('Failed to fetch stats: HTTP', response.status);
-          setStats(null);
-        }
+        const client = getPublicApiClient();
+        const data = await client.getStats();
+        setStats(data);
       } catch (error) {
         console.error('Failed to fetch stats:', error);
         setStats(null);
@@ -123,25 +110,25 @@ export default function HomePageContent() {
               <div className="grid md:grid-cols-4 gap-8 text-center">
                 <div>
                   <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.topContributors.toLocaleString()}+
+                    {stats.topContributors?.toLocaleString() ?? 0}+
                   </div>
                   <div className="text-gray-600">Contributors</div>
                 </div>
                 <div>
                   <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.totalContent.toLocaleString()}+
+                    {stats.totalContent?.toLocaleString() ?? 0}+
                   </div>
                   <div className="text-gray-600">Content Pieces</div>
                 </div>
                 <div>
                   <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.recentActivity.last24h.toLocaleString()}+
+                    {stats.recentActivity?.last24h?.toLocaleString() ?? 0}+
                   </div>
                   <div className="text-gray-600">Last 24 Hours</div>
                 </div>
                 <div>
                   <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.totalUsers.toLocaleString()}+
+                    {stats.totalUsers?.toLocaleString() ?? 0}+
                   </div>
                   <div className="text-gray-600">Registered Users</div>
                 </div>
