@@ -26,9 +26,14 @@ import type {
   UpdatePreferencesResponse,
   UserDataExport,
   DeleteAccountResponse,
+  QuickActions,
+  SystemHealthStatus,
+  AdminDashboardStats as SharedAdminDashboardStats,
+  ExportHistoryEntry,
+  ExportHistoryResponse as SharedExportHistoryResponse,
 } from '@shared/types';
 
-export type { ApiError, ApiErrorResponse } from '@shared/types';
+export type { ApiError, ApiErrorResponse, ExportHistoryEntry } from '@shared/types';
 
 /**
  * Extract response type from OpenAPI path
@@ -53,6 +58,180 @@ type ApiQueryParams<T extends keyof paths, M extends keyof paths[T]> =
   paths[T][M] extends { parameters: { query: infer Q } }
     ? Q
     : never;
+
+export type AdminDashboardQuickActions = QuickActions;
+export type AdminDashboardStats = SharedAdminDashboardStats;
+export type ExportHistoryResponse = SharedExportHistoryResponse;
+
+export interface AdminUserSummary {
+  id: string;
+  username: string;
+  email: string;
+  isAdmin: boolean;
+  isAwsEmployee: boolean;
+  createdAt: string;
+}
+
+export interface AdminUserListResponse {
+  users: AdminUserSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AdminUserBadge {
+  badgeType: BadgeType;
+  awardedAt: string;
+}
+
+export interface AdminUserDetail {
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    isAdmin: boolean;
+    isAwsEmployee: boolean;
+    createdAt: string;
+  };
+  badges: AdminUserBadge[];
+  contentCount: number;
+}
+
+export interface AdminBulkBadgeResult {
+  operation: 'grant' | 'revoke';
+  badgeType: BadgeType;
+  successful: number;
+  failed: Array<{ userId: string; error: string }>;
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+  };
+}
+
+export interface AuditLogEntry {
+  id: string;
+  adminUser: {
+    id: string;
+    username: string | null;
+    email: string | null;
+  };
+  actionType: string;
+  targetUser: {
+    id: string;
+    username: string | null;
+    email: string | null;
+  } | null;
+  targetContentId?: string | null;
+  details: Record<string, any> | null;
+  ipAddress: string | null;
+  createdAt: string;
+}
+
+export interface AuditLogResponse {
+  entries: AuditLogEntry[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+export interface FlaggedContentItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  contentType: string;
+  visibility: Visibility;
+  isFlagged: boolean;
+  flaggedAt?: string | null;
+  flagReason?: string | null;
+  moderationStatus: string;
+  createdAt: string;
+  urls: string[];
+  user: {
+    id: string;
+    username: string;
+    email: string;
+  };
+  flaggedBy?: string | null;
+}
+
+export interface FlaggedContentResponse {
+  content: FlaggedContentItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface UserAnalyticsData {
+  contentByType: Record<string, number>;
+  topTags: Array<{ tag: string; count: number }>;
+  topContent: Array<{ id: string; title: string; contentType: string; views: number }>;
+  timeSeries: Array<{ date: string; views: number }>;
+  dateRange: { startDate: string; endDate: string } | null;
+  groupBy: string;
+}
+
+export interface SavedSearchEntry {
+  id: string;
+  userId: string;
+  name: string;
+  query: string;
+  filters: Record<string, any>;
+  isPublic: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedSearchListResponse {
+  searches: SavedSearchEntry[];
+  count: number;
+}
+
+export interface AdvancedSearchResultItem {
+  id: string;
+  userId: string;
+  title: string;
+  description?: string | null;
+  contentType: ContentType;
+  visibility: Visibility;
+  publishDate?: string | null;
+  captureDate?: string | null;
+  metrics?: Record<string, unknown>;
+  tags: string[];
+  url?: string | null;
+  isClaimed?: boolean;
+  originalAuthor?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  relevanceScore?: number;
+  author?: {
+    id: string;
+    username: string;
+    email?: string | null;
+    isAwsEmployee?: boolean;
+  };
+}
+
+export interface AdvancedSearchResponse {
+  results: AdvancedSearchResultItem[];
+  count: number;
+  query: string;
+}
+
+export interface AnalyticsEventInput {
+  eventType: string;
+  contentId?: string;
+  metadata?: Record<string, any>;
+  sessionId?: string;
+}
+
+export interface CsvDownload {
+  blob: Blob;
+  filename: string | null;
+}
 
 /**
  * API client configuration
@@ -96,12 +275,12 @@ export class ApiClient {
   }
 
   /**
-   * Make authenticated request
+   * Perform raw fetch with authentication headers applied.
    */
-  private async request<T>(
+  private async rawRequest(
     path: string,
     options: RequestInit = {}
-  ): Promise<T> {
+  ): Promise<Response> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
@@ -115,18 +294,34 @@ export class ApiClient {
       }
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    return fetch(`${this.baseUrl}${path}`, {
       ...options,
       headers,
     });
+  }
+
+  /**
+   * Make authenticated request that expects a JSON response.
+   */
+  private async request<T>(
+    path: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const response = await this.rawRequest(path, options);
 
     // Handle error responses
     if (!response.ok) {
-      const errorData: ApiErrorResponse = await response.json();
-      if (this.onError) {
-        this.onError(errorData.error);
+      let errorMessage = 'Request failed';
+      try {
+        const errorData: ApiErrorResponse = await response.json();
+        errorMessage = errorData.error?.message ?? errorMessage;
+        if (this.onError && errorData.error) {
+          this.onError(errorData.error);
+        }
+      } catch {
+        // Ignore JSON parse errors
       }
-      throw new Error(errorData.error.message);
+      throw new Error(errorMessage);
     }
 
     // Handle empty responses
@@ -136,6 +331,42 @@ export class ApiClient {
     }
 
     return response.json();
+  }
+
+  /**
+   * Download CSV (or other non-JSON) responses with auth headers applied.
+   */
+  private async downloadFile(
+    path: string,
+    options: RequestInit = {}
+  ): Promise<CsvDownload> {
+    const response = await this.rawRequest(path, options);
+
+    if (!response.ok) {
+      let errorMessage = 'Download failed';
+      try {
+        const errorData: ApiErrorResponse = await response.json();
+        errorMessage = errorData.error?.message ?? errorMessage;
+        if (this.onError && errorData.error) {
+          this.onError(errorData.error);
+        }
+      } catch {
+        // Ignore JSON parse errors
+      }
+      throw new Error(errorMessage);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition');
+    let filename: string | null = null;
+    if (disposition) {
+      const match = disposition.match(/filename="?([^"]+)"?/i);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+
+    return { blob, filename };
   }
 
   /**
@@ -168,6 +399,19 @@ export class ApiClient {
 
       if (value instanceof Date) {
         searchParams.append(key, formatDate(value));
+        return;
+      }
+
+      if (typeof value === 'string') {
+        const isDateKey = /(startDate|endDate)$/i.test(key);
+        const parsed = Number.isNaN(Date.parse(value)) ? null : new Date(value);
+
+        if (isDateKey && parsed) {
+          searchParams.append(key, formatDate(parsed));
+          return;
+        }
+
+        searchParams.append(key, value);
         return;
       }
 
@@ -720,6 +964,308 @@ export class ApiClient {
     });
   }
 
+  /**
+   * --- Admin endpoints ---
+   */
+  async getAdminDashboardStats(): Promise<AdminDashboardStats> {
+    const result = await this.request<{ success?: boolean; data?: AdminDashboardStats }>(
+      '/admin/dashboard/stats'
+    );
+    const payload = result.data ?? (result as unknown as AdminDashboardStats);
+
+    const normalizeDate = (value: Date | string): Date =>
+      value instanceof Date ? value : new Date(value);
+
+    const usersByBadgeType = Object.entries(payload.usersByBadgeType || {}).reduce(
+      (acc, [key, value]) => {
+        acc[key as BadgeType] = value;
+        return acc;
+      },
+      {} as Record<BadgeType, number>
+    );
+
+    return {
+      ...payload,
+      usersByBadgeType,
+      recentRegistrations: payload.recentRegistrations.map(registration => ({
+        ...registration,
+        createdAt: normalizeDate(registration.createdAt),
+      })),
+      pendingBadgeCandidates: payload.pendingBadgeCandidates.map(candidate => ({
+        ...candidate,
+        createdAt: normalizeDate(candidate.createdAt),
+      })),
+    };
+  }
+
+  async getAdminSystemHealth(): Promise<SystemHealthStatus> {
+    const result = await this.request<{ success?: boolean; data?: SystemHealthStatus }>(
+      '/admin/dashboard/system-health'
+    );
+    return result.data ?? (result as unknown as SystemHealthStatus);
+  }
+
+  async listAdminUsers(params?: {
+    search?: string;
+    badgeType?: BadgeType;
+    limit?: number;
+    offset?: number;
+  }): Promise<AdminUserListResponse> {
+    const queryString = this.buildQueryString(params as Record<string, any> | undefined);
+    const result = await this.request<{ success?: boolean; data?: AdminUserListResponse }>(
+      `/admin/users${queryString}`
+    );
+    return result.data ?? (result as unknown as AdminUserListResponse);
+  }
+
+  async getAdminUser(userId: string): Promise<AdminUserDetail> {
+    const result = await this.request<{ success?: boolean; data?: AdminUserDetail }>(
+      `/admin/users/${encodeURIComponent(userId)}`
+    );
+    return result.data ?? (result as unknown as AdminUserDetail);
+  }
+
+  async exportUsersCsv(): Promise<CsvDownload> {
+    return this.downloadFile('/admin/users/export', {
+      method: 'POST',
+    });
+  }
+
+  async grantBadge(payload: {
+    userId?: string;
+    userIds?: string[];
+    badgeType: BadgeType;
+    reason?: string;
+    metadata?: Record<string, any>;
+  }): Promise<any> {
+    return this.request('/admin/badges/grant', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async revokeBadge(payload: { userId: string; badgeType: BadgeType; reason?: string }): Promise<any> {
+    return this.request('/admin/badges/revoke', {
+      method: 'DELETE',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async bulkBadges(payload: {
+    operation: 'grant' | 'revoke';
+    userIds: string[];
+    badgeType: BadgeType;
+    reason?: string;
+  }): Promise<AdminBulkBadgeResult> {
+    const result = await this.request<{ success?: boolean; data?: AdminBulkBadgeResult }>(
+      '/admin/badges/bulk',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    );
+    return result.data ?? (result as unknown as AdminBulkBadgeResult);
+  }
+
+  async setAwsEmployee(
+    userId: string,
+    payload: { isAwsEmployee: boolean; verificationMethod?: string; metadata?: Record<string, any>; reason?: string }
+  ): Promise<any> {
+    return this.request(`/admin/users/${encodeURIComponent(userId)}/aws-employee`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async listAuditLog(params?: {
+    adminUserId?: string;
+    actionType?: string;
+    startDate?: string;
+    endDate?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AuditLogResponse> {
+    const queryString = this.buildQueryString(params as Record<string, any> | undefined);
+    const result = await this.request<{ success?: boolean; data?: AuditLogResponse }>(
+      `/admin/audit-log${queryString}`
+    );
+    return result.data ?? (result as unknown as AuditLogResponse);
+  }
+
+  async listFlaggedContent(params?: { limit?: number; offset?: number }): Promise<FlaggedContentResponse> {
+    const queryString = this.buildQueryString(params as Record<string, any> | undefined);
+    const result = await this.request<{ success?: boolean; data?: { content: FlaggedContentItem[]; total: number; limit: number; offset: number } }>(
+      `/admin/content/flagged${queryString}`
+    );
+    if (result.data) {
+      return result.data;
+    }
+    const fallback = result as unknown as { content: FlaggedContentItem[]; total: number; limit: number; offset: number };
+    return {
+      content: fallback.content,
+      total: fallback.total,
+      limit: fallback.limit,
+      offset: fallback.offset,
+    };
+  }
+
+  async flagContent(contentId: string, reason?: string): Promise<any> {
+    return this.request(`/admin/content/${encodeURIComponent(contentId)}/flag`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async moderateContent(contentId: string, action: 'approve' | 'remove', reason?: string): Promise<any> {
+    return this.request(`/admin/content/${encodeURIComponent(contentId)}/moderate`, {
+      method: 'PUT',
+      body: JSON.stringify({ action, reason }),
+    });
+  }
+
+  async adminDeleteContent(contentId: string, reason?: string): Promise<any> {
+    return this.request(`/admin/content/${encodeURIComponent(contentId)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  /**
+   * --- Analytics endpoints ---
+   */
+  async getUserAnalytics(params?: { startDate?: string; endDate?: string; groupBy?: 'day' | 'week' | 'month' }): Promise<UserAnalyticsData> {
+    const queryString = this.buildQueryString(params as Record<string, any> | undefined);
+    const result = await this.request<{ success?: boolean; data?: UserAnalyticsData }>(
+      `/analytics/user${queryString}`
+    );
+    return result.data ?? (result as unknown as UserAnalyticsData);
+  }
+
+  async exportAnalyticsCsv(params?: { startDate?: string; endDate?: string; groupBy?: string }): Promise<CsvDownload> {
+    return this.downloadFile('/analytics/export', {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    });
+  }
+
+  async exportProgramCsv(payload: { programType: string; startDate?: string; endDate?: string }): Promise<CsvDownload> {
+    return this.downloadFile('/export/csv', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getExportHistory(params?: { limit?: number; offset?: number; exportType?: string }): Promise<SharedExportHistoryResponse> {
+    const queryString = this.buildQueryString(params as Record<string, any> | undefined);
+    const result = await this.request<{ success?: boolean; data?: SharedExportHistoryResponse }>(
+      `/export/history${queryString}`
+    );
+
+    const payload = result.data ?? (result as unknown as SharedExportHistoryResponse);
+    const history = payload.history ?? [];
+
+    return {
+      history,
+      total: payload.total ?? history.length,
+      limit: payload.limit ?? params?.limit ?? history.length,
+      offset: payload.offset ?? params?.offset ?? 0,
+    };
+  }
+
+  async trackAnalyticsEvents(events: AnalyticsEventInput | AnalyticsEventInput[]): Promise<any> {
+    return this.request('/analytics/track', {
+      method: 'POST',
+      body: JSON.stringify(events),
+    });
+  }
+
+  /**
+   * --- Saved search & advanced search ---
+   */
+  async getSavedSearches(): Promise<SavedSearchListResponse> {
+    const result = await this.request<{ success?: boolean; data?: SavedSearchListResponse }>(
+      '/search/saved'
+    );
+    return result.data ?? (result as unknown as SavedSearchListResponse);
+  }
+
+  async saveSearch(payload: { name: string; query: string; filters?: Record<string, any>; isPublic?: boolean }): Promise<SavedSearchEntry> {
+    const result = await this.request<{ success?: boolean; data?: SavedSearchEntry }>(
+      '/search/saved',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    );
+    return result.data ?? (result as unknown as SavedSearchEntry);
+  }
+
+  async updateSavedSearch(searchId: string, payload: { name?: string; query?: string; filters?: Record<string, any>; isPublic?: boolean }): Promise<SavedSearchEntry> {
+    const result = await this.request<{ success?: boolean; data?: SavedSearchEntry }>(
+      `/search/saved/${encodeURIComponent(searchId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    );
+    return result.data ?? (result as unknown as SavedSearchEntry);
+  }
+
+  async deleteSavedSearch(searchId: string): Promise<void> {
+    await this.request(`/search/saved/${encodeURIComponent(searchId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getSavedSearch(searchId: string): Promise<SavedSearchEntry> {
+    const result = await this.request<{ success?: boolean; data?: SavedSearchEntry }>(
+      `/search/saved/${encodeURIComponent(searchId)}`
+    );
+    return result.data ?? (result as unknown as SavedSearchEntry);
+  }
+
+  async advancedSearch(params: { query: string; withinIds?: string[]; format?: 'json' | 'csv'; limit?: number }): Promise<AdvancedSearchResponse> {
+    const { format, ...rest } = params;
+    const queryParams: Record<string, any> = {
+      query: params.query,
+      format: format ?? 'json',
+    };
+
+    if (params.withinIds?.length) {
+      queryParams.withinIds = params.withinIds.join(',');
+    }
+
+    if (params.limit) {
+      queryParams.limit = params.limit;
+    }
+
+    const queryString = this.buildQueryString(queryParams);
+
+    const result = await this.request<{ success?: boolean; data?: AdvancedSearchResponse }>(
+      `/search/advanced${queryString}`
+    );
+    return result.data ?? (result as unknown as AdvancedSearchResponse);
+  }
+
+  async exportAdvancedSearchCsv(params: { query: string; withinIds?: string[] }): Promise<CsvDownload> {
+    const queryParams: Record<string, any> = {
+      query: params.query,
+      format: 'csv',
+    };
+
+    if (params.withinIds?.length) {
+      queryParams.withinIds = params.withinIds.join(',');
+    }
+
+    const queryString = this.buildQueryString(queryParams);
+    return this.downloadFile(`/search/advanced${queryString}`, {
+      method: 'GET',
+    });
+  }
+
+  /**
+   * --- User account management ---
+   */
   async updatePreferences(userId: string, data: UpdatePreferencesRequest): Promise<UpdatePreferencesResponse> {
     return this.request<UpdatePreferencesResponse>(`/api/users/${userId}/preferences`, {
       method: 'PATCH',

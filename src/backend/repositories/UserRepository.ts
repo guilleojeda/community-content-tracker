@@ -397,6 +397,37 @@ export class UserRepository extends BaseRepository {
    * GDPR: Export all user data
    */
   async exportUserData(userId: string): Promise<GDPRExportData | null> {
+    if (process.env.TEST_DB_INMEMORY === 'true') {
+      const userResult = await this.executeQuery(
+        'SELECT * FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (userResult.rows.length === 0) {
+        return null;
+      }
+
+      const [contentResult, badgeResult, bookmarkResult, followingResult, followersResult] = await Promise.all([
+        this.executeQuery('SELECT * FROM content WHERE user_id = $1 ORDER BY created_at DESC', [userId]),
+        this.executeQuery('SELECT * FROM user_badges WHERE user_id = $1 AND is_active = true', [userId]),
+        this.executeQuery('SELECT * FROM content_bookmarks WHERE user_id = $1', [userId]),
+        this.executeQuery('SELECT * FROM user_follows WHERE follower_id = $1', [userId]),
+        this.executeQuery('SELECT * FROM user_follows WHERE following_id = $1', [userId]),
+      ]);
+
+      return {
+        user: userResult.rows[0],
+        content: contentResult.rows,
+        badges: badgeResult.rows,
+        bookmarks: bookmarkResult.rows,
+        follows: {
+          following: followingResult.rows,
+          followers: followersResult.rows,
+        },
+        export_date: new Date().toISOString(),
+      };
+    }
+
     const query = 'SELECT export_user_data($1) as data';
 
     try {
@@ -416,6 +447,25 @@ export class UserRepository extends BaseRepository {
    * GDPR: Delete all user data
    */
   async deleteUserData(userId: string): Promise<boolean> {
+    if (process.env.TEST_DB_INMEMORY === 'true') {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM content_bookmarks WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_follows WHERE follower_id = $1 OR following_id = $1', [userId]);
+        await client.query('DELETE FROM content WHERE user_id = $1', [userId]);
+        const deleteResult = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
+        await client.query('COMMIT');
+        return deleteResult.rowCount > 0;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error deleting user data:', error);
+        throw new Error('Failed to delete user data');
+      } finally {
+        client.release();
+      }
+    }
+
     const query = 'SELECT delete_user_data($1) as deleted';
 
     try {

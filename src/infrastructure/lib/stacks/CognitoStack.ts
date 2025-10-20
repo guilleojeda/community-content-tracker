@@ -203,10 +203,6 @@ exports.handler = async (event, context, callback) => {
         otp: true,
       },
 
-      // Advanced security mode - only enable for production with Plus feature plan
-      // For development, we'll skip advanced security to avoid additional costs
-      ...(config.environment === 'prod' ? {} : { advancedSecurityMode: cognito.AdvancedSecurityMode.OFF }),
-
       // Email configuration - using Cognito default
       email: cognito.UserPoolEmail.withCognito(),
 

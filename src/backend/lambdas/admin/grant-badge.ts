@@ -1,222 +1,212 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { BadgeRepository } from '../../repositories/BadgeRepository';
-import { UserRepository } from '../../repositories/UserRepository';
-import { AuditLogService } from '../../services/AuditLogService';
-import { NotificationService } from '../../services/NotificationService';
-import { BadgeType } from '@aws-community-hub/shared';
-import {
-  createErrorResponse,
-  createSuccessResponse,
-  parseRequestBody,
-} from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
+import { createErrorResponse, createSuccessResponse } from '../auth/utils';
+import { BadgeType } from '@aws-community-hub/shared';
+import { PoolClient } from 'pg';
+
+/**
+ * Extract admin context from API Gateway event
+ */
+function extractAdminContext(event: APIGatewayProxyEvent) {
+  const authorizer: any = event.requestContext?.authorizer || {};
+  const claims: any = authorizer.claims || {};
+
+  const isAdminFlag =
+    authorizer.isAdmin === true ||
+    authorizer.isAdmin === 'true' ||
+    (Array.isArray(claims['cognito:groups'])
+      ? claims['cognito:groups'].includes('Admin')
+      : typeof claims['cognito:groups'] === 'string'
+      ? claims['cognito:groups'].split(',').includes('Admin')
+      : false);
+
+  const adminUserId = authorizer.userId || claims.sub || claims['cognito:username'];
+
+  return {
+    isAdmin: !!isAdminFlag,
+    adminUserId,
+  };
+}
 
 interface GrantBadgeRequest {
-  userId?: string;
-  userIds?: string[];
+  userId: string;
   badgeType: BadgeType;
   reason?: string;
 }
 
-interface GrantResult {
-  success: boolean;
-  userId: string;
-  badgeType: BadgeType;
-  message?: string;
-  badgeId?: string;
-}
-
 /**
- * Grant badge Lambda handler
- * POST /admin/badges
+ * POST /admin/badges/grant
+ * Grant badge to a user
  * Requires admin authentication
  */
 export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
-  console.log('Grant badge request:', JSON.stringify(event, null, 2));
+  const admin = extractAdminContext(event);
+
+  // Check admin privileges
+  if (!admin.isAdmin) {
+    return createErrorResponse(403, 'PERMISSION_DENIED', 'Admin privileges required');
+  }
+
+  // Parse and validate request body
+  let requestBody: GrantBadgeRequest;
+  try {
+    if (!event.body) {
+      return createErrorResponse(400, 'VALIDATION_ERROR', 'Request body is required');
+    }
+    requestBody = JSON.parse(event.body);
+  } catch (error) {
+    return createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid JSON in request body');
+  }
+
+  // Validate required fields
+  if (!requestBody.userId) {
+    return createErrorResponse(400, 'VALIDATION_ERROR', 'userId is required');
+  }
+
+  if (!requestBody.badgeType) {
+    return createErrorResponse(400, 'VALIDATION_ERROR', 'badgeType is required');
+  }
+
+  // Validate badge type enum
+  const validBadgeTypes = Object.values(BadgeType);
+  if (!validBadgeTypes.includes(requestBody.badgeType)) {
+    return createErrorResponse(
+      400,
+      'VALIDATION_ERROR',
+      `Invalid badge type. Must be one of: ${validBadgeTypes.join(', ')}`
+    );
+  }
+
+  const pool = await getDatabasePool();
+  let client: PoolClient | null = null;
 
   try {
-    // Check admin authentication
-    const adminUserId = event.requestContext.authorizer?.userId;
-    const isAdmin = event.requestContext.authorizer?.isAdmin === 'true' ||
-                    event.requestContext.authorizer?.isAdmin === true;
+    // Start transaction
+    client = await pool.connect();
+    await client.query('BEGIN');
 
-    if (!isAdmin) {
-      return createErrorResponse(
-        403,
-        'PERMISSION_DENIED',
-        'Admin privileges required'
-      );
+    // Check if user exists
+    const userCheck = await client.query(
+      'SELECT id FROM users WHERE id = $1',
+      [requestBody.userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
     }
 
-    // Parse request body
-    const { data: requestBody, error: parseError } = parseRequestBody<GrantBadgeRequest>(event.body);
-    if (parseError) {
-      return parseError;
-    }
+    // Check if badge already exists (active or inactive)
+    const badgeCheck = await client.query(
+      'SELECT id, is_active FROM user_badges WHERE user_id = $1 AND badge_type = $2',
+      [requestBody.userId, requestBody.badgeType]
+    );
 
-    // Validate badge type
-    if (!requestBody?.badgeType) {
-      return createErrorResponse(
-        400,
-        'VALIDATION_ERROR',
-        'badgeType is required'
-      );
-    }
+    let badgeId: string;
+    let operation: 'granted' | 'reactivated';
 
-    const validBadgeTypes = Object.values(BadgeType);
-    if (!validBadgeTypes.includes(requestBody.badgeType)) {
-      return createErrorResponse(
-        400,
-        'VALIDATION_ERROR',
-        `Invalid badge type. Must be one of: ${validBadgeTypes.join(', ')}`
-      );
-    }
+    if (badgeCheck.rows.length > 0) {
+      const existingBadge = badgeCheck.rows[0];
 
-    // Determine if single or bulk grant
-    let userIds: string[] = [];
-    if (requestBody.userIds && requestBody.userIds.length > 0) {
-      userIds = requestBody.userIds;
-    } else if (requestBody.userId) {
-      userIds = [requestBody.userId];
-    } else {
-      return createErrorResponse(
-        400,
-        'VALIDATION_ERROR',
-        'userId or userIds is required'
-      );
-    }
-
-    const dbPool = await getDatabasePool();
-    const badgeRepository = new BadgeRepository(dbPool);
-    const userRepository = new UserRepository(dbPool);
-    const auditLogService = new AuditLogService(dbPool);
-    const notificationService = new NotificationService(dbPool);
-
-    // Process badge grants
-    const results: GrantResult[] = [];
-
-    for (const userId of userIds) {
-      try {
-        // Verify user exists
-        const user = await userRepository.findById(userId);
-        if (!user) {
-          results.push({
-            success: false,
-            userId,
-            badgeType: requestBody.badgeType,
-            message: 'User not found',
-          });
-          continue;
-        }
-
-        // Check if user already has this badge
-        const hasBadge = await badgeRepository.userHasBadge(userId, requestBody.badgeType);
-        if (hasBadge) {
-          results.push({
-            success: false,
-            userId,
-            badgeType: requestBody.badgeType,
-            message: 'User already has this badge',
-          });
-          continue;
-        }
-
-        // Grant the badge
-        const badge = await badgeRepository.awardBadge({
-          userId,
-          badgeType: requestBody.badgeType,
-          awardedBy: adminUserId,
-          awardedReason: requestBody.reason,
-        });
-
-        results.push({
-          success: true,
-          userId,
-          badgeType: requestBody.badgeType,
-          badgeId: badge.id,
-          message: 'Badge granted successfully',
-        });
-
-        // Log badge grant in audit trail
-        await auditLogService.logBadgeGrant(
-          adminUserId!,
-          userId,
-          requestBody.badgeType,
-          requestBody.reason
-        );
-
-        // Notify user about badge
-        await notificationService.notifyBadgeGranted(
-          userId,
-          requestBody.badgeType,
-          requestBody.reason
-        );
-
-        console.log('Badge granted:', {
-          badgeId: badge.id,
-          userId,
-          badgeType: requestBody.badgeType,
-          grantedBy: adminUserId,
-        });
-
-      } catch (error) {
-        console.error(`Error granting badge to user ${userId}:`, error);
-        results.push({
-          success: false,
-          userId,
-          badgeType: requestBody.badgeType,
-          message: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    }
-
-    // Prepare response
-    const successCount = results.filter(r => r.success).length;
-    const failureCount = results.filter(r => !r.success).length;
-
-    if (userIds.length === 1) {
-      // Single grant response
-      const result = results[0];
-      if (result.success) {
-        return createSuccessResponse(201, {
-          message: 'Badge granted successfully',
-          badge: {
-            id: result.badgeId,
-            userId: result.userId,
-            badgeType: result.badgeType,
-            grantedBy: adminUserId,
-            grantedAt: new Date().toISOString(),
-          },
-        });
-      } else {
+      if (existingBadge.is_active) {
+        // Badge is already active
+        await client.query('ROLLBACK');
         return createErrorResponse(
-          400,
-          'GRANT_FAILED',
-          result.message || 'Failed to grant badge'
+          409,
+          'DUPLICATE_RESOURCE',
+          'User already has an active badge of this type'
         );
       }
+
+      // Reactivate the inactive badge
+      const reactivateResult = await client.query(
+        `UPDATE user_badges
+         SET is_active = true,
+             awarded_at = NOW(),
+             awarded_by = $1,
+             awarded_reason = $2,
+             revoked_at = NULL,
+             revoked_by = NULL,
+             revoke_reason = NULL,
+             updated_at = NOW()
+         WHERE id = $3
+         RETURNING id`,
+        [admin.adminUserId, requestBody.reason, existingBadge.id]
+      );
+      badgeId = reactivateResult.rows[0].id;
+      operation = 'reactivated';
     } else {
-      // Bulk grant response
-      return createSuccessResponse(200, {
-        message: `Granted badges to ${successCount} of ${userIds.length} users`,
-        results,
-        summary: {
-          total: userIds.length,
-          success: successCount,
-          failure: failureCount,
-        },
-      });
+      // Insert new badge
+      const insertResult = await client.query(
+        `INSERT INTO user_badges (
+          user_id, badge_type, awarded_at, awarded_by, awarded_reason, is_active
+        ) VALUES ($1, $2, NOW(), $3, $4, true)
+        RETURNING id`,
+        [requestBody.userId, requestBody.badgeType, admin.adminUserId, requestBody.reason]
+      );
+      badgeId = insertResult.rows[0].id;
+      operation = 'granted';
     }
+
+    // Insert audit record into admin_actions table
+    await client.query(
+      `INSERT INTO admin_actions (
+        admin_user_id, action_type, target_user_id, details, created_at
+      ) VALUES ($1, $2, $3, $4, NOW())`,
+      [
+        admin.adminUserId,
+        'grant_badge',
+        requestBody.userId,
+        JSON.stringify({
+          badgeType: requestBody.badgeType,
+          badgeId,
+          reason: requestBody.reason,
+          operation,
+        }),
+      ]
+    );
+
+    // Commit transaction
+    await client.query('COMMIT');
+
+    console.log('Badge granted successfully:', {
+      badgeId,
+      userId: requestBody.userId,
+      badgeType: requestBody.badgeType,
+      grantedBy: admin.adminUserId,
+      operation,
+    });
+
+    return createSuccessResponse(operation === 'reactivated' ? 200 : 201, {
+      success: true,
+      data: {
+        badgeId,
+        userId: requestBody.userId,
+        badgeType: requestBody.badgeType,
+        grantedBy: admin.adminUserId,
+        grantedAt: new Date().toISOString(),
+        operation,
+      },
+    });
 
   } catch (error: any) {
-    console.error('Unexpected grant badge error:', error);
-    return createErrorResponse(
-      500,
-      'INTERNAL_ERROR',
-      'An unexpected error occurred'
-    );
+    // Rollback on error
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Rollback error:', rollbackError);
+      }
+    }
+
+    console.error('Grant badge error:', error);
+    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to grant badge');
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 }

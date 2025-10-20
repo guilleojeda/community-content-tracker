@@ -1,120 +1,154 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { SearchFilters } from '@shared/types';
+import { apiClient, SavedSearchEntry, SavedSearchListResponse } from '@/api';
 
-interface SavedSearch {
-  id: string;
+interface SaveSearchInput {
   query: string;
   filters?: SearchFilters;
   sortBy?: 'relevance' | 'date';
-  savedAt: number;
   name?: string;
 }
 
-const STORAGE_KEY = 'aws_community_saved_searches';
-const MAX_SAVED = 20;
-
 export function useSavedSearches() {
-  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [savedSearches, setSavedSearches] = useState<SavedSearchEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Load saved searches from localStorage on mount
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          setSavedSearches(Array.isArray(parsed) ? parsed : []);
-        }
-      } catch (e) {
-        console.error('Failed to parse saved searches from localStorage', e);
-        // Clear corrupted data
-        localStorage.removeItem(STORAGE_KEY);
-      }
+  const loadSavedSearches = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response: SavedSearchListResponse = await apiClient.getSavedSearches();
+      setSavedSearches(response.searches);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load saved searches');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  const saveSearch = (search: Omit<SavedSearch, 'id' | 'savedAt'>) => {
-    if (typeof window === 'undefined' || !search.query.trim()) {
-      return;
-    }
+  useEffect(() => {
+    loadSavedSearches();
+  }, [loadSavedSearches]);
 
-    try {
-      // Check if we've already saved this exact query
-      const existingIndex = savedSearches.findIndex(
-        s => s.query.toLowerCase() === search.query.toLowerCase()
-      );
+  const buildFiltersPayload = (
+    filters: SearchFilters | undefined,
+    sortBy: 'relevance' | 'date' | undefined
+  ): Record<string, unknown> => ({
+    ...(filters ?? {}),
+    __sortBy: sortBy ?? 'relevance',
+  });
 
-      let newSavedSearches: SavedSearch[];
-
-      if (existingIndex !== -1) {
-        // Update existing saved search
-        newSavedSearches = [...savedSearches];
-        newSavedSearches[existingIndex] = {
-          ...newSavedSearches[existingIndex],
-          ...search,
-          savedAt: Date.now(),
-        };
-      } else {
-        // Create new saved search
-        const newSearch: SavedSearch = {
-          ...search,
-          id: `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          savedAt: Date.now(),
-        };
-
-        newSavedSearches = [newSearch, ...savedSearches].slice(0, MAX_SAVED);
+  const saveSearch = useCallback(
+    async (search: SaveSearchInput) => {
+      if (!search.query.trim()) {
+        return null;
       }
 
-      setSavedSearches(newSavedSearches);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newSavedSearches));
-    } catch (e) {
-      console.error('Failed to save search to localStorage', e);
-    }
-  };
+      try {
+        const name = search.name || search.query;
+        const filtersPayload = buildFiltersPayload(search.filters, search.sortBy);
+        const existing = savedSearches.find(
+          entry =>
+            entry.query.toLowerCase() === search.query.toLowerCase() &&
+            JSON.stringify(entry.filters ?? {}) === JSON.stringify(filtersPayload)
+        );
 
-  const deleteSavedSearch = (id: string) => {
-    if (typeof window === 'undefined') {
-      return;
-    }
+        if (existing) {
+          const updated = await apiClient.updateSavedSearch(existing.id, {
+            name,
+            query: search.query,
+            filters: filtersPayload,
+            isPublic: false,
+          });
+          setSavedSearches(prev =>
+            prev.map(entry => (entry.id === existing.id ? updated : entry))
+          );
+          return updated;
+        }
 
+        const created = await apiClient.saveSearch({
+          name,
+          query: search.query,
+          filters: filtersPayload,
+          isPublic: false,
+        });
+        setSavedSearches(prev => [created, ...prev]);
+        return created;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to save search');
+        return null;
+      }
+    },
+    [savedSearches]
+  );
+
+  const deleteSavedSearch = useCallback(async (id: string) => {
     try {
-      const newSavedSearches = savedSearches.filter(s => s.id !== id);
-      setSavedSearches(newSavedSearches);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newSavedSearches));
-    } catch (e) {
-      console.error('Failed to delete saved search', e);
+      await apiClient.deleteSavedSearch(id);
+      setSavedSearches(prev => prev.filter(entry => entry.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete saved search');
     }
-  };
+  }, []);
 
-  const loadSearch = (id: string): SavedSearch | undefined => {
-    return savedSearches.find(s => s.id === id);
-  };
+  const loadSearch = useCallback(
+    async (id: string): Promise<SavedSearchEntry | null> => {
+      const existing = savedSearches.find(entry => entry.id === id);
+      if (existing) {
+        return existing;
+      }
 
-  const getSavedSearches = () => savedSearches;
+      try {
+        const fetched = await apiClient.getSavedSearch(id);
+        setSavedSearches(prev => {
+          const without = prev.filter(entry => entry.id !== fetched.id);
+          return [fetched, ...without];
+        });
+        return fetched;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load saved search');
+        return null;
+      }
+    },
+    [savedSearches]
+  );
 
-  const updateSavedSearch = (id: string, updates: Partial<SavedSearch>) => {
-    if (typeof window === 'undefined') {
-      return;
-    }
+  const getSavedSearches = useCallback(() => savedSearches, [savedSearches]);
 
-    try {
-      const newSavedSearches = savedSearches.map(s =>
-        s.id === id ? { ...s, ...updates, savedAt: Date.now() } : s
-      );
-      setSavedSearches(newSavedSearches);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newSavedSearches));
-    } catch (e) {
-      console.error('Failed to update saved search', e);
-    }
-  };
+  const updateSavedSearch = useCallback(
+    async (id: string, updates: Partial<SaveSearchInput>) => {
+      try {
+        const filtersPayload = buildFiltersPayload(
+          updates.filters as SearchFilters | undefined,
+          updates.sortBy
+        );
+        const updated = await apiClient.updateSavedSearch(id, {
+          name: updates.name,
+          query: updates.query,
+          filters: filtersPayload,
+          isPublic: false,
+        });
+        setSavedSearches(prev => prev.map(entry => (entry.id === id ? updated : entry)));
+        return updated;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to update saved search');
+        return null;
+      }
+    },
+    []
+  );
 
   return {
+    loading,
+    error,
     saveSearch,
     deleteSavedSearch,
     loadSearch,
     getSavedSearches,
     updateSavedSearch,
+    refresh: loadSavedSearches,
   };
 }

@@ -185,13 +185,14 @@ export abstract class BaseRepository {
       return this.findById(id);
     }
 
-    const setClause = keys
-      .map((key, index) => `${this.escapeIdentifier(key)} = $${index + 2}`)
-      .join(', ');
+    const setClauses = keys.map((key, index) => `${this.escapeIdentifier(key)} = $${index + 2}`);
+    if (!keys.includes('updated_at')) {
+      setClauses.push('updated_at = clock_timestamp()');
+    }
 
     const query = `
       UPDATE ${this.escapeIdentifier(this.tableName)}
-      SET ${setClause}
+      SET ${setClauses.join(', ')}
       WHERE id = $1
       RETURNING *
     `;

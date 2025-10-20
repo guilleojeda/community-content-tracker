@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { User, Badge } from '@shared/types';
 import { getBadgeLabel, getBadgeBadgeClass } from '@/lib/constants/ui';
 import type { components as ApiComponents } from '@/api';
+import { apiClient } from '@/api/client';
 
 type SearchResultItem =
   ApiComponents['schemas']['SearchResponse']['items'][number] & {
@@ -109,6 +110,18 @@ export default function SearchResults({
                       target="_blank"
                       rel="noopener noreferrer"
                       className="hover:text-blue-600 transition-colors"
+                      onClick={() => {
+                        apiClient
+                          .trackAnalyticsEvents({
+                            eventType: 'content_click',
+                            contentId: item.id,
+                            metadata: {
+                              source: 'search_results',
+                              url: item.urls?.[0]?.url,
+                            },
+                          })
+                          .catch(() => {});
+                      }}
                     >
                       {item.title}
                     </a>

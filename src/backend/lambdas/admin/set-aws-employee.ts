@@ -1,150 +1,149 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { UserRepository } from '../../repositories/UserRepository';
-import { AuditLogService } from '../../services/AuditLogService';
-import {
-  createErrorResponse,
-  createSuccessResponse,
-  parseRequestBody,
-} from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
+import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 
-interface SetAwsEmployeeRequest {
-  isAwsEmployee: boolean;
+/**
+ * Extract admin context from API Gateway event
+ */
+function extractAdminContext(event: APIGatewayProxyEvent) {
+  const authorizer: any = event.requestContext?.authorizer || {};
+  const claims: any = authorizer.claims || {};
+
+  const isAdminFlag =
+    authorizer.isAdmin === true ||
+    authorizer.isAdmin === 'true' ||
+    (Array.isArray(claims['cognito:groups'])
+      ? claims['cognito:groups'].includes('Admin')
+      : typeof claims['cognito:groups'] === 'string'
+      ? claims['cognito:groups'].split(',').includes('Admin')
+      : false);
+
+  const adminUserId = authorizer.userId || claims.sub || claims['cognito:username'];
+
+  return {
+    isAdmin: !!isAdminFlag,
+    adminUserId,
+  };
 }
 
 /**
- * Set AWS employee status Lambda handler
+ * Extract IP address from event
+ */
+function extractIpAddress(event: APIGatewayProxyEvent): string | null {
+  return event.requestContext?.identity?.sourceIp || null;
+}
+
+/**
  * PUT /admin/users/:id/aws-employee
- * Requires admin authentication
+ * Set or unset AWS employee flag for a user
+ */
+async function handleSetAwsEmployee(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  const admin = extractAdminContext(event);
+  if (!admin.isAdmin) {
+    return createErrorResponse(403, 'PERMISSION_DENIED', 'Admin privileges required');
+  }
+
+  const userId = event.pathParameters?.id;
+  if (!userId) {
+    return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID required');
+  }
+
+  if (!admin.adminUserId) {
+    return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+  }
+
+  let body: any;
+  try {
+    body = JSON.parse(event.body || '{}');
+  } catch (error) {
+    return createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid JSON body');
+  }
+
+  const { isAwsEmployee, reason } = body;
+
+  if (typeof isAwsEmployee !== 'boolean') {
+    return createErrorResponse(400, 'VALIDATION_ERROR', 'isAwsEmployee must be a boolean');
+  }
+
+  const pool = await getDatabasePool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Check if user exists
+    const userResult = await client.query('SELECT id, is_aws_employee FROM users WHERE id = $1', [
+      userId,
+    ]);
+
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+    }
+
+    const currentStatus = userResult.rows[0].is_aws_employee;
+
+    // Update user's AWS employee status
+    await client.query('UPDATE users SET is_aws_employee = $1 WHERE id = $2', [
+      isAwsEmployee,
+      userId,
+    ]);
+
+    // Insert audit record
+    const ipAddress = extractIpAddress(event);
+    await client.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_user_id, details, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        admin.adminUserId,
+        'set_aws_employee',
+        userId,
+        JSON.stringify({
+          isAwsEmployee,
+          previousStatus: currentStatus,
+          reason: reason || null,
+        }),
+        ipAddress,
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    return createSuccessResponse(200, {
+      success: true,
+      data: {
+        userId,
+        isAwsEmployee,
+        previousStatus: currentStatus,
+      },
+    });
+  } catch (error: any) {
+    await client.query('ROLLBACK');
+    console.error('Set AWS employee error:', error);
+    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to update AWS employee status');
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Main Lambda handler
  */
 export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
-  console.log('Set AWS employee status request:', JSON.stringify(event, null, 2));
+  const path = event.path || '';
+  const method = (event.httpMethod || 'GET').toUpperCase();
 
   try {
-    // Check admin authentication
-    const adminUserId = event.requestContext.authorizer?.userId;
-    const isAdmin = event.requestContext.authorizer?.isAdmin === 'true' ||
-                    event.requestContext.authorizer?.isAdmin === true;
-
-    if (!isAdmin) {
-      return createErrorResponse(
-        403,
-        'PERMISSION_DENIED',
-        'Admin privileges required'
-      );
+    if (method === 'PUT' && /^\/admin\/users\/[^/]+\/aws-employee$/.test(path)) {
+      return await handleSetAwsEmployee(event);
     }
 
-    // Get user ID from path parameter
-    const targetUserId = event.pathParameters?.id;
-    if (!targetUserId) {
-      return createErrorResponse(
-        400,
-        'VALIDATION_ERROR',
-        'User ID is required in path'
-      );
-    }
-
-    // Parse request body
-    const { data: requestBody, error: parseError } = parseRequestBody<SetAwsEmployeeRequest>(event.body);
-    if (parseError) {
-      return parseError;
-    }
-
-    // Validate isAwsEmployee field
-    if (requestBody?.isAwsEmployee === undefined || requestBody?.isAwsEmployee === null) {
-      return createErrorResponse(
-        400,
-        'VALIDATION_ERROR',
-        'isAwsEmployee field is required (boolean)'
-      );
-    }
-
-    if (typeof requestBody.isAwsEmployee !== 'boolean') {
-      return createErrorResponse(
-        400,
-        'VALIDATION_ERROR',
-        'isAwsEmployee must be a boolean value'
-      );
-    }
-
-    const dbPool = await getDatabasePool();
-    const userRepository = new UserRepository(dbPool);
-    const auditLogService = new AuditLogService(dbPool);
-
-    // Verify target user exists
-    const targetUser = await userRepository.findById(targetUserId);
-    if (!targetUser) {
-      return createErrorResponse(
-        404,
-        'NOT_FOUND',
-        'User not found'
-      );
-    }
-
-    // Check if status is already set to the requested value
-    if (targetUser.isAwsEmployee === requestBody.isAwsEmployee) {
-      return createSuccessResponse(200, {
-        message: `User AWS employee status is already ${requestBody.isAwsEmployee}`,
-        user: {
-          id: targetUser.id,
-          username: targetUser.username,
-          email: targetUser.email,
-          isAwsEmployee: targetUser.isAwsEmployee,
-        },
-      });
-    }
-
-    // Update AWS employee status
-    const updatedUser = await userRepository.update(targetUserId, {
-      isAwsEmployee: requestBody.isAwsEmployee,
-    });
-
-    if (!updatedUser) {
-      return createErrorResponse(
-        500,
-        'INTERNAL_ERROR',
-        'Failed to update user AWS employee status'
-      );
-    }
-
-    // Log AWS employee status change in audit trail
-    await auditLogService.logAwsEmployeeChange(
-      adminUserId!,
-      targetUserId,
-      requestBody.isAwsEmployee,
-      {
-        previousValue: targetUser.isAwsEmployee,
-        newValue: requestBody.isAwsEmployee,
-      }
-    );
-
-    console.log('AWS employee status updated:', {
-      userId: targetUserId,
-      isAwsEmployee: requestBody.isAwsEmployee,
-      updatedBy: adminUserId,
-      timestamp: new Date().toISOString(),
-    });
-
-    return createSuccessResponse(200, {
-      message: `AWS employee status updated to ${requestBody.isAwsEmployee}`,
-      user: {
-        id: updatedUser.id,
-        username: updatedUser.username,
-        email: updatedUser.email,
-        isAwsEmployee: updatedUser.isAwsEmployee,
-        updatedAt: updatedUser.updatedAt,
-      },
-    });
-
-  } catch (error: any) {
-    console.error('Unexpected set AWS employee error:', error);
-    return createErrorResponse(
-      500,
-      'INTERNAL_ERROR',
-      'An unexpected error occurred'
-    );
+    return createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`);
+  } catch (error) {
+    console.error('Unhandled set-aws-employee error', { path, method, error });
+    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
   }
 }

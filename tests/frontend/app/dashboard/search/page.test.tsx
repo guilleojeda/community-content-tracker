@@ -15,7 +15,19 @@ import { BadgeType, Visibility, ContentType } from '@shared/types';
 jest.mock('@/api/client', () => ({
   apiClient: {
     search: jest.fn(),
+    advancedSearch: jest.fn(),
+    trackAnalyticsEvents: jest.fn(),
+    exportAdvancedSearchCsv: jest.fn(),
+    getSavedSearches: jest.fn(),
+    saveSearch: jest.fn(),
+    updateSavedSearch: jest.fn(),
+    deleteSavedSearch: jest.fn(),
+    getSavedSearch: jest.fn(),
   },
+}));
+
+jest.mock('@/utils/download', () => ({
+  downloadBlob: jest.fn(),
 }));
 
 // Mock Next.js router
@@ -38,26 +50,7 @@ const setSearchParams = (entries: Record<string, string | null>) => {
   });
 };
 
-// Mock localStorage
-const localStorageMock = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: (key: string) => store[key] || null,
-    setItem: (key: string, value: string) => {
-      store[key] = value.toString();
-    },
-    removeItem: (key: string) => {
-      delete store[key];
-    },
-    clear: () => {
-      store = {};
-    },
-  };
-})();
-
-Object.defineProperty(window, 'localStorage', {
-  value: localStorageMock,
-});
+const downloadBlob = jest.requireMock('@/utils/download').downloadBlob as jest.Mock;
 
 describe('Authenticated Search Interface', () => {
   const searchItems = [
@@ -105,42 +98,292 @@ describe('Authenticated Search Interface', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    localStorageMock.clear();
-    localStorageMock.setItem('accessToken', 'mock-token');
     setSearchParams({});
+    localStorageMock.clear();
+    downloadBlob.mockReset();
 
-    // Make mock intelligent - return appropriate results based on query
-    (apiClient.search as jest.Mock).mockImplementation((params: any) => {
+    mockedApiClient.getSavedSearches.mockResolvedValue({ searches: [], count: 0 });
+    mockedApiClient.saveSearch.mockImplementation(async ({ query, filters }) => ({
+      id: 'saved-generated',
+      userId: 'user-1',
+      name: query,
+      query,
+      filters,
+      isPublic: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+    mockedApiClient.updateSavedSearch.mockImplementation(async (_, payload) => ({
+      id: 'saved-generated',
+      userId: 'user-1',
+      name: payload.name ?? 'Updated',
+      query: payload.query ?? 'updated',
+      filters: payload.filters ?? {},
+      isPublic: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+    mockedApiClient.deleteSavedSearch.mockResolvedValue(undefined as unknown as any);
+    mockedApiClient.getSavedSearch.mockResolvedValue({
+      id: 'saved-prefetched',
+      userId: 'user-1',
+      name: 'prefetched',
+      query: 'prefetched',
+      filters: { __sortBy: 'relevance' },
+      isPublic: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    mockedApiClient.advancedSearch.mockResolvedValue({ results: [], count: 0, query: '' });
+    mockedApiClient.trackAnalyticsEvents.mockResolvedValue(undefined as unknown as any);
+    mockedApiClient.exportAdvancedSearchCsv.mockResolvedValue({
+      blob: new Blob(['id,title\n']),
+      filename: 'search-results.csv',
+    });
+
+    mockedApiClient.search.mockImplementation((params: any) => {
       const query = params.q?.toLowerCase() || '';
 
-      // Check more specific queries first (autocomplete test queries)
       if (query === 'lambda functions' || query === 'lambda layers' || query === 'notfound') {
-        return Promise.resolve({
-          items: [],
-          content: [],
-          total: 0,
-          limit: 10,
-          offset: 0,
-        });
+        return Promise.resolve({ items: [], content: [], total: 0, limit: 10, offset: 0 });
       }
 
-      // Return matching results for queries that should find content
-      // (serverless, aws, test, lambda as partial match)
-      if (query.includes('serverless') ||
-          query.includes('aws') ||
-          query.includes('test') ||
-          query === 'lambda') {
+      if (query.includes('serverless') || query.includes('aws') || query.includes('test') || query === 'lambda') {
         return Promise.resolve(mockSearchResults);
       }
 
-      // Default: return empty results
-      return Promise.resolve({
-        items: [],
-        content: [],
-        total: 0,
-        limit: 10,
-        offset: 0,
+      return Promise.resolve({ items: [], content: [], total: 0, limit: 10, offset: 0 });
+    });
+  });
+
+  describe('Advanced search and export flows', () => {
+    it('executes advanced search when advanced mode is enabled', async () => {
+      const user = userEvent.setup();
+      mockedApiClient.advancedSearch.mockResolvedValueOnce({
+        results: [
+          {
+            id: 'adv-1',
+            title: 'Advanced Result',
+            description: 'Deep dive content',
+            contentType: 'blog',
+            visibility: 'public',
+            publishDate: '2024-02-01',
+            urls: [{ id: 'adv-1', url: 'https://example.com/advanced' }],
+            tags: ['advanced'],
+            userId: 'user-adv',
+            captureDate: '2024-02-01',
+            metrics: {},
+            isClaimed: true,
+            createdAt: '2024-02-01',
+            updatedAt: '2024-02-01',
+          },
+        ],
+        count: 1,
+        query: 'advanced query',
       });
+
+      render(<SearchPage />);
+
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'advanced query');
+
+      const advancedToggle = screen.getByLabelText(/Advanced operators/i);
+      await user.click(advancedToggle);
+
+      const searchButton = screen.getAllByRole('button', { name: /^search$/i })[0];
+      await user.click(searchButton);
+
+      await waitFor(() =>
+        expect(mockedApiClient.advancedSearch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            query: 'advanced query',
+            withinIds: undefined,
+            limit: 10,
+          })
+        )
+      );
+      await waitFor(() => expect(screen.getByText('Advanced Result')).toBeInTheDocument());
+      expect(mockedApiClient.trackAnalyticsEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'search',
+          metadata: expect.objectContaining({ advanced: true }),
+        })
+      );
+    });
+
+    it('executes search within results using advanced API with withinIds', async () => {
+      const user = userEvent.setup();
+      mockedApiClient.search.mockResolvedValueOnce(mockSearchResults);
+      mockedApiClient.advancedSearch.mockResolvedValueOnce({
+        results: mockSearchResults.items,
+        count: 2,
+        query: 'refined',
+      });
+
+      render(<SearchPage />);
+
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'aws content');
+
+      const searchButton = screen.getAllByRole('button', { name: /^search$/i })[0];
+      await user.click(searchButton);
+      await waitFor(() => expect(screen.getByText('AWS Lambda Best Practices')).toBeInTheDocument());
+
+      mockedApiClient.trackAnalyticsEvents.mockClear();
+
+      const withinToggle = screen.getByLabelText(/Search within results/i);
+      await user.click(withinToggle);
+
+      await user.clear(searchInput);
+      await user.type(searchInput, 'refined');
+      await user.click(searchButton);
+
+      await waitFor(() =>
+        expect(mockedApiClient.advancedSearch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            query: 'refined',
+            withinIds: ['1', '2'],
+            limit: 10,
+          })
+        )
+      );
+      expect(mockedApiClient.trackAnalyticsEvents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'search',
+          metadata: expect.objectContaining({ advanced: true }),
+        })
+      );
+    });
+
+    it('prompts for a query before exporting results', async () => {
+      const user = userEvent.setup();
+      render(<SearchPage />);
+
+      const exportButton = screen.getByRole('button', { name: /Export CSV/i });
+      await user.click(exportButton);
+
+      expect(mockedApiClient.exportAdvancedSearchCsv).not.toHaveBeenCalled();
+      expect(downloadBlob).not.toHaveBeenCalled();
+      expect(screen.getByText(/Enter a query before exporting results/i)).toBeInTheDocument();
+    });
+
+    it('shows an error when export fails', async () => {
+      const user = userEvent.setup();
+      mockedApiClient.exportAdvancedSearchCsv.mockRejectedValueOnce(new Error('Export failure'));
+
+      render(<SearchPage />);
+
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'troublesome export');
+
+      const exportButton = screen.getByRole('button', { name: /Export CSV/i });
+      await user.click(exportButton);
+
+      await waitFor(() =>
+        expect(screen.getByText(/Failed to export search results/i)).toBeInTheDocument()
+      );
+      expect(downloadBlob).not.toHaveBeenCalled();
+    });
+
+    it('shows an error when the search API call fails', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      mockedApiClient.search.mockRejectedValueOnce(new Error('Network failure'));
+
+      const user = userEvent.setup();
+      render(<SearchPage />);
+
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'failing query');
+
+      const searchButton = screen.getAllByRole('button', { name: /^search$/i })[0];
+      await user.click(searchButton);
+
+      await waitFor(() =>
+        expect(screen.getByText(/Failed to perform search\. Please try again\./i)).toBeInTheDocument()
+      );
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('does not attempt to save a search when the query is empty', async () => {
+      const user = userEvent.setup();
+      render(<SearchPage />);
+
+      const saveButton = screen.getByRole('button', { name: /Save Search/i });
+      await user.click(saveButton);
+
+      expect(mockedApiClient.saveSearch).not.toHaveBeenCalled();
+    });
+
+    it('exports using withinIds when search within results is enabled', async () => {
+      const user = userEvent.setup();
+      mockedApiClient.search.mockResolvedValueOnce(mockSearchResults);
+      const blob = new Blob(['csv']);
+      mockedApiClient.exportAdvancedSearchCsv.mockResolvedValueOnce({
+        blob,
+        filename: 'with-results.csv',
+      });
+
+      render(<SearchPage />);
+
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'aws content');
+
+      const searchButton = screen.getAllByRole('button', { name: /^search$/i })[0];
+      await user.click(searchButton);
+      await waitFor(() => expect(screen.getByText('AWS Lambda Best Practices')).toBeInTheDocument());
+
+      const withinToggle = screen.getByLabelText(/Search within results/i);
+      await user.click(withinToggle);
+
+      const exportButton = screen.getByRole('button', { name: /Export CSV/i });
+      await user.click(exportButton);
+
+      await waitFor(() =>
+        expect(mockedApiClient.exportAdvancedSearchCsv).toHaveBeenCalledWith({
+          query: 'aws content',
+          withinIds: ['1', '2'],
+        })
+      );
+      expect(downloadBlob).toHaveBeenCalledWith(blob, 'with-results.csv');
+    });
+  });
+
+  describe('Initial URL hydration', () => {
+    it('hydrates search state from URL parameters and performs search', async () => {
+      mockedApiClient.search.mockResolvedValueOnce(mockSearchResults);
+
+      setSearchParams({
+        q: 'aws content',
+        type: 'blog,youtube',
+        badges: 'hero',
+        visibility: 'public',
+        tags: 'serverless',
+        startDate: '2024-01-01',
+        endDate: '2024-02-01',
+        sortBy: 'date',
+        page: '2',
+        mode: 'advanced',
+      });
+
+      render(<SearchPage />);
+
+      await waitFor(() =>
+        expect(mockedApiClient.search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            q: 'aws content',
+            offset: 10,
+            filters: expect.objectContaining({
+              contentTypes: ['blog', 'youtube'],
+              badges: ['hero'],
+              visibility: ['public'],
+              tags: ['serverless'],
+              dateRange: expect.any(Object),
+            }),
+            sortBy: 'date',
+          })
+        )
+      );
+      expect(mockedApiClient.trackAnalyticsEvents).toHaveBeenCalled();
     });
   });
 
@@ -423,7 +666,7 @@ describe('Authenticated Search Interface', () => {
 
     it('should show no results state', async () => {
       const user = userEvent.setup();
-      (apiClient.search as jest.Mock).mockResolvedValue({
+    mockedApiClient.search.mockResolvedValue({
         content: [],
         total: 0,
         limit: 10,
@@ -443,19 +686,16 @@ describe('Authenticated Search Interface', () => {
 
       // Wait for search to complete - API should be called
       await waitFor(() => {
-        expect(apiClient.search).toHaveBeenCalled();
+      expect(mockedApiClient.search).toHaveBeenCalled();
       });
 
       // Component shows "Showing 1-0 of 0 results" for no results
       // Wait for results section to render (even if empty)
       await waitFor(() => {
-        expect(screen.getByText(/results/i)).toBeInTheDocument();
+        expect(screen.getByText(/No results found/i)).toBeInTheDocument();
       });
 
-      // Verify the API returned empty results
-      const lastCall = (apiClient.search as jest.Mock).mock.calls[
-        (apiClient.search as jest.Mock).mock.calls.length - 1
-      ];
+      const lastCall = mockedApiClient.search.mock.calls.slice(-1)[0];
       expect(lastCall[0].q).toBe('notfound');
     });
 
@@ -506,16 +746,25 @@ describe('Authenticated Search Interface', () => {
   });
 
   it('should apply saved searches with stored filters', async () => {
-    const savedSearch = [{
-      id: 'saved-1',
-      query: 'lambda',
-      filters: {
-        badges: [BadgeType.HERO],
-        visibility: [Visibility.PUBLIC],
-      },
-      sortBy: 'date',
-    }];
-    localStorageMock.setItem('aws_community_saved_searches', JSON.stringify(savedSearch));
+    mockedApiClient.getSavedSearches.mockResolvedValueOnce({
+      searches: [
+        {
+          id: 'saved-1',
+          userId: 'user-1',
+          name: 'lambda',
+          query: 'lambda',
+          filters: {
+            badges: [BadgeType.HERO],
+            visibility: [Visibility.PUBLIC],
+            __sortBy: 'date',
+          },
+          isPublic: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      count: 1,
+    });
 
     const user = userEvent.setup();
     render(<SearchPage />);
@@ -527,7 +776,7 @@ describe('Authenticated Search Interface', () => {
     await user.click(savedEntry);
 
     await waitFor(() => {
-      expect(apiClient.search).toHaveBeenCalledWith(
+      expect(mockedApiClient.search).toHaveBeenCalledWith(
         expect.objectContaining({
           q: 'lambda',
           filters: expect.objectContaining({ badges: [BadgeType.HERO] }),
@@ -583,7 +832,7 @@ describe('Pagination', () => {
       await user.click(nextButton);
 
       await waitFor(() => {
-        expect(apiClient.search).toHaveBeenCalledWith(
+        expect(mockedApiClient.search).toHaveBeenCalledWith(
           expect.objectContaining({
             offset: 10,
           })
@@ -672,7 +921,7 @@ describe('Sort Options', () => {
       await user.selectOptions(sortSelect, 'date');
 
       await waitFor(() => {
-        expect(apiClient.search).toHaveBeenCalledWith(
+        expect(mockedApiClient.search).toHaveBeenCalledWith(
           expect.objectContaining({
             sortBy: 'date',
           })
@@ -688,7 +937,7 @@ describe('Sort Options', () => {
       expect(screen.getByRole('button', { name: /save search/i })).toBeInTheDocument();
     });
 
-    it('should save current search to localStorage', async () => {
+    it('should save current search via API', async () => {
       const user = userEvent.setup();
       render(<SearchPage />);
 
@@ -707,25 +956,42 @@ describe('Sort Options', () => {
       await user.click(saveButton);
 
       await waitFor(() => {
-        const savedSearches = JSON.parse(localStorageMock.getItem('aws_community_saved_searches') || '[]');
-        expect(savedSearches).toContainEqual(
-          expect.objectContaining({
-            query: 'lambda',
-          })
+        expect(mockedApiClient.saveSearch).toHaveBeenCalledWith(
+          expect.objectContaining({ query: 'lambda' })
         );
       });
     });
 
     it('should display list of saved searches', async () => {
       const user = userEvent.setup();
-      localStorageMock.setItem('aws_community_saved_searches', JSON.stringify([
-        { id: '1', query: 'lambda', filters: {}, sortBy: 'relevance', savedAt: Date.now() },
-        { id: '2', query: 'serverless', filters: {}, sortBy: 'relevance', savedAt: Date.now() },
-      ]));
+      mockedApiClient.getSavedSearches.mockResolvedValueOnce({
+        searches: [
+          {
+            id: '1',
+            userId: 'user-1',
+            name: 'lambda',
+            query: 'lambda',
+            filters: { __sortBy: 'relevance' },
+            isPublic: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          {
+            id: '2',
+            userId: 'user-1',
+            name: 'serverless',
+            query: 'serverless',
+            filters: { __sortBy: 'relevance' },
+            isPublic: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        count: 2,
+      });
 
       render(<SearchPage />);
 
-      // Wait for component to load saved searches from localStorage
       await waitFor(() => {
         const savedSearchesButton = screen.getByText(/saved searches/i);
         expect(savedSearchesButton).toBeInTheDocument();
@@ -740,15 +1006,62 @@ describe('Sort Options', () => {
       });
     });
 
-    it('should load saved search when clicked', async () => {
+    it('uses advanced search when advanced mode is enabled', async () => {
       const user = userEvent.setup();
-      localStorageMock.setItem('aws_community_saved_searches', JSON.stringify([
-        { id: '1', query: 'lambda', filters: { contentTypes: ['blog'] }, sortBy: 'relevance', savedAt: Date.now() },
-      ]));
+      mockedApiClient.advancedSearch.mockResolvedValueOnce({
+        query: 'advanced query',
+        count: 1,
+        results: [
+          {
+            id: 'adv-1',
+            title: 'Advanced Result',
+            description: 'Advanced description',
+            contentType: 'blog',
+            visibility: 'public',
+            publishDate: new Date().toISOString(),
+            url: 'https://example.com/advanced',
+          },
+        ],
+      });
 
       render(<SearchPage />);
 
-      // Wait for component to load saved searches from localStorage
+      const advancedToggle = screen.getByLabelText(/advanced operators/i);
+      await user.click(advancedToggle);
+
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'advanced query');
+
+      const searchButton = screen.getAllByRole('button', { name: /search/i })[0];
+      await user.click(searchButton);
+
+      await waitFor(() => {
+        expect(mockedApiClient.advancedSearch).toHaveBeenCalledWith(
+          expect.objectContaining({ query: 'advanced query' })
+        );
+      });
+    });
+
+    it('should load saved search when clicked', async () => {
+      const user = userEvent.setup();
+      mockedApiClient.getSavedSearches.mockResolvedValueOnce({
+        searches: [
+          {
+            id: '1',
+            userId: 'user-1',
+            name: 'lambda',
+            query: 'lambda',
+            filters: { contentTypes: ['blog'], __sortBy: 'relevance' },
+            isPublic: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        count: 1,
+      });
+
+      render(<SearchPage />);
+
       await waitFor(() => {
         const savedSearchesButton = screen.getByText(/saved searches/i);
         expect(savedSearchesButton).toBeInTheDocument();
@@ -766,7 +1079,7 @@ describe('Sort Options', () => {
 
       // Wait for search to be performed when saved search is loaded
       await waitFor(() => {
-        expect(apiClient.search).toHaveBeenCalledWith(
+        expect(mockedApiClient.search).toHaveBeenCalledWith(
           expect.objectContaining({
             q: 'lambda',
             filters: expect.objectContaining({
@@ -777,11 +1090,23 @@ describe('Sort Options', () => {
       });
     });
 
-    it('should delete saved searches from storage', async () => {
+    it('should delete saved searches via API', async () => {
       const user = userEvent.setup();
-      localStorageMock.setItem('aws_community_saved_searches', JSON.stringify([
-        { id: 'delete-me', query: 'obsolete', filters: {}, sortBy: 'relevance', savedAt: Date.now() },
-      ]));
+      mockedApiClient.getSavedSearches.mockResolvedValueOnce({
+        searches: [
+          {
+            id: 'delete-me',
+            userId: 'user-1',
+            name: 'obsolete',
+            query: 'obsolete',
+            filters: { __sortBy: 'relevance' },
+            isPublic: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        count: 1,
+      });
 
       render(<SearchPage />);
 
@@ -795,8 +1120,7 @@ describe('Sort Options', () => {
       await user.click(deleteButton);
 
       await waitFor(() => {
-        const stored = JSON.parse(localStorageMock.getItem('aws_community_saved_searches') || '[]');
-        expect(stored).toHaveLength(0);
+        expect(mockedApiClient.deleteSavedSearch).toHaveBeenCalledWith('delete-me');
       });
     });
   });
@@ -1686,4 +2010,26 @@ describe('Sort Options', () => {
       });
     });
   });
+});
+const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
+
+// Mock localStorage for search history tests
+const localStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: (key: string) => store[key] || null,
+    setItem: (key: string, value: string) => {
+      store[key] = value.toString();
+    },
+    removeItem: (key: string) => {
+      delete store[key];
+    },
+    clear: () => {
+      store = {};
+    },
+  };
+})();
+
+Object.defineProperty(window, 'localStorage', {
+  value: localStorageMock,
 });

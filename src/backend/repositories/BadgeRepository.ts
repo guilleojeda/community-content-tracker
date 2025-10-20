@@ -351,20 +351,32 @@ export class BadgeRepository extends BaseRepository {
    */
   private async performBulkAward(badges: BadgeCreateData[]): Promise<Badge[]> {
     const results: Badge[] = [];
+    const insertedIds: string[] = [];
 
-    for (const badgeData of badges) {
-      // Check if user already has this badge type
-      const hasBadge = await this.userHasBadge(badgeData.userId, badgeData.badgeType);
-      if (!hasBadge) {
-        const badge = await this.create({
-          ...badgeData,
-          awardedAt: new Date(),
-        });
-        results.push(badge);
+    try {
+      for (const badgeData of badges) {
+        const hasBadge = await this.userHasBadge(badgeData.userId, badgeData.badgeType);
+        if (!hasBadge) {
+          const badge = await this.create({
+            ...badgeData,
+            awardedAt: new Date(),
+          });
+          results.push(badge);
+          insertedIds.push(badge.id);
+        }
       }
-    }
 
-    return results;
+      return results;
+    } catch (error) {
+      if (insertedIds.length > 0) {
+        const placeholders = insertedIds.map((_, index) => `$${index + 1}`).join(', ');
+        await this.executeQuery(
+          `DELETE FROM ${this.escapeIdentifier(this.tableName)} WHERE id IN (${placeholders})`,
+          insertedIds
+        ).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   /**

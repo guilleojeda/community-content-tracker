@@ -193,6 +193,18 @@ export default function DashboardPage() {
             <h3 className="text-gray-500 text-sm font-medium">Podcasts</h3>
             <p className="text-3xl font-bold mt-2">{contentByType[ContentType.PODCAST] || 0}</p>
           </div>
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-gray-500 text-sm font-medium">Analytics</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              Explore time series charts, top tags, and export-ready performance data.
+            </p>
+            <Link
+              href="/dashboard/analytics"
+              className="mt-4 inline-flex items-center rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+            >
+              Open Analytics Dashboard
+            </Link>
+          </div>
         </div>
       </div>
 

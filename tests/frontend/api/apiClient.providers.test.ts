@@ -152,4 +152,25 @@ describe('API client providers', () => {
     const sharedAgain = module.getPublicApiClient();
     expect(shared).toBe(sharedAgain);
   });
+
+  it('default error handler logs errors in non-production environments', async () => {
+    const module = await import('@/api/client');
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      headers: {
+        get: () => 'application/json',
+      },
+      json: async () => ({
+        error: { code: 'ERR_TEST', message: 'boom' },
+      }),
+    });
+
+    const client = module.getAuthenticatedApiClient();
+    await expect((client as any).getStats()).rejects.toThrow('boom');
+
+    expect(consoleSpy).toHaveBeenCalledWith('API client error', { code: 'ERR_TEST', message: 'boom' });
+    consoleSpy.mockRestore();
+  });
 });

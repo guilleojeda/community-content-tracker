@@ -16,8 +16,8 @@ export interface PublicApiStackProps extends cdk.StackProps {
  * These are Sprint 5 endpoints that don't require authentication
  */
 export class PublicApiStack extends cdk.Stack {
-  public readonly searchFunction: lambda.IFunction;
-  public readonly statsFunction: lambda.IFunction;
+  public readonly searchFunction: lambda.Function;
+  public readonly statsFunction: lambda.Function;
 
   constructor(scope: Construct, id: string, props: PublicApiStackProps) {
     super(scope, id, props);
@@ -55,7 +55,6 @@ export class PublicApiStack extends cdk.Stack {
       },
       description: 'Search endpoint with semantic and keyword search',
       tracing: enableTracing ? lambda.Tracing.ACTIVE : lambda.Tracing.DISABLED,
-      logRetention: logs.RetentionDays.ONE_WEEK,
     });
 
     // Stats Lambda Function
@@ -71,7 +70,18 @@ export class PublicApiStack extends cdk.Stack {
       environment: databaseConfig,
       description: 'Platform statistics endpoint',
       tracing: enableTracing ? lambda.Tracing.ACTIVE : lambda.Tracing.DISABLED,
-      logRetention: logs.RetentionDays.ONE_WEEK,
+    });
+
+    new logs.LogRetention(this, 'SearchFunctionRetention', {
+      logGroupName: this.searchFunction.logGroup.logGroupName,
+      retention: logs.RetentionDays.ONE_WEEK,
+      logGroupRegion: this.region,
+    });
+
+    new logs.LogRetention(this, 'StatsFunctionRetention', {
+      logGroupName: this.statsFunction.logGroup.logGroupName,
+      retention: logs.RetentionDays.ONE_WEEK,
+      logGroupRegion: this.region,
     });
 
     // Grant Bedrock permissions to search function

@@ -33,7 +33,7 @@ done
 DATABASE_URL="${DATABASE_URL:-postgresql://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}}"
 echo "Running migrations using ${DATABASE_URL}"
 
-(cd "${ROOT_DIR}" && DATABASE_URL="${DATABASE_URL}" npm run db:migrate --workspace=src/backend)
+(cd "${ROOT_DIR}/src/backend" && DATABASE_URL="${DATABASE_URL}" npm run db:migrate)
 
 if [[ "${KEEP_DB:-0}" == "1" ]]; then
   trap - EXIT

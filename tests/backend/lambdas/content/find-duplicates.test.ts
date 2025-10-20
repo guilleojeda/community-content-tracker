@@ -13,7 +13,15 @@ describe('Find Duplicates Lambda Handler', () => {
     pool = setup.pool;
 
     // Ensure pg_trgm extension is installed
-    await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    try {
+      await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    } catch (error) {
+      if (process.env.TEST_DB_INMEMORY === 'true') {
+        console.warn('pg_trgm extension unavailable in in-memory database, continuing without it.');
+      } else {
+        throw error;
+      }
+    }
   });
 
   afterAll(async () => {
@@ -150,7 +158,7 @@ describe('Find Duplicates Lambda Handler', () => {
 
       expect(result.statusCode).toBe(401);
       const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('UNAUTHORIZED');
+      expect(body.error.code).toBe('AUTH_REQUIRED');
     });
 
     it('should return 404 if user does not exist', async () => {

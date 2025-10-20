@@ -19,6 +19,17 @@ export interface ApiGatewayStackProps extends cdk.StackProps {
   statsLambda?: lambda.IFunction;
   environment?: string;
   enableTracing?: boolean;
+  adminDashboardLambda: lambda.IFunction;
+  adminUserManagementLambda: lambda.IFunction;
+  adminBadgesLambda: lambda.IFunction;
+  adminModerationLambda: lambda.IFunction;
+  adminAuditLogLambda: lambda.IFunction;
+  analyticsTrackLambda: lambda.IFunction;
+  analyticsUserLambda: lambda.IFunction;
+  analyticsExportLambda: lambda.IFunction;
+  exportCsvLambda: lambda.IFunction;
+  exportHistoryLambda: lambda.IFunction;
+  contentFindDuplicatesLambda: lambda.IFunction;
 }
 
 export class ApiGatewayStack extends cdk.Stack {
@@ -427,6 +438,131 @@ export class ApiGatewayStack extends cdk.Stack {
         { statusCode: '404', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
       ],
     });
+
+    const authorizerInstance = this.createAuthorizerIfNeeded();
+
+    const defaultProtectedResponses: apigateway.MethodResponse[] = [
+      { statusCode: '200' },
+      { statusCode: '400' },
+      { statusCode: '401' },
+      { statusCode: '403' },
+      { statusCode: '404' },
+      { statusCode: '500' },
+    ];
+
+    const protectedOptions = (overrides?: Partial<apigateway.MethodOptions>): apigateway.MethodOptions => ({
+      authorizationType: apigateway.AuthorizationType.CUSTOM,
+      authorizer: authorizerInstance,
+      methodResponses: overrides?.methodResponses ?? defaultProtectedResponses,
+      ...overrides,
+    });
+
+    const adminResource = this.api.root.addResource('admin');
+    const adminDashboardIntegration = new apigateway.LambdaIntegration(props.adminDashboardLambda, {
+      proxy: true,
+    });
+
+    const dashboardResource = adminResource.addResource('dashboard');
+    dashboardResource.addResource('stats').addMethod('GET', adminDashboardIntegration, protectedOptions());
+    dashboardResource.addResource('system-health').addMethod('GET', adminDashboardIntegration, protectedOptions());
+
+    const adminUsersResource = adminResource.addResource('users');
+    const adminUserIntegration = new apigateway.LambdaIntegration(props.adminUserManagementLambda, { proxy: true });
+    adminUsersResource.addMethod('GET', adminUserIntegration, protectedOptions());
+    adminUsersResource.addResource('export').addMethod('POST', adminUserIntegration, protectedOptions());
+
+    const adminUserIdResource = adminUsersResource.addResource('{id}');
+    adminUserIdResource.addMethod('GET', adminUserIntegration, protectedOptions());
+    adminUserIdResource.addResource('aws-employee').addMethod(
+      'PUT',
+      new apigateway.LambdaIntegration(props.adminBadgesLambda, { proxy: true }),
+      protectedOptions()
+    );
+
+    const adminBadgesResource = adminResource.addResource('badges');
+    const adminBadgesIntegration = new apigateway.LambdaIntegration(props.adminBadgesLambda, { proxy: true });
+    adminBadgesResource.addMethod('POST', adminBadgesIntegration, protectedOptions());
+    adminBadgesResource.addMethod('DELETE', adminBadgesIntegration, protectedOptions());
+    adminBadgesResource.addResource('bulk').addMethod('POST', adminBadgesIntegration, protectedOptions());
+    adminBadgesResource
+      .addResource('history')
+      .addResource('{userId}')
+      .addMethod('GET', adminBadgesIntegration, protectedOptions());
+
+    adminResource
+      .addResource('audit-log')
+      .addMethod(
+        'GET',
+        new apigateway.LambdaIntegration(props.adminAuditLogLambda, { proxy: true }),
+        protectedOptions()
+      );
+
+    const adminContentResource = adminResource.addResource('content');
+    const adminModerationIntegration = new apigateway.LambdaIntegration(props.adminModerationLambda, { proxy: true });
+    adminContentResource.addResource('flagged').addMethod('GET', adminModerationIntegration, protectedOptions());
+    const adminContentIdResource = adminContentResource.addResource('{id}');
+    adminContentIdResource.addMethod('DELETE', adminModerationIntegration, protectedOptions());
+    adminContentIdResource.addResource('flag').addMethod('PUT', adminModerationIntegration, protectedOptions());
+    adminContentIdResource.addResource('moderate').addMethod('PUT', adminModerationIntegration, protectedOptions());
+
+    const analyticsResource = this.api.root.addResource('analytics');
+    analyticsResource
+      .addResource('track')
+      .addMethod(
+        'POST',
+        new apigateway.LambdaIntegration(props.analyticsTrackLambda, { proxy: true }),
+        {
+          authorizationType: apigateway.AuthorizationType.NONE,
+          methodResponses: [{ statusCode: '200' }, { statusCode: '400' }, { statusCode: '500' }],
+        }
+      );
+
+    const analyticsUserResource = analyticsResource.addResource('user');
+    analyticsUserResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(props.analyticsUserLambda, { proxy: true }),
+      protectedOptions()
+    );
+
+    analyticsResource
+      .addResource('export')
+      .addMethod(
+        'POST',
+        new apigateway.LambdaIntegration(props.analyticsExportLambda, { proxy: true }),
+        protectedOptions({
+          methodResponses: [
+            { statusCode: '200' },
+            { statusCode: '401' },
+            { statusCode: '500' },
+          ],
+        })
+      );
+
+    const exportResource = this.api.root.addResource('export');
+    exportResource.addResource('csv').addMethod(
+      'POST',
+      new apigateway.LambdaIntegration(props.exportCsvLambda, { proxy: true }),
+      protectedOptions({
+        methodResponses: [
+          { statusCode: '200' },
+          { statusCode: '401' },
+          { statusCode: '500' },
+        ],
+      })
+    );
+
+    exportResource.addResource('history').addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(props.exportHistoryLambda, { proxy: true }),
+      protectedOptions()
+    );
+
+    const contentResource = this.api.root.addResource('content');
+    contentResource.addResource('duplicates').addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(props.contentFindDuplicatesLambda, { proxy: true }),
+      protectedOptions()
+    );
 
     // Outputs
     new cdk.CfnOutput(this, 'ApiEndpoint', {

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient } from '@/api/client';
+import { downloadBlob } from '@/utils/download';
 import { BadgeType, ContentType, Visibility, SearchFilters } from '@shared/types';
 import FilterSidebar from './FilterSidebar';
 import SearchBar from './SearchBar';
@@ -33,6 +34,10 @@ export default function AuthenticatedSearchPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
   const resultsPerPage = 10;
+  const [useAdvanced, setUseAdvanced] = useState(false);
+  const [searchWithinResults, setSearchWithinResults] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [searchMessage, setSearchMessage] = useState<string | null>(null);
 
   // Custom hooks for history and saved searches
   const { addToHistory, getHistory, clearHistory } = useSearchHistory();
@@ -87,12 +92,14 @@ export default function AuthenticatedSearchPage() {
     const urlFilters = parseFiltersFromUrl(searchParams);
     const urlSort = searchParams.get('sortBy') as 'relevance' | 'date' | null;
     const page = searchParams.get('page');
+    const mode = searchParams.get('mode');
 
     // Set state from URL
     if (q) setQuery(q);
     if (Object.keys(urlFilters).length > 0) setFilters(urlFilters);
     if (urlSort) setSortBy(urlSort);
     if (page) setCurrentPage(parseInt(page, 10));
+    if (mode === 'advanced') setUseAdvanced(true);
 
     // Perform search if query exists
     if (q) {
@@ -104,59 +111,115 @@ export default function AuthenticatedSearchPage() {
   const performSearch = useCallback(async (params: SearchParams) => {
     setLoading(true);
     setError(null);
+    setSearchMessage(null);
 
     try {
       const { q, filters: searchFilters, sortBy: sort } = params;
       const offset = params.offset ?? 0;
+      let normalized: ApiSearchResponse;
 
-      // Build API request with proper types
-      const apiParams: {
-        q: string;
-        limit: number;
-        offset: number;
-        filters?: SearchFilters;
-        sortBy?: string;
-      } = {
-        q,
-        limit: resultsPerPage,
-        offset,
-      };
+      if (useAdvanced || searchWithinResults) {
+        const withinIds =
+          searchWithinResults && results ? results.items.map(item => item.id) : undefined;
 
-      if (searchFilters) {
-        apiParams.filters = searchFilters;
+        const advanced = await apiClient.advancedSearch({
+          query: q,
+          withinIds,
+          limit: resultsPerPage,
+        });
+
+        const mappedItems: ApiSearchResponse['items'] = advanced.results.map(result => {
+          const metrics: Record<string, unknown> =
+            (result.metrics as Record<string, unknown> | undefined) ?? {};
+
+          return {
+            id: result.id,
+            userId: result.userId,
+            title: result.title,
+            description: result.description ?? '',
+            contentType: result.contentType ?? ContentType.BLOG,
+            visibility: result.visibility ?? Visibility.PUBLIC,
+            publishDate: result.publishDate ?? undefined,
+            captureDate: result.captureDate ?? undefined,
+            metrics,
+            tags: Array.isArray(result.tags) ? result.tags : [],
+            isClaimed: result.isClaimed ?? true,
+            originalAuthor: result.originalAuthor ?? undefined,
+            urls: result.url
+              ? [{ id: `${result.id}-primary-url`, url: result.url }]
+              : [],
+            createdAt: result.createdAt,
+            updatedAt: result.updatedAt,
+          } satisfies ApiSearchResponse['items'][number];
+        });
+
+        normalized = {
+          items: mappedItems,
+          total: advanced.count ?? mappedItems.length,
+          limit: resultsPerPage,
+          offset,
+        };
+      } else {
+        const apiParams: {
+          q: string;
+          limit: number;
+          offset: number;
+          filters?: SearchFilters;
+          sortBy?: string;
+        } = {
+          q,
+          limit: resultsPerPage,
+          offset,
+        };
+
+        if (searchFilters) {
+          apiParams.filters = searchFilters;
+        }
+
+        if (sort && sort !== 'relevance') {
+          apiParams.sortBy = sort;
+        }
+
+        const data = await apiClient.search(apiParams);
+        const raw = data as unknown as {
+          items?: ApiSearchResponse['items'];
+          results?: ApiSearchResponse['items'];
+          content?: ApiSearchResponse['items'];
+          total?: number;
+          limit?: number;
+          offset?: number;
+        };
+
+        const normalizedItems: ApiSearchResponse['items'] =
+          raw.items ??
+          raw.results ??
+          raw.content ??
+          ([] as ApiSearchResponse['items']);
+
+        normalized = {
+          items: normalizedItems,
+          total: raw.total ?? normalizedItems.length,
+          limit: raw.limit ?? resultsPerPage,
+          offset: raw.offset ?? offset,
+        };
       }
-
-      if (sort && sort !== 'relevance') {
-        apiParams.sortBy = sort;
-      }
-
-      const data = await apiClient.search(apiParams);
-      const raw = data as unknown as {
-        items?: ApiSearchResponse['items'];
-        results?: ApiSearchResponse['items'];
-        content?: ApiSearchResponse['items'];
-        total?: number;
-        limit?: number;
-        offset?: number;
-      };
-
-      const normalizedItems: ApiSearchResponse['items'] =
-        raw.items ??
-        raw.results ??
-        raw.content ??
-        ([] as ApiSearchResponse['items']);
-
-      const normalized: ApiSearchResponse = {
-        items: normalizedItems,
-        total: raw.total ?? normalizedItems.length,
-        limit: raw.limit ?? resultsPerPage,
-        offset: raw.offset ?? offset,
-      };
 
       setResults(normalized);
 
       // Add to search history
       addToHistory({ query: q, filters: searchFilters || {}, timestamp: Date.now() });
+
+      apiClient
+        .trackAnalyticsEvents({
+          eventType: 'search',
+          metadata: {
+            query: q,
+            resultCount: normalized.total,
+            advanced: useAdvanced || searchWithinResults,
+            filters: searchFilters,
+          },
+        })
+        .catch(() => {});
 
       // Update URL with all search parameters
       const urlParams = new URLSearchParams({ q });
@@ -193,6 +256,12 @@ export default function AuthenticatedSearchPage() {
         urlParams.set('page', String(Math.floor(offset / resultsPerPage) + 1));
       }
 
+      if (useAdvanced) {
+        urlParams.set('mode', 'advanced');
+      } else {
+        urlParams.delete('mode');
+      }
+
       window.history.replaceState({}, '', `?${urlParams.toString()}`);
     } catch (err) {
       setError('Failed to perform search. Please try again.');
@@ -200,7 +269,7 @@ export default function AuthenticatedSearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [addToHistory, resultsPerPage]);
+  }, [addToHistory, filters, resultsPerPage, useAdvanced, searchWithinResults, results]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -233,23 +302,63 @@ export default function AuthenticatedSearchPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleSaveSearch = () => {
-    if (query.trim()) {
-      saveSearch({ query, filters, sortBy });
+  const handleSaveSearch = async () => {
+    if (!query.trim()) {
+      return;
+    }
+    const result = await saveSearch({ query, filters, sortBy });
+    if (result) {
+      setSearchMessage('Search saved successfully.');
     }
   };
 
-  const handleLoadSavedSearch = (searchId: string) => {
-    const savedSearch = loadSearch(searchId);
-    if (savedSearch) {
-      setQuery(savedSearch.query);
-      setFilters(savedSearch.filters || {});
-      setSortBy(savedSearch.sortBy || 'relevance');
-      performSearch({
-        q: savedSearch.query,
-        filters: savedSearch.filters,
-        sortBy: savedSearch.sortBy,
-      });
+  const handleLoadSavedSearch = async (searchId: string) => {
+    const savedSearch = await loadSearch(searchId);
+    if (!savedSearch) {
+      return;
+    }
+
+    const rawFilters = (savedSearch.filters ?? {}) as Record<string, unknown>;
+    const { __sortBy, ...restFilters } = rawFilters;
+    const parsedSort = (__sortBy === 'date' ? 'date' : 'relevance') as 'relevance' | 'date';
+
+    setQuery(savedSearch.query);
+    setFilters(restFilters as SearchFilters);
+    setSortBy(parsedSort);
+    performSearch({
+      q: savedSearch.query,
+      filters: restFilters as SearchFilters,
+      sortBy: parsedSort,
+    });
+  };
+
+  const handleExportCsv = async () => {
+    if (!query.trim()) {
+      setSearchMessage('Enter a query before exporting results.');
+      return;
+    }
+
+    setExporting(true);
+    setSearchMessage(null);
+    try {
+      const withinIds = searchWithinResults && results ? results.items.map(item => item.id) : undefined;
+      const download = await apiClient.exportAdvancedSearchCsv({ query, withinIds });
+      downloadBlob(download.blob, download.filename ?? 'search-results.csv');
+      setSearchMessage('Search results exported to CSV.');
+      apiClient
+        .trackAnalyticsEvents({
+          eventType: 'export',
+          metadata: {
+            type: 'search_results',
+            query,
+            withFilters: Boolean(Object.keys(filters).length),
+          },
+        })
+        .catch(() => {});
+    } catch (err) {
+      setError('Failed to export search results.');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -290,14 +399,23 @@ export default function AuthenticatedSearchPage() {
           onSearch={handleSearch}
           loading={loading}
           searchHistory={getHistory()}
-          savedSearches={getSavedSearches().map(s => ({
-            ...s,
-            filters: s.filters || {},
-            sortBy: s.sortBy || 'relevance'
-          }))}
+          savedSearches={getSavedSearches().map(s => {
+            const rawFilters = (s.filters ?? {}) as Record<string, unknown>;
+            const { __sortBy, ...restFilters } = rawFilters;
+            return {
+              id: s.id,
+              query: s.query,
+              filters: restFilters as SearchFilters,
+              sortBy: (__sortBy === 'date' ? 'date' : 'relevance') as 'relevance' | 'date',
+            };
+          })}
           onClearHistory={clearHistory}
-          onLoadSavedSearch={handleLoadSavedSearch}
-          onDeleteSavedSearch={deleteSavedSearch}
+          onLoadSavedSearch={(id) => {
+            void handleLoadSavedSearch(id);
+          }}
+          onDeleteSavedSearch={(id) => {
+            void deleteSavedSearch(id);
+          }}
           onFetchSuggestions={fetchSuggestions}
         />
 
@@ -327,31 +445,70 @@ export default function AuthenticatedSearchPage() {
           {/* Main Content */}
           <div className="flex-1">
             {/* Toolbar */}
-            <div className="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <label htmlFor="sort-select" className="text-sm font-medium text-gray-700">
-                  Sort by:
-                </label>
-                <select
-                  id="sort-select"
-                  value={sortBy}
-                  onChange={(e) => handleSortChange(e.target.value as 'relevance' | 'date')}
-                  className="input-field"
-                  aria-label="Sort by"
-                >
-                  <option value="relevance">Relevance</option>
-                  <option value="date">Date (Newest First)</option>
-                </select>
+            <div className="bg-white p-4 rounded-lg shadow mb-6 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <label htmlFor="sort-select" className="text-sm font-medium text-gray-700">
+                    Sort by:
+                  </label>
+                  <select
+                    id="sort-select"
+                    value={sortBy}
+                    onChange={(e) => handleSortChange(e.target.value as 'relevance' | 'date')}
+                    className="input-field"
+                    aria-label="Sort by"
+                  >
+                    <option value="relevance">Relevance</option>
+                    <option value="date">Date (Newest First)</option>
+                  </select>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex items-center text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500"
+                      checked={useAdvanced}
+                      onChange={(e) => setUseAdvanced(e.target.checked)}
+                    />
+                    Advanced operators
+                  </label>
+                  <label className="flex items-center text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500"
+                      checked={searchWithinResults}
+                      onChange={(e) => setSearchWithinResults(e.target.checked)}
+                      disabled={!results || results.items.length === 0}
+                    />
+                    Search within results
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleExportCsv}
+                    className="btn-secondary"
+                    disabled={exporting}
+                  >
+                    Export CSV
+                  </button>
+                  <button
+                    onClick={handleSaveSearch}
+                    className="btn-secondary"
+                    disabled={!query.trim()}
+                    aria-label="Save search"
+                  >
+                    Save Search
+                  </button>
+                </div>
               </div>
-
-              <button
-                onClick={handleSaveSearch}
-                className="btn-secondary"
-                disabled={!query.trim()}
-                aria-label="Save search"
-              >
-                Save Search
-              </button>
+              <p className="text-xs text-gray-500">
+                Use boolean operators (AND, OR, NOT), exact phrases with quotes, wildcards (*), and save reusable
+                queries. Enable "search within results" to refine using the current result set.
+              </p>
+              {searchMessage && (
+                <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  {searchMessage}
+                </div>
+              )}
             </div>
 
             {/* Error Message */}

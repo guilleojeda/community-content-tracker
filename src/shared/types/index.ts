@@ -305,3 +305,81 @@ export interface Badge {
     dateRange?: { start: Date; end: Date };
     tags?: string[];
   }
+
+  // Admin Dashboard Types (Sprint 7 - Task 7.1)
+  export interface RecentRegistration {
+    id: string;
+    username: string;
+    email: string;
+    createdAt: Date;
+  }
+
+  export interface PendingBadgeCandidate {
+    id: string;
+    username: string;
+    email: string;
+    contentCount: number;
+    createdAt: Date;
+  }
+
+  export interface QuickActions {
+    flaggedContentCount: number;
+    recentAdminActions: number;
+    usersWithoutBadges: number;
+    contentNeedingReview: number;
+  }
+
+  export interface AdminDashboardStats {
+    totalUsers: number;
+    awsEmployees: number;
+    usersByBadgeType: Record<BadgeType, number>;
+    totalContent: number;
+    recentRegistrations: RecentRegistration[];
+    pendingBadgeCandidates: PendingBadgeCandidate[];
+    quickActions: QuickActions;
+  }
+
+  export interface ConnectionPoolMetrics {
+    totalConnections: number;
+    activeConnections: number;
+    idleConnections: number;
+    waitingConnections: number;
+  }
+
+  export interface SystemHealthStatus {
+    database: 'healthy' | 'unhealthy';
+    connectionPool?: ConnectionPoolMetrics;
+    queryPerformance?: {
+      lastQueryMs: number;
+      avgQueryMs?: number;
+    };
+    lambda?: {
+      memoryUsedMB: number;
+      memoryLimitMB: number;
+    };
+    timestamp: string;
+    error?: string;
+  }
+
+  export type ExportHistoryType = 'program' | 'analytics' | 'user_list';
+
+  export interface ExportHistoryEntry {
+    id: string;
+    exportType: ExportHistoryType;
+    exportFormat: string | null;
+    rowCount: number | null;
+    createdAt: Date;
+    parameters: {
+      programType?: string | null;
+      startDate?: string | null;
+      endDate?: string | null;
+      groupBy?: string | null;
+    };
+  }
+
+  export interface ExportHistoryResponse {
+    history: ExportHistoryEntry[];
+    total: number;
+    limit: number;
+    offset: number;
+  }

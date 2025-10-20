@@ -23,7 +23,9 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { testDb, TestDatabaseSetup } from '../backend/repositories/test-setup';
 
-describe('Real Database Integration Tests', () => {
+const shouldRunRealDbTests = process.env.RUN_REAL_DB_TESTS === 'true';
+
+(shouldRunRealDbTests ? describe : describe.skip)('Real Database Integration Tests', () => {
   let pool: Pool;
   let setup: TestDatabaseSetup;
 

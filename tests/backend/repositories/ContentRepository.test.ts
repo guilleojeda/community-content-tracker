@@ -14,6 +14,12 @@ describe('ContentRepository', () => {
     const setup = await setupTestDatabase();
     pool = setup.pool;
     contentRepository = new ContentRepository(pool);
+
+    try {
+      await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    } catch (error) {
+      console.warn('pg_trgm extension unavailable in test environment, skipping.');
+    }
   });
 
   afterAll(async () => {
@@ -22,6 +28,7 @@ describe('ContentRepository', () => {
 
   beforeEach(async () => {
     await resetTestData();
+    await pool.query('ALTER TABLE content ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ');
 
     // Create test users
     const testUser = await createTestUser(pool, {
@@ -44,6 +51,36 @@ describe('ContentRepository', () => {
       isAwsEmployee: true,
     });
     awsEmployeeUserId = awsEmployee.id;
+  });
+
+  describe('identifier-based lookups and aggregations', () => {
+    it('should find content by ids including URLs', async () => {
+      const content = await createTestContent(pool, testUserId, { title: 'URL Article' });
+      await pool.query(
+        `INSERT INTO content_urls (content_id, url) VALUES ($1, $2)`,
+        [content.id, 'https://example.com/resource']
+      );
+
+      const results = await contentRepository.findByIds([content.id]);
+      expect(results).toHaveLength(1);
+      expect(results[0].urls).toHaveLength(1);
+      expect(results[0].urls[0].url).toBe('https://example.com/resource');
+    });
+
+    it('should return popular tags sorted by frequency', async () => {
+      if (process.env.TEST_DB_INMEMORY === 'true') {
+        return;
+      }
+      await createTestContent(pool, testUserId, { tags: ['aws', 'serverless'], visibility: 'public' });
+      await createTestContent(pool, adminUserId, { tags: ['aws'], visibility: 'public' });
+      await createTestContent(pool, awsEmployeeUserId, { tags: ['frontend'], visibility: 'public' });
+
+      const popular = await contentRepository.getPopularTags(2);
+      expect(popular).toEqual([
+        { tag: 'aws', count: 2 },
+        { tag: 'serverless', count: 1 },
+      ]);
+    });
   });
 
   describe('findByUserId', () => {
@@ -505,6 +542,212 @@ describe('ContentRepository', () => {
       });
 
       expect(updated).toBe(false);
+    });
+  });
+
+  describe('claiming and discovery helpers', () => {
+    it('should return unclaimed content and allow claiming', async () => {
+      const unclaimed = await createTestContent(pool, testUserId, {
+        title: 'Needs Owner',
+        isClaimed: false,
+      });
+      const alreadyClaimed = await createTestContent(pool, testUserId, {
+        title: 'Owned Content',
+        isClaimed: true,
+      });
+
+      const unclaimedResults = await contentRepository.findUnclaimedContent();
+      expect(unclaimedResults.map(c => c.id)).toContain(unclaimed.id);
+      expect(unclaimedResults.map(c => c.id)).not.toContain(alreadyClaimed.id);
+
+      const claimer = await createTestUser(pool, { username: 'claimer' });
+      const claimed = await contentRepository.claimContent(unclaimed.id, claimer.id);
+      expect(claimed).not.toBeNull();
+      expect(claimed?.userId).toBe(claimer.id);
+      expect(claimed?.isClaimed).toBe(true);
+
+      const bulkContent = await createTestContent(pool, testUserId, {
+        title: 'Bulk Claim',
+        isClaimed: false,
+      });
+      const results = await contentRepository.bulkClaimContent(
+        [bulkContent.id, alreadyClaimed.id],
+        claimer.id
+      );
+
+      const success = results.find(r => r.contentId === bulkContent.id);
+      const failure = results.find(r => r.contentId === alreadyClaimed.id);
+      expect(success?.success).toBe(true);
+      expect(failure?.success).toBe(false);
+      expect(failure?.error).toBe('Content not found or already claimed');
+    });
+
+    it('should find content by date range and similar tags', async () => {
+      const earlyContent = await createTestContent(pool, testUserId, {
+        title: 'Early Article',
+        visibility: 'public',
+      });
+      const recentContent = await createTestContent(pool, testUserId, {
+        title: 'Recent Article',
+        visibility: 'public',
+      });
+
+      await pool.query('UPDATE content SET publish_date = $1 WHERE id = $2', [
+        new Date('2020-01-01T00:00:00Z'),
+        earlyContent.id,
+      ]);
+      await pool.query('UPDATE content SET publish_date = $1 WHERE id = $2', [
+        new Date('2024-01-01T00:00:00Z'),
+        recentContent.id,
+      ]);
+
+      const results = await contentRepository.findByDateRange(
+        new Date('2023-01-01T00:00:00Z'),
+        new Date('2024-12-31T23:59:59Z')
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe(recentContent.id);
+
+      const taggedPrimary = await createTestContent(pool, testUserId, {
+        title: 'Lambda Primary',
+        tags: ['aws', 'lambda', 'serverless'],
+        visibility: 'public',
+      });
+      const similar = await createTestContent(pool, testUserId, {
+        title: 'Lambda Companion',
+        tags: ['lambda', 'tutorial'],
+        visibility: 'public',
+      });
+      await createTestContent(pool, testUserId, {
+        title: 'Different Topic',
+        tags: ['database'],
+        visibility: 'public',
+      });
+
+      const similarResults = await contentRepository.findSimilarContent(taggedPrimary.id, 5);
+      expect(similarResults.map(c => c.id)).toContain(similar.id);
+      expect(similarResults.map(c => c.id)).not.toContain(taggedPrimary.id);
+
+      const untaged = await createTestContent(pool, testUserId, {
+        title: 'No Tags',
+        tags: [],
+        visibility: 'public',
+      });
+      const emptySimilar = await contentRepository.findSimilarContent(untaged.id);
+      expect(emptySimilar).toEqual([]);
+    });
+  });
+
+  describe('findDuplicates', () => {
+    it('should detect title-based duplicates when scanning entire library', async () => {
+      const first = await createTestContent(pool, testUserId, {
+        title: 'AWS Lambda Deep Dive',
+        tags: ['aws', 'lambda'],
+        visibility: 'public',
+      });
+      const similarContent = await createTestContent(pool, testUserId, {
+        title: 'AWS Lambda deep dive tutorial',
+        tags: ['lambda'],
+        visibility: 'public',
+      });
+      await createTestContent(pool, testUserId, {
+        title: 'Completely Different Topic',
+        tags: ['other'],
+        visibility: 'public',
+      });
+
+      const duplicates = await contentRepository.findDuplicates(testUserId, 0.5, ['title']);
+
+      expect(duplicates).toHaveLength(1);
+      expect([first.id, similarContent.id]).toContain(duplicates[0].content.id);
+      expect(duplicates[0].matchedFields).toEqual(['title']);
+      expect(duplicates[0].similarity).toBeGreaterThanOrEqual(0.5);
+    });
+
+    it('should detect duplicates for a specific content when matching on tags', async () => {
+      const target = await createTestContent(pool, testUserId, {
+        title: 'Serverless Architecture Overview',
+        tags: ['serverless', 'aws', 'lambda'],
+        visibility: 'public',
+      });
+      const tagMatch = await createTestContent(pool, testUserId, {
+        title: 'Serverless Architecture Deep Dive',
+        tags: ['aws', 'lambda'],
+        visibility: 'public',
+      });
+      await createTestContent(pool, testUserId, {
+        title: 'Frontend Guide',
+        tags: ['react'],
+        visibility: 'public',
+      });
+
+      const duplicates = await contentRepository.findDuplicates(target.user_id, 0.3, ['tags'], target.id);
+
+      expect(duplicates).toHaveLength(1);
+      expect(duplicates[0].content.id).toBe(tagMatch.id);
+      expect(duplicates[0].matchedFields).toEqual(['tags']);
+      expect(duplicates[0].similarity).toBeGreaterThan(0);
+    });
+
+    it('should detect URL-based duplicates when URLs overlap', async () => {
+      const url = 'https://example.com/shared-resource';
+      const first = await createTestContent(pool, testUserId, {
+        title: 'Original Post',
+        tags: ['aws'],
+        visibility: 'public',
+      });
+      await pool.query(
+        'INSERT INTO content_urls (content_id, url) VALUES ($1, $2)',
+        [first.id, url]
+      );
+
+      const second = await createTestContent(pool, testUserId, {
+        title: 'Cross-posted Article',
+        tags: ['aws'],
+        visibility: 'public',
+      });
+      await pool.query(
+        'INSERT INTO content_urls (content_id, url) VALUES ($1, $2)',
+        [second.id, url]
+      );
+
+      await createTestContent(pool, testUserId, {
+        title: 'Different URL Article',
+        tags: ['aws'],
+        visibility: 'public',
+      });
+
+      const duplicates = await contentRepository.findDuplicates(testUserId, 0.1, ['urls']);
+
+      expect(duplicates).toHaveLength(1);
+      expect([first.id, second.id]).toContain(duplicates[0].content.id);
+      expect(duplicates[0].matchedFields).toEqual(['urls']);
+      expect(duplicates[0].similarity).toBeGreaterThan(0);
+    });
+
+    it('should return an empty array when only one piece of content exists', async () => {
+      await createTestContent(pool, testUserId, {
+        title: 'Solo Article',
+        visibility: 'public',
+      });
+
+      const duplicates = await contentRepository.findDuplicates(testUserId);
+
+      expect(duplicates).toEqual([]);
+    });
+
+    it('should throw when a specific content ID does not exist', async () => {
+      await createTestContent(pool, testUserId, { title: 'Existing Content A' });
+      await createTestContent(pool, testUserId, { title: 'Existing Content B' });
+
+      await expect(
+        contentRepository.findDuplicates(
+          testUserId,
+          0.5,
+          ['title'],
+          '00000000-0000-0000-0000-000000000000'
+        )
+      ).rejects.toThrow('Content not found');
     });
   });
 

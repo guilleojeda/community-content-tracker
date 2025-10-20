@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { BaseRepository, FindAllOptions } from './BaseRepository';
-import { Content, ContentType, Visibility } from '@aws-community-hub/shared';
+import { BadgeType, Content, ContentType, Visibility } from '@aws-community-hub/shared';
 
 export interface ContentSearchOptions extends FindAllOptions {
   viewerId?: string | null;
@@ -134,37 +134,79 @@ export class ContentRepository extends BaseRepository {
     return transformed;
   }
 
-  /**
-   * Build visibility filter based on viewer permissions
-   */
-  private buildVisibilityFilter(viewerId?: string | null): { clause: string; params: any[] } {
-    if (!viewerId) {
-      // Anonymous users can only see public content
+  private async getViewerContext(viewerId: string): Promise<{
+    exists: boolean;
+    isAdmin: boolean;
+    isAwsEmployee: boolean;
+    hasCommunityBadge: boolean;
+  }> {
+    const userResult = await this.executeQuery(
+      `SELECT is_admin, is_aws_employee FROM users WHERE id = $1`,
+      [viewerId]
+    );
+
+    if (userResult.rows.length === 0) {
       return {
-        clause: 'AND c.visibility = $PARAM',
-        params: ['public'],
+        exists: false,
+        isAdmin: false,
+        isAwsEmployee: false,
+        hasCommunityBadge: false,
       };
     }
 
-    // For logged-in users, build complex visibility logic
+    const badgeResult = await this.executeQuery(
+      `SELECT badge_type FROM user_badges WHERE user_id = $1 AND is_active = true`,
+      [viewerId]
+    );
+    const communityBadges = new Set([
+      BadgeType.COMMUNITY_BUILDER,
+      BadgeType.HERO,
+      BadgeType.AMBASSADOR,
+      BadgeType.USER_GROUP_LEADER,
+    ]);
+
+    const hasCommunityBadge = badgeResult.rows.some((row: any) =>
+      communityBadges.has(row.badge_type as BadgeType)
+    );
+
+    const userRow = userResult.rows[0];
+    return {
+      exists: true,
+      isAdmin: userRow.is_admin === true,
+      isAwsEmployee: userRow.is_aws_employee === true,
+      hasCommunityBadge,
+    };
+  }
+
+  /**
+   * Build visibility filter based on viewer permissions
+   */
+  private async buildVisibilityFilter(viewerId?: string | null): Promise<{ clause: string; params: any[] }> {
+    if (!viewerId) {
+      return {
+        clause: 'AND c.visibility::text = $PARAM',
+        params: [Visibility.PUBLIC],
+      };
+    }
+
+    const context = await this.getViewerContext(viewerId);
+    const allowedVisibilities = new Set<Visibility>([Visibility.PUBLIC]);
+
+    if (context.isAwsEmployee || context.isAdmin) {
+      allowedVisibilities.add(Visibility.AWS_COMMUNITY);
+      allowedVisibilities.add(Visibility.AWS_ONLY);
+    } else if (context.hasCommunityBadge) {
+      allowedVisibilities.add(Visibility.AWS_COMMUNITY);
+    }
+
     return {
       clause: `
         AND (
-          c.visibility = 'public'
-          OR (c.visibility = 'aws_community' AND (
-            u_viewer.is_aws_employee = true
-            OR u_viewer.is_admin = true
-            OR EXISTS (
-              SELECT 1 FROM user_badges ub
-              WHERE ub.user_id = $PARAM
-              AND ub.badge_type IN ('community_builder', 'hero', 'ambassador', 'user_group_leader')
-            )
-          ))
-          OR (c.visibility = 'aws_only' AND (u_viewer.is_aws_employee = true OR u_viewer.is_admin = true))
-          OR (c.visibility = 'private' AND c.user_id = $PARAM)
+          c.user_id = $PARAM
+          OR c.visibility::text = ANY($PARAM::text[])
         )
       `,
-      params: [viewerId, viewerId],
+      params: [viewerId, Array.from(allowedVisibilities)],
     };
   }
 
@@ -176,7 +218,7 @@ export class ContentRepository extends BaseRepository {
     params: any[],
     viewerId?: string | null
   ): Promise<Content[]> {
-    const visibilityFilter = this.buildVisibilityFilter(viewerId);
+    const visibilityFilter = await this.buildVisibilityFilter(viewerId);
 
     // First, replace $VISIBILITY_FILTER with the clause
     let query = baseQuery.replace('$VISIBILITY_FILTER', visibilityFilter.clause);
@@ -190,7 +232,45 @@ export class ContentRepository extends BaseRepository {
     });
 
     const result = await this.executeQuery(query, currentParams);
-    return result.rows.map((row: any) => this.transformRow(row));
+    const rowsWithUrls = await this.attachUrls(result.rows);
+    return rowsWithUrls.map((row: any) => this.transformRow(row));
+  }
+
+  /**
+   * Attach associated URLs to content rows
+   */
+  private async attachUrls(rows: any[]): Promise<any[]> {
+    if (!rows || rows.length === 0) {
+      return [];
+    }
+
+    const contentIds = rows.map((row: any) => row.id);
+    const placeholders = contentIds.map((_, index) => `$${index + 1}`).join(', ');
+    const urlsResult = await this.executeQuery(
+      `
+        SELECT content_id, id, url
+        FROM content_urls
+        WHERE content_id IN (${placeholders})
+        ORDER BY created_at ASC
+      `,
+      contentIds
+    );
+
+    const urlsByContent = new Map<string, Array<{ id: string; url: string }>>();
+    urlsResult.rows.forEach((row: any) => {
+      if (!urlsByContent.has(row.content_id)) {
+        urlsByContent.set(row.content_id, []);
+      }
+      urlsByContent.get(row.content_id)!.push({
+        id: row.id,
+        url: row.url,
+      });
+    });
+
+    return rows.map(row => ({
+      ...row,
+      urls: urlsByContent.get(row.id) ?? [],
+    }));
   }
 
   /**
@@ -200,23 +280,14 @@ export class ContentRepository extends BaseRepository {
     const { viewerId } = options;
 
     const baseQuery = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
+      SELECT c.*
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      LEFT JOIN users u_viewer ON u_viewer.id = $2
       WHERE c.user_id = $1
       $VISIBILITY_FILTER
-      GROUP BY c.id
       ORDER BY c.created_at DESC
     `;
 
-    return this.executeContentQuery(baseQuery, [userId, viewerId], viewerId);
+    return this.executeContentQuery(baseQuery, [userId], viewerId);
   }
 
   /**
@@ -229,23 +300,14 @@ export class ContentRepository extends BaseRepository {
     const { viewerId, limit, offset, orderBy = 'created_at', orderDirection = 'DESC' } = options;
 
     let baseQuery = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
+      SELECT c.*
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      LEFT JOIN users u_viewer ON u_viewer.id = $2
       WHERE c.content_type = $1
       $VISIBILITY_FILTER
-      GROUP BY c.id
       ORDER BY ${this.escapeIdentifier(orderBy)} ${orderDirection}
     `;
 
-    const params: any[] = [contentType, viewerId];
+    const params: any[] = [contentType];
 
     if (limit) {
       baseQuery += ` LIMIT $${params.length + 1}`;
@@ -267,17 +329,9 @@ export class ContentRepository extends BaseRepository {
     const { limit, offset, orderBy = 'created_at', orderDirection = 'DESC' } = options;
 
     let query = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
+      SELECT c.*
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
       WHERE c.visibility = $1
-      GROUP BY c.id
       ORDER BY ${this.escapeIdentifier(orderBy)} ${orderDirection}
     `;
 
@@ -294,7 +348,8 @@ export class ContentRepository extends BaseRepository {
     }
 
     const result = await this.executeQuery(query, params);
-    return result.rows.map((row: any) => this.transformRow(row));
+    const rowsWithUrls = await this.attachUrls(result.rows);
+    return rowsWithUrls.map((row: any) => this.transformRow(row));
   }
 
   /**
@@ -322,58 +377,20 @@ export class ContentRepository extends BaseRepository {
     } = options;
 
     const searchTerm = `%${query.toLowerCase().replace(/[%_]/g, '\\$&')}%`;
-
-    // Build visibility check
-    let visibilityClause = '';
     const params: any[] = [searchTerm];
-    let paramIndex = 1;
-
-    if (!viewerId) {
-      // Anonymous users - only public content
-      visibilityClause = `AND c.visibility = 'public'`;
-    } else {
-      // Authenticated users - complex visibility logic
-      params.push(viewerId, viewerId);
-      visibilityClause = `
-        AND (
-          c.visibility = 'public'
-          OR (c.visibility = 'aws_community' AND (
-            u_viewer.is_aws_employee = true
-            OR u_viewer.is_admin = true
-            OR EXISTS (
-              SELECT 1 FROM user_badges ub
-              WHERE ub.user_id = $2
-              AND ub.badge_type IN ('community_builder', 'hero', 'ambassador', 'user_group_leader')
-            )
-          ))
-          OR (c.visibility = 'aws_only' AND (u_viewer.is_aws_employee = true OR u_viewer.is_admin = true))
-          OR (c.visibility = 'private' AND c.user_id = $3)
-        )
-      `;
-      paramIndex = 3;
-    }
+    let paramIndex = params.length;
 
     let baseQuery = `
       SELECT c.id, c.user_id, c.title, c.description, c.content_type, c.visibility,
         c.publish_date, c.capture_date, c.metrics, c.tags, c.embedding,
-        c.is_claimed, c.original_author, c.created_at, c.updated_at,
-        COALESCE(
-          (SELECT json_agg(json_build_object('id', cu.id::text, 'url', cu.url))
-           FROM content_urls cu
-           WHERE cu.content_id = c.id),
-          '[]'::json
-        ) as urls
+        c.is_claimed, c.original_author, c.created_at, c.updated_at
       FROM content c
-      ${viewerId ? 'LEFT JOIN users u_viewer ON u_viewer.id = $2' : ''}
       WHERE (
         LOWER(c.title) LIKE $1
         OR LOWER(c.description) LIKE $1
-        OR EXISTS (
-          SELECT 1 FROM unnest(c.tags) as tag
-          WHERE LOWER(tag) LIKE $1
-        )
+        OR LOWER(COALESCE(c.tags::text, '')) LIKE $1
       )
-      ${visibilityClause}
+      $VISIBILITY_FILTER
     `;
 
     // Apply content type filter
@@ -420,8 +437,7 @@ export class ContentRepository extends BaseRepository {
       params.push(offset);
     }
 
-    const result = await this.executeQuery(baseQuery, params);
-    return result.rows.map((row: any) => this.transformRow(row));
+    return this.executeContentQuery(baseQuery, params, viewerId);
   }
 
   /**
@@ -431,25 +447,16 @@ export class ContentRepository extends BaseRepository {
     const { viewerId, limit, offset, orderBy = 'created_at', orderDirection = 'DESC' } = options;
 
     const baseQuery = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
+      SELECT c.*
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      LEFT JOIN users u_viewer ON u_viewer.id = $1
       WHERE c.created_at >= NOW() - INTERVAL '${days} days'
       $VISIBILITY_FILTER
-      GROUP BY c.id
       ORDER BY ${this.escapeIdentifier(orderBy)} ${orderDirection}
       ${limit ? `LIMIT ${limit}` : ''}
       ${offset ? `OFFSET ${offset}` : ''}
     `;
 
-    return this.executeContentQuery(baseQuery, [viewerId], viewerId);
+    return this.executeContentQuery(baseQuery, [], viewerId);
   }
 
   /**
@@ -459,27 +466,17 @@ export class ContentRepository extends BaseRepository {
     const { viewerId, limit = 20, offset } = options;
 
     const baseQuery = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls,
-        COALESCE(ca.engagement_score, 0) as engagement_score
+      SELECT c.*, COALESCE(ca.engagement_score, 0) as engagement_score
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
       LEFT JOIN content_analytics ca ON c.id = ca.content_id
-      LEFT JOIN users u_viewer ON u_viewer.id = $1
       WHERE 1=1
       $VISIBILITY_FILTER
-      GROUP BY c.id, ca.engagement_score
       ORDER BY engagement_score DESC, c.created_at DESC
       ${limit ? `LIMIT ${limit}` : ''}
       ${offset ? `OFFSET ${offset}` : ''}
     `;
 
-    return this.executeContentQuery(baseQuery, [viewerId], viewerId);
+    return this.executeContentQuery(baseQuery, [], viewerId);
   }
 
   /**
@@ -492,28 +489,19 @@ export class ContentRepository extends BaseRepository {
 
     const { viewerId, limit, offset, orderBy = 'created_at', orderDirection = 'DESC' } = options;
 
-    const tagConditions = tags.map((_, index) => `c.tags && ARRAY[$${index + 2}]`).join(' OR ');
+    const tagConditions = tags.map((_, index) => `c.tags && ARRAY[$${index + 1}]`).join(' OR ');
 
     const baseQuery = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
+      SELECT c.*
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      LEFT JOIN users u_viewer ON u_viewer.id = $1
       WHERE (${tagConditions})
       $VISIBILITY_FILTER
-      GROUP BY c.id
       ORDER BY ${this.escapeIdentifier(orderBy)} ${orderDirection}
       ${limit ? `LIMIT ${limit}` : ''}
       ${offset ? `OFFSET ${offset}` : ''}
     `;
 
-    return this.executeContentQuery(baseQuery, [viewerId, ...tags], viewerId);
+    return this.executeContentQuery(baseQuery, [...tags], viewerId);
   }
 
   /**
@@ -699,21 +687,18 @@ export class ContentRepository extends BaseRepository {
    */
   async findById(id: string): Promise<Content | null> {
     const query = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
-      FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      WHERE c.id = $1
-      GROUP BY c.id
+      SELECT *
+      FROM content
+      WHERE id = $1
     `;
 
     const result = await this.executeQuery(query, [id]);
-    return result.rows.length > 0 ? this.transformRow(result.rows[0]) : null;
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const [rowWithUrls] = await this.attachUrls(result.rows);
+    return this.transformRow(rowWithUrls);
   }
 
   /**
@@ -766,25 +751,16 @@ export class ContentRepository extends BaseRepository {
     const { viewerId, limit, offset, orderBy = 'publish_date', orderDirection = 'DESC' } = options;
 
     const baseQuery = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
+      SELECT c.*
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      LEFT JOIN users u_viewer ON u_viewer.id = $3
       WHERE c.publish_date BETWEEN $1 AND $2
       $VISIBILITY_FILTER
-      GROUP BY c.id
       ORDER BY ${this.escapeIdentifier(orderBy)} ${orderDirection}
       ${limit ? `LIMIT ${limit}` : ''}
       ${offset ? `OFFSET ${offset}` : ''}
     `;
 
-    return this.executeContentQuery(baseQuery, [startDate, endDate, viewerId], viewerId);
+    return this.executeContentQuery(baseQuery, [startDate, endDate], viewerId);
   }
 
   /**
@@ -797,21 +773,14 @@ export class ContentRepository extends BaseRepository {
 
     const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
     const query = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
-      FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      WHERE c.id IN (${placeholders})
-      GROUP BY c.id
+      SELECT *
+      FROM content
+      WHERE id IN (${placeholders})
     `;
 
     const result = await this.executeQuery(query, ids);
-    return result.rows.map((row: any) => this.transformRow(row));
+    const rowsWithUrls = await this.attachUrls(result.rows);
+    return rowsWithUrls.map((row: any) => this.transformRow(row));
   }
 
   /**
@@ -821,25 +790,16 @@ export class ContentRepository extends BaseRepository {
     const { viewerId, limit, offset, orderBy = 'created_at', orderDirection = 'DESC' } = options;
 
     const baseQuery = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
+      SELECT c.*
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      LEFT JOIN users u_viewer ON u_viewer.id = $1
       WHERE c.is_claimed = false
       $VISIBILITY_FILTER
-      GROUP BY c.id
       ORDER BY ${this.escapeIdentifier(orderBy)} ${orderDirection}
       ${limit ? `LIMIT ${limit}` : ''}
       ${offset ? `OFFSET ${offset}` : ''}
     `;
 
-    return this.executeContentQuery(baseQuery, [viewerId], viewerId);
+    return this.executeContentQuery(baseQuery, [], viewerId);
   }
 
   /**
@@ -1157,24 +1117,22 @@ export class ContentRepository extends BaseRepository {
    */
   async findByUrl(url: string): Promise<Content | null> {
     const query = `
-      SELECT c.*,
-        COALESCE(
-          json_agg(
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls
-      FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
-      WHERE c.id IN (
+      SELECT *
+      FROM content
+      WHERE id IN (
         SELECT content_id FROM content_urls WHERE url = $1
       )
-      GROUP BY c.id
+      ORDER BY created_at DESC
       LIMIT 1
     `;
 
     const result = await this.executeQuery(query, [url]);
-    return result.rows.length > 0 ? this.transformRow(result.rows[0]) : null;
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const [rowWithUrls] = await this.attachUrls(result.rows);
+    return this.transformRow(rowWithUrls);
   }
 
   /**
@@ -1250,15 +1208,8 @@ export class ContentRepository extends BaseRepository {
     let query = `
       SELECT
         c.*,
-        COALESCE(
-          json_agg(DISTINCT
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls,
         1 - (c.embedding <=> $1::vector) as similarity
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
       WHERE c.embedding IS NOT NULL
         AND c.visibility = ANY($2::visibility_enum[])
     `;
@@ -1306,7 +1257,6 @@ export class ContentRepository extends BaseRepository {
     }
 
     query += `
-      GROUP BY c.id
       ORDER BY c.embedding <=> $1::vector
       LIMIT $${paramIndex}
       OFFSET $${paramIndex + 1}
@@ -1315,9 +1265,10 @@ export class ContentRepository extends BaseRepository {
     params.push(limit, offset);
 
     const result = await this.executeQuery(query, params);
-    return result.rows.map((row: any) => ({
+    const rowsWithUrls = await this.attachUrls(result.rows);
+    return rowsWithUrls.map((row: any) => ({
       ...this.transformRow(row),
-      similarity: parseFloat(row.similarity || '0')
+      similarity: row.similarity !== undefined ? Number(row.similarity) : undefined,
     }));
   }
 
@@ -1343,18 +1294,11 @@ export class ContentRepository extends BaseRepository {
     let query = `
       SELECT
         c.*,
-        COALESCE(
-          json_agg(DISTINCT
-            json_build_object('id', cu.id::text, 'url', cu.url)
-          ) FILTER (WHERE cu.url IS NOT NULL),
-          '[]'
-        )::json as urls,
         ts_rank(
           to_tsvector('english', c.title || ' ' || COALESCE(c.description, '')),
           plainto_tsquery('english', $1)
         ) as rank
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
       WHERE to_tsvector('english', c.title || ' ' || COALESCE(c.description, ''))
             @@ plainto_tsquery('english', $1)
         AND c.visibility = ANY($2::visibility_enum[])
@@ -1403,7 +1347,6 @@ export class ContentRepository extends BaseRepository {
     }
 
     query += `
-      GROUP BY c.id
       ORDER BY rank DESC, c.created_at DESC
       LIMIT $${paramIndex}
       OFFSET $${paramIndex + 1}
@@ -1412,9 +1355,10 @@ export class ContentRepository extends BaseRepository {
     params.push(limit, offset);
 
     const result = await this.executeQuery(query, params);
-    return result.rows.map((row: any) => ({
+    const rowsWithUrls = await this.attachUrls(result.rows);
+    return rowsWithUrls.map((row: any) => ({
       ...this.transformRow(row),
-      rank: parseFloat(row.rank || '0')
+      rank: row.rank !== undefined ? Number(row.rank) : undefined,
     }));
   }
 

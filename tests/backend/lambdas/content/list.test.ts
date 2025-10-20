@@ -609,7 +609,7 @@ describe('List Content Lambda Handler', () => {
         statusCode: 401,
         body: JSON.stringify({
           error: {
-            code: 'UNAUTHORIZED',
+            code: 'AUTH_REQUIRED',
             message: 'Authentication required',
           },
         }),
@@ -622,7 +622,7 @@ describe('List Content Lambda Handler', () => {
 
       expect(result.statusCode).toBe(401);
       const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('UNAUTHORIZED');
+      expect(body.error.code).toBe('AUTH_REQUIRED');
     });
 
     it('should handle invalid limit parameter', async () => {

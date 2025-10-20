@@ -23,7 +23,7 @@ export const handler = async (
     const userId = event.requestContext.authorizer?.claims?.sub;
 
     if (!userId) {
-      return createErrorResponse(401, 'UNAUTHORIZED', 'Authentication required');
+      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
     }
 
     if (!validateUuid(userId)) {

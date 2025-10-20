@@ -5,6 +5,7 @@ import { DatabaseStack } from '../lib/stacks/database-stack';
 import { StaticSiteStack } from '../lib/stacks/static-site-stack';
 import { CognitoStack } from '../lib/stacks/CognitoStack';
 import { ApiGatewayStack } from '../lib/stacks/ApiGatewayStack';
+import { ApplicationApiStack } from '../lib/stacks/ApplicationApiStack';
 import { QueueStack } from '../lib/stacks/QueueStack';
 import { ScraperStack } from '../lib/stacks/ScraperStack';
 import { PublicApiStack } from '../lib/stacks/PublicApiStack';
@@ -103,6 +104,16 @@ const publicApiStack = new PublicApiStack(app, `CommunityContentHub-PublicApi-${
 // Add dependencies
 publicApiStack.addDependency(databaseStack);
 
+// Create Application API stack (Sprint 7) for admin, analytics, and exports
+const applicationApiStack = new ApplicationApiStack(app, `CommunityContentHub-ApplicationApi-${envCapitalized}`, {
+  ...commonProps,
+  environment,
+  databaseSecretArn: databaseStack.databaseSecret.secretArn,
+  enableTracing: isProd,
+});
+
+applicationApiStack.addDependency(databaseStack);
+
 // Create API Gateway Stack
 const apiGatewayStack = new ApiGatewayStack(app, `CommunityContentHub-ApiGateway-${envCapitalized}`, {
   ...commonProps,
@@ -117,18 +128,30 @@ const apiGatewayStack = new ApiGatewayStack(app, `CommunityContentHub-ApiGateway
   statsLambda: publicApiStack.statsFunction,
   environment,
   enableTracing: isProd,
+  adminDashboardLambda: applicationApiStack.adminDashboardFunction,
+  adminUserManagementLambda: applicationApiStack.adminUserManagementFunction,
+  adminBadgesLambda: applicationApiStack.adminBadgesFunction,
+  adminModerationLambda: applicationApiStack.adminModerationFunction,
+  adminAuditLogLambda: applicationApiStack.adminAuditLogFunction,
+  analyticsTrackLambda: applicationApiStack.analyticsTrackFunction,
+  analyticsUserLambda: applicationApiStack.analyticsUserFunction,
+  analyticsExportLambda: applicationApiStack.analyticsExportFunction,
+  exportCsvLambda: applicationApiStack.exportCsvFunction,
+  exportHistoryLambda: applicationApiStack.exportHistoryFunction,
+  contentFindDuplicatesLambda: applicationApiStack.contentFindDuplicatesFunction,
 });
 
 // Add dependencies - API Gateway depends on Cognito, Scraper, and Public API stacks
 apiGatewayStack.addDependency(cognitoStack);
 apiGatewayStack.addDependency(scraperStack);
 apiGatewayStack.addDependency(publicApiStack);
+apiGatewayStack.addDependency(applicationApiStack);
 
 // Add metadata to the app
 app.node.addMetadata('environment', environment);
 app.node.addMetadata('version', '1.0.0');
-app.node.addMetadata('sprint', '1');
-app.node.addMetadata('description', 'AWS Community Content Hub - Sprint 1 Infrastructure');
+app.node.addMetadata('sprint', '7');
+app.node.addMetadata('description', 'AWS Community Content Hub - Sprint 7 Infrastructure');
 
 console.log(`Synthesizing Community Content Hub infrastructure for environment: ${environment}`);
 console.log(`Database Stack: CommunityContentHub-Database-${envCapitalized}`);
@@ -137,5 +160,6 @@ console.log(`Cognito Stack: CommunityContentHub-Cognito-${envCapitalized}`);
 console.log(`Queue Stack: CommunityContentHub-Queue-${envCapitalized}`);
 console.log(`Scraper Stack: CommunityContentHub-Scraper-${envCapitalized}`);
 console.log(`Public API Stack: CommunityContentHub-PublicApi-${envCapitalized}`);
+console.log(`Application API Stack: CommunityContentHub-ApplicationApi-${envCapitalized}`);
 console.log(`API Gateway Stack: CommunityContentHub-ApiGateway-${envCapitalized}`);
 console.log(`Configuration validated for ${environment} environment`);

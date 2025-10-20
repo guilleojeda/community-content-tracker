@@ -19,6 +19,7 @@ describe('Content Create Lambda Handler', () => {
 
     // Reset database cache to ensure getDatabasePool() returns the test pool
     database.resetDatabaseCache();
+    database.setTestDatabasePool(pool);
   });
 
   afterAll(async () => {

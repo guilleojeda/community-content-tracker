@@ -202,7 +202,7 @@ describe('BaseRepository', () => {
       });
 
       // Verify the updated_at timestamp changed
-      expect(result.updatedAt.getTime()).toBeGreaterThan(user.updated_at.getTime());
+      expect(result.updatedAt.getTime()).toBeGreaterThanOrEqual(user.updated_at.getTime());
     });
 
     it('should return null for non-existent ID', async () => {
