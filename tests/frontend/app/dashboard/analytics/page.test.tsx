@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import AnalyticsDashboardPage from '../../../../../src/frontend/app/dashboard/analytics/page';
 import { apiClient } from '../../../../../src/frontend/src/api';
@@ -18,23 +19,6 @@ jest.mock('../../../../../src/frontend/src/api', () => ({
 // Mock download utility
 jest.mock('../../../../../src/frontend/src/utils/download', () => ({
   downloadBlob: jest.fn(),
-}));
-
-// Mock Recharts to avoid canvas rendering issues in tests
-jest.mock('recharts', () => ({
-  ResponsiveContainer: ({ children }: any) => <div data-testid="responsive-container">{children}</div>,
-  LineChart: ({ children }: any) => <div data-testid="line-chart">{children}</div>,
-  Line: () => <div data-testid="line" />,
-  CartesianGrid: () => <div data-testid="cartesian-grid" />,
-  XAxis: () => <div data-testid="x-axis" />,
-  YAxis: () => <div data-testid="y-axis" />,
-  Tooltip: () => <div data-testid="tooltip" />,
-  PieChart: ({ children }: any) => <div data-testid="pie-chart">{children}</div>,
-  Pie: () => <div data-testid="pie" />,
-  Cell: () => <div data-testid="cell" />,
-  BarChart: ({ children }: any) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => <div data-testid="bar" />,
-  Legend: () => <div data-testid="legend" />,
 }));
 
 describe('AnalyticsDashboardPage', () => {
@@ -415,6 +399,81 @@ describe('AnalyticsDashboardPage', () => {
       await waitFor(() => expect(screen.getByText('Export History')).toBeInTheDocument());
 
       expect(screen.getByText('No export history yet.')).toBeInTheDocument();
+    });
+
+    it('supports paginating through export history results', async () => {
+      (apiClient.getExportHistory as jest.Mock)
+        .mockResolvedValueOnce({
+          history: Array.from({ length: 5 }).map((_, index) => ({
+            id: `entry-${index}`,
+            exportType: 'analytics',
+            exportFormat: null,
+            rowCount: 100,
+            createdAt: new Date().toISOString(),
+            parameters: { groupBy: 'day', startDate: null, endDate: null },
+          })),
+          total: 12,
+          limit: 5,
+          offset: 0,
+        })
+        .mockResolvedValueOnce({
+          history: Array.from({ length: 5 }).map((_, index) => ({
+            id: `entry-next-${index}`,
+            exportType: 'analytics',
+            exportFormat: null,
+            rowCount: 50,
+            createdAt: new Date().toISOString(),
+            parameters: { groupBy: 'week', startDate: null, endDate: null },
+          })),
+          total: 12,
+          limit: 5,
+          offset: 5,
+        });
+
+      await renderDashboard();
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Next/i })).toBeEnabled());
+      const nextButton = screen.getByRole('button', { name: /Next/i });
+      await userEvent.click(nextButton);
+
+      await waitFor(() => {
+        const lastCall = (apiClient.getExportHistory as jest.Mock).mock.calls.at(-1)?.[0];
+        expect(lastCall).toEqual({ limit: 5, offset: 5 });
+      });
+    });
+
+    it('surfaces history-specific errors gracefully', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockRejectedValueOnce(new Error('History unavailable'));
+
+      await renderDashboard();
+      await waitFor(() => expect(screen.getByText('History unavailable')).toBeInTheDocument());
+    });
+
+    it('describes analytics exports with groupBy and range metadata', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockResolvedValue({
+        history: [
+          {
+            id: 'export-analytics',
+            exportType: 'analytics',
+            exportFormat: null,
+            rowCount: 250,
+            createdAt: new Date('2024-03-01T15:00:00Z').toISOString(),
+            parameters: {
+              groupBy: 'month',
+              startDate: '2024-01-01',
+              endDate: '2024-02-29',
+            },
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+
+      await renderDashboard();
+      await waitFor(() =>
+        expect(screen.getByText(/Analytics CSV export • Group By: month • Range: 2024-01-01 → 2024-02-29/)).toBeInTheDocument()
+      );
     });
   });
 

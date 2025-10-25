@@ -466,7 +466,7 @@ describe('API Gateway Authorizer Lambda', () => {
       expect(result.principalId).toBe('user-123');
       expect(result.policyDocument.Statement[0].Effect).toBe('Allow');
       expect(result.context.rateLimitRemaining).toBe('95');
-      expect(mockAuthUtils.checkRateLimit).toHaveBeenCalledWith('user-123', 1000);
+      expect(mockAuthUtils.checkRateLimit).toHaveBeenCalledWith('user-123', 1000, 60_000);
     });
 
     test('should deny requests exceeding rate limit', async () => {
@@ -501,7 +501,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('RATE_LIMIT_EXCEEDED');
+      expect(result.context.error).toBe('RATE_LIMITED');
       expect(result.context.rateLimitRemaining).toBe('0');
     });
 

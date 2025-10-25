@@ -184,11 +184,17 @@ export interface Badge {
   }
 
   // Channel Types
-  export enum ChannelType {
-    BLOG = 'blog',
-    YOUTUBE = 'youtube',
-    GITHUB = 'github'
-  }
+export enum ChannelType {
+  BLOG = 'blog',
+  YOUTUBE = 'youtube',
+  GITHUB = 'github'
+}
+
+export enum ConsentType {
+  ANALYTICS = 'analytics',
+  FUNCTIONAL = 'functional',
+  MARKETING = 'marketing'
+}
 
   export interface Channel {
     id: string;
@@ -221,10 +227,36 @@ export interface Badge {
     metadata?: Record<string, any>;
   }
 
-  export interface ChannelListResponse {
-    channels: Channel[];
-    total: number;
-  }
+export interface ChannelListResponse {
+  channels: Channel[];
+  total: number;
+}
+
+export interface ContentBookmark {
+  id: string;
+  userId: string;
+  contentId: string;
+  createdAt: Date;
+}
+
+export interface UserFollowEdge {
+  followerId: string;
+  followingId: string;
+  createdAt: Date;
+}
+
+export interface UserConsentRecord {
+  id: string;
+  consentType: ConsentType;
+  granted: boolean;
+  consentVersion: string;
+  grantedAt?: Date;
+  revokedAt?: Date;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
   export interface TriggerSyncRequest {
     channelId: string;
@@ -257,11 +289,13 @@ export interface Badge {
   }
 
   // User Settings API Types
-  export interface UpdateUserRequest {
-    username?: string;
-    bio?: string;
-    defaultVisibility?: Visibility;
-  }
+export interface UpdateUserRequest {
+  email?: string;
+  username?: string;
+  bio?: string;
+  defaultVisibility?: Visibility;
+  socialLinks?: SocialLinks;
+}
 
   export interface ChangePasswordRequest {
     currentPassword: string;
@@ -287,11 +321,19 @@ export interface Badge {
     message: string;
   }
 
-  export interface UserDataExport {
-    user: User;
-    content: Content[];
-    badges: Badge[];
-  }
+export interface UserDataExport {
+  user: User;
+  content: Content[];
+  badges: Badge[];
+  channels: Channel[];
+  bookmarks: ContentBookmark[];
+  follows: {
+    following: UserFollowEdge[];
+    followers: UserFollowEdge[];
+  };
+  consents: UserConsentRecord[];
+  exportDate: string;
+}
 
   export interface DeleteAccountResponse {
     message: string;

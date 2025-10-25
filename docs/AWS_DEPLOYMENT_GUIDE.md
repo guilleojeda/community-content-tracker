@@ -259,16 +259,15 @@ aws cloudformation describe-stacks \
 COGNITO_USER_POOL_ID=<UserPoolId>
 COGNITO_CLIENT_ID=<UserPoolClientId>
 API_GATEWAY_URL=<ApiEndpoint>
+# Frontend/API configuration
+NEXT_PUBLIC_API_URL=https://<api-domain>/api
+# Comma separated list of allowed origins for API Gateway + Lambdas
+CORS_ORIGIN=https://app.awscommunityhub.org,https://beta.awscommunityhub.org
 ```
 
 ### 2. Configure CORS
 
-```bash
-# Update API Gateway CORS settings if needed
-aws apigateway update-rest-api \
-  --rest-api-id <api-id> \
-  --patch-operations op=replace,path=/cors/allowOrigins,value="'*'"
-```
+The API Gateway allow-list is derived from the `CORS_ORIGIN` environment variable during `cdk synth/deploy`. Update the value (as shown above), then rerun the deployment so both API Gateway and the Lambda helpers share the same domain list.
 
 ### 3. Set Up CloudWatch Alarms
 

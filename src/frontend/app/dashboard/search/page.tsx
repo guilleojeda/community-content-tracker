@@ -1,16 +1,15 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { apiClient } from '@/api/client';
 import { downloadBlob } from '@/utils/download';
 import { BadgeType, ContentType, Visibility, SearchFilters } from '@shared/types';
-import FilterSidebar from './FilterSidebar';
 import SearchBar from './SearchBar';
-import SearchResults from './SearchResults';
 import { useSearchHistory } from './hooks/useSearchHistory';
 import { useSavedSearches } from './hooks/useSavedSearches';
 import type { components as ApiComponents } from '@/api';
+import { loadSharedApiClient } from '@/lib/api/lazyClient';
 
 interface SearchParams {
   q: string;
@@ -21,6 +20,25 @@ interface SearchParams {
 }
 
 type ApiSearchResponse = ApiComponents['schemas']['SearchResponse'];
+
+const FilterSidebar = dynamic(() => import('./FilterSidebar'), {
+  loading: () => (
+    <div className="hidden lg:block lg:w-80">
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <p className="text-sm text-gray-500">Loading filters…</p>
+      </div>
+    </div>
+  ),
+});
+
+const SearchResults = dynamic(() => import('./SearchResults'), {
+  loading: () => (
+    <div className="bg-white rounded-lg shadow-sm p-12 text-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+      <p className="mt-4 text-gray-600">Loading results…</p>
+    </div>
+  ),
+});
 
 export default function AuthenticatedSearchPage() {
   const router = useRouter();
@@ -117,12 +135,13 @@ export default function AuthenticatedSearchPage() {
       const { q, filters: searchFilters, sortBy: sort } = params;
       const offset = params.offset ?? 0;
       let normalized: ApiSearchResponse;
+      const client = await loadSharedApiClient();
 
       if (useAdvanced || searchWithinResults) {
         const withinIds =
           searchWithinResults && results ? results.items.map(item => item.id) : undefined;
 
-        const advanced = await apiClient.advancedSearch({
+        const advanced = await client.advancedSearch({
           query: q,
           withinIds,
           limit: resultsPerPage,
@@ -180,7 +199,7 @@ export default function AuthenticatedSearchPage() {
           apiParams.sortBy = sort;
         }
 
-        const data = await apiClient.search(apiParams);
+        const data = await client.search(apiParams);
         const raw = data as unknown as {
           items?: ApiSearchResponse['items'];
           results?: ApiSearchResponse['items'];
@@ -209,7 +228,7 @@ export default function AuthenticatedSearchPage() {
       // Add to search history
       addToHistory({ query: q, filters: searchFilters || {}, timestamp: Date.now() });
 
-      apiClient
+      client
         .trackAnalyticsEvents({
           eventType: 'search',
           metadata: {
@@ -342,10 +361,11 @@ export default function AuthenticatedSearchPage() {
     setSearchMessage(null);
     try {
       const withinIds = searchWithinResults && results ? results.items.map(item => item.id) : undefined;
-      const download = await apiClient.exportAdvancedSearchCsv({ query, withinIds });
+      const client = await loadSharedApiClient();
+      const download = await client.exportAdvancedSearchCsv({ query, withinIds });
       downloadBlob(download.blob, download.filename ?? 'search-results.csv');
       setSearchMessage('Search results exported to CSV.');
-      apiClient
+      client
         .trackAnalyticsEvents({
           eventType: 'export',
           metadata: {

@@ -1,4 +1,5 @@
 import { APIGatewayProxyResult } from 'aws-lambda';
+import { buildCorsHeaders } from './cors';
 
 /**
  * Standard error response format for API Gateway
@@ -13,8 +14,8 @@ export function errorResponse(
   return {
     statusCode,
     headers: {
+      ...buildCorsHeaders(),
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
     },
     body: JSON.stringify({
       error: {
@@ -36,8 +37,8 @@ export function successResponse(
   return {
     statusCode,
     headers: {
+      ...buildCorsHeaders(),
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
     },
     body: JSON.stringify(data),
   };

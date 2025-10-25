@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
+import { buildCorsHeaders } from '../../services/cors';
 
 interface AuthorizerPayload {
   userId?: string;
@@ -51,18 +52,17 @@ function extractUserContext(authorizer: AuthorizerPayload | undefined) {
   return { userId, isAdmin };
 }
 
-function responseHeaders() {
+function responseHeaders(origin?: string | null) {
   return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'OPTIONS,DELETE',
+    ...buildCorsHeaders({ origin, methods: 'OPTIONS,DELETE', allowCredentials: true }),
+    'Content-Type': 'application/json',
   };
 }
 
-function errorResponse(statusCode: number, code: string, message: string) {
+function errorResponse(statusCode: number, code: string, message: string, origin?: string | null) {
   return {
     statusCode,
-    headers: responseHeaders(),
+    headers: responseHeaders(origin),
     body: JSON.stringify({
       error: {
         code,
@@ -79,15 +79,16 @@ export async function handler(
   console.log('Delete content request:', JSON.stringify(event, null, 2));
 
   try {
+    const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
     const { userId, isAdmin } = extractUserContext(event.requestContext.authorizer as AuthorizerPayload);
 
     if (!userId) {
-      return errorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+      return errorResponse(401, 'AUTH_REQUIRED', 'Authentication required', originHeader);
     }
 
     const contentId = event.pathParameters?.id;
     if (!contentId) {
-      return errorResponse(400, 'VALIDATION_ERROR', 'Content ID is required');
+      return errorResponse(400, 'VALIDATION_ERROR', 'Content ID is required', originHeader);
     }
 
     // Get database pool and repositories
@@ -98,7 +99,7 @@ export async function handler(
     // Verify user exists and get their admin status from database
     const user = await userRepository.findById(userId);
     if (!user) {
-      return errorResponse(401, 'AUTH_INVALID', 'User not found');
+      return errorResponse(401, 'AUTH_INVALID', 'User not found', originHeader);
     }
 
     // Combine authorizer admin flag with database admin flag
@@ -108,21 +109,21 @@ export async function handler(
     const content = await contentRepository.findById(contentId);
 
     if (!content) {
-      return errorResponse(404, 'NOT_FOUND', 'Content not found');
+      return errorResponse(404, 'NOT_FOUND', 'Content not found', originHeader);
     }
 
     // Check if already deleted (for soft-deleted content)
     if (content.deletedAt) {
       const forceDelete = event.queryStringParameters?.force === 'true';
       if (!forceDelete) {
-        return errorResponse(410, 'GONE', 'Content already deleted');
+        return errorResponse(410, 'GONE', 'Content already deleted', originHeader);
       }
     }
 
     // Check ownership
     const isOwner = content.userId === userId;
     if (!isOwner && !isUserAdmin) {
-      return errorResponse(403, 'PERMISSION_DENIED', 'You are not authorized to delete this content');
+      return errorResponse(403, 'PERMISSION_DENIED', 'You are not authorized to delete this content', originHeader);
     }
 
     // Determine delete type
@@ -131,7 +132,7 @@ export async function handler(
 
     // Only admins can force delete
     if (forceDelete && !isUserAdmin) {
-      return errorResponse(403, 'PERMISSION_DENIED', 'Force delete requires admin privileges');
+      return errorResponse(403, 'PERMISSION_DENIED', 'Force delete requires admin privileges', originHeader);
     }
 
     const softDelete = !forceDelete && softDeleteEnabled;
@@ -142,25 +143,28 @@ export async function handler(
       const success = await contentRepository.deleteContent(contentId, softDelete);
 
       if (!success) {
-        return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content');
+        return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content', originHeader);
       }
 
       console.log(`Content ${softDelete ? 'soft' : 'hard'} deleted successfully:`, contentId);
 
+      const headers = responseHeaders(originHeader);
+      delete headers['Content-Type'];
       return {
         statusCode: 204,
         headers: {
-          ...responseHeaders(),
+          ...headers,
           'Content-Length': '0',
         },
         body: '',
       };
     } catch (deleteError) {
       console.error('Error during delete operation:', deleteError);
-      return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content');
+      return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content', originHeader);
     }
   } catch (error: any) {
     console.error('Unexpected delete error:', error);
-    return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content');
+    const origin = event.headers?.Origin || event.headers?.origin || undefined;
+    return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content', origin);
   }
 }

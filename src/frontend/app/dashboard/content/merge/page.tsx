@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { apiClient } from '@/api/client';
 import { Content } from '@shared/types';
+import { loadSharedApiClient } from '@/lib/api/lazyClient';
 
 type MergeTab = 'duplicates' | 'history';
 
@@ -53,9 +53,10 @@ export default function ContentMergePage() {
 
   const loadDuplicates = async () => {
     setLoading(true);
-    setError(null);
+   setError(null);
     try {
-      const result = await apiClient.findDuplicates({
+      const client = await loadSharedApiClient();
+      const result = await client.findDuplicates({
         threshold: 0.5,
         fields: ['title', 'tags', 'description'],
       });
@@ -96,7 +97,8 @@ export default function ContentMergePage() {
         params.dateRange = { start, end: now };
       }
 
-      const result = await apiClient.getMergeHistory(params);
+      const client = await loadSharedApiClient();
+      const result = await client.getMergeHistory(params);
       setMergeHistory(result.merges);
       setHistoryTotal(result.total || /* istanbul ignore next */ 0);
     } catch (err) {
@@ -149,7 +151,8 @@ export default function ContentMergePage() {
 
     setShowConfirmDialog(false);
     try {
-      await apiClient.mergeContent({
+      const client = await loadSharedApiClient();
+      await client.mergeContent({
         contentIds: selectedIds,
         primaryId: primaryContentId,
       });
@@ -165,7 +168,8 @@ export default function ContentMergePage() {
 
   const handleUndo = async (mergeId: string) => {
     try {
-      await apiClient.unmergeContent(mergeId);
+      const client = await loadSharedApiClient();
+      await client.unmergeContent(mergeId);
       setSuccessMessage('Successfully restored content items');
       await loadMergeHistory();
     } catch (err) {

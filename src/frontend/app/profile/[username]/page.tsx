@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import ProfileClient from './ProfileClient';
+import dynamic from 'next/dynamic';
 import { getPublicApiClient } from '@/api/client';
 import type { ApiError } from '@/api/client';
 
@@ -56,13 +56,27 @@ export async function generateMetadata({ params }: ProfilePageProps): Promise<Me
 }
 
 // Generate static params for build - returns empty array as profiles are fetched client-side
-export function generateStaticParams() {
+export async function generateStaticParams(): Promise<Array<{ username: string }>> {
   // Return empty array - all profile routes will be handled client-side
   // This satisfies Next.js static export requirements
   return [];
 }
 
-export const dynamicParams = true;
+export const dynamicParams = false;
+
+const ProfileClient = dynamic(() => import('./ProfileClient'), {
+  ssr: false,
+  loading: () => (
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-aws-blue mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading profile...</p>
+        </div>
+      </div>
+    </div>
+  ),
+});
 
 export default function ProfilePage({ params }: ProfilePageProps) {
   return <ProfileClient params={params} />;

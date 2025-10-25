@@ -71,6 +71,21 @@ export class ContentRepository extends BaseRepository {
     super(pool, 'content');
   }
 
+  private async profileQuery(sql: string, params: any[]): Promise<void> {
+    if (process.env.ENABLE_QUERY_PROFILING !== 'true') {
+      return;
+    }
+
+    try {
+      const explainSql = `EXPLAIN ANALYZE ${sql}`;
+      const result = await this.executeQuery(explainSql, params);
+      const plan = result.rows.map(row => Object.values(row)[0]).join('\n');
+      console.debug('[QueryProfile]', plan);
+    } catch (error: any) {
+      console.warn('Failed to profile query:', error.message || error);
+    }
+  }
+
   private async ensureAnalyticsTable(): Promise<void> {
     if (ContentRepository.analyticsTableChecked) {
       return;
@@ -347,6 +362,7 @@ export class ContentRepository extends BaseRepository {
       params.push(offset);
     }
 
+    await this.profileQuery(query, params);
     const result = await this.executeQuery(query, params);
     const rowsWithUrls = await this.attachUrls(result.rows);
     return rowsWithUrls.map((row: any) => this.transformRow(row));
@@ -1264,6 +1280,7 @@ export class ContentRepository extends BaseRepository {
 
     params.push(limit, offset);
 
+    await this.profileQuery(query, params);
     const result = await this.executeQuery(query, params);
     const rowsWithUrls = await this.attachUrls(result.rows);
     return rowsWithUrls.map((row: any) => ({
@@ -1354,6 +1371,7 @@ export class ContentRepository extends BaseRepository {
 
     params.push(limit, offset);
 
+    await this.profileQuery(query, params);
     const result = await this.executeQuery(query, params);
     const rowsWithUrls = await this.attachUrls(result.rows);
     return rowsWithUrls.map((row: any) => ({

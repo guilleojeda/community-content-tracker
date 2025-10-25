@@ -10,6 +10,11 @@ jest.mock('@/api/client', () => ({
   getPublicApiClient: jest.fn(() => mockApiClient),
 }));
 
+jest.mock('next/dynamic', () => () => {
+  const mod = require('../../../../src/frontend/app/sections/StatsSection');
+  return mod.default || mod;
+});
+
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
@@ -44,6 +49,7 @@ describe('HomePageContent', () => {
       expect(mockApiClient.getStats).toHaveBeenCalled();
       expect(screen.getByText(/platform stats/i)).toBeInTheDocument();
       expect(screen.getByText(/content pieces/i)).toBeInTheDocument();
+      expect(screen.getByAltText(/community illustration/i)).toBeInTheDocument();
     });
   });
 

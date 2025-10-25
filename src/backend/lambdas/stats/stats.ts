@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
+import { buildCorsHeaders } from '../../services/cors';
 
 /**
  * GET /stats - Get platform statistics
@@ -19,11 +20,10 @@ import { getDatabasePool } from '../../services/database';
  * }
  */
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
   const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'GET,OPTIONS',
-    'Content-Type': 'application/json'
+    ...buildCorsHeaders({ origin: originHeader, methods: 'GET,OPTIONS' }),
+    'Content-Type': 'application/json',
   };
 
   try {

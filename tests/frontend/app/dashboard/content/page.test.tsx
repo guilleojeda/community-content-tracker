@@ -139,11 +139,9 @@ describe('Content Management Page', () => {
       });
 
       const typeFilter = screen.getByLabelText(/content type/i);
-      const visibilityFilter = screen.getByLabelText(/visibility/i);
+      let visibilityFilter = document.getElementById('visibilityFilter') as HTMLSelectElement;
 
-      await act(async () => {
-        fireEvent.change(typeFilter, { target: { value: ContentType.YOUTUBE } });
-      });
+      await userEvent.selectOptions(typeFilter, ContentType.YOUTUBE);
 
       // Wait for the first filter to be applied
       await waitFor(() => {
@@ -152,13 +150,15 @@ describe('Content Management Page', () => {
         );
       });
 
-      await act(async () => {
-        fireEvent.change(visibilityFilter, { target: { value: Visibility.AWS_COMMUNITY } });
-      });
+      visibilityFilter = document.getElementById('visibilityFilter') as HTMLSelectElement;
+      await userEvent.selectOptions(visibilityFilter, [Visibility.AWS_COMMUNITY]);
+      expect(visibilityFilter.value).toBe(Visibility.AWS_COMMUNITY);
 
       // Wait for both filters to be applied together
       await waitFor(() => {
-        expect(apiClient.listContent).toHaveBeenCalledWith(
+        const calls = (apiClient.listContent as jest.Mock).mock.calls;
+        const lastCallArgs = calls[calls.length - 1]?.[0];
+        expect(lastCallArgs).toEqual(
           expect.objectContaining({
             contentType: ContentType.YOUTUBE,
             visibility: Visibility.AWS_COMMUNITY,

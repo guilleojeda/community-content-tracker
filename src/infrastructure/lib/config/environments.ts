@@ -1,5 +1,6 @@
 export interface EnvironmentConfig {
   environment: string;
+  isProductionLike?: boolean;
   deletionProtection?: boolean;
   backupRetentionDays?: number;
   minCapacity?: number;
@@ -27,65 +28,157 @@ export interface EnvironmentConfig {
   };
 }
 
+type LambdaConfigOverrides = Partial<EnvironmentConfig['lambda']> & {
+  environmentVariables?: Record<string, string>;
+};
+
+type CognitoConfigOverrides = Partial<Omit<EnvironmentConfig['cognito'], 'passwordPolicy'>> & {
+  passwordPolicy?: Partial<EnvironmentConfig['cognito']['passwordPolicy']>;
+};
+
+interface EnvironmentOverrides {
+  isProductionLike?: boolean;
+  deletionProtection?: boolean;
+  backupRetentionDays?: number;
+  minCapacity?: number;
+  maxCapacity?: number;
+  enableWaf?: boolean;
+  tags?: Record<string, string>;
+  lambda?: LambdaConfigOverrides;
+  cognito?: CognitoConfigOverrides;
+}
+
 export const getEnvironmentConfig = (environment: string): EnvironmentConfig => {
-  const baseConfig = {
-    tags: {
-      Project: 'CommunityContentTracker',
-      ManagedBy: 'CDK',
-    },
-    cognito: {
-      deletionProtection: environment === 'prod',
-      mfaConfiguration: environment === 'prod' ? 'OPTIONAL' : 'OFF',
-      advancedSecurityMode: environment === 'prod' ? 'ENFORCED' : 'OFF',
-      passwordPolicy: {
-        minLength: 12,
-        requireLowercase: true,
-        requireUppercase: true,
-        requireNumbers: true,
-        requireSymbols: environment === 'prod',
-        tempPasswordValidityDays: 7,
+  const createBaseConfig = (targetEnvironment: string) => {
+    const isProductionLike = ['prod', 'blue', 'green'].includes(targetEnvironment);
+
+    return {
+      isProductionLike,
+      tags: {
+        Project: 'CommunityContentTracker',
+        ManagedBy: 'CDK',
       },
-    },
-    lambda: {
-      timeout: 30,
-      memorySize: 256,
-      tracing: environment === 'prod' ? 'Active' : 'PassThrough',
-      environmentVariables: {
-        NODE_ENV: environment,
-        LOG_LEVEL: environment === 'prod' ? 'info' : 'debug',
+      cognito: {
+        deletionProtection: isProductionLike,
+        mfaConfiguration: isProductionLike ? 'OPTIONAL' : 'OFF',
+        advancedSecurityMode: isProductionLike ? 'ENFORCED' : 'OFF',
+        passwordPolicy: {
+          minLength: 12,
+          requireLowercase: true,
+          requireUppercase: true,
+          requireNumbers: true,
+          requireSymbols: isProductionLike,
+          tempPasswordValidityDays: 7,
+        },
       },
-    },
+      lambda: {
+        timeout: 30,
+        memorySize: 256,
+        tracing: isProductionLike ? 'Active' : 'PassThrough',
+        environmentVariables: {
+          NODE_ENV: targetEnvironment,
+          LOG_LEVEL: isProductionLike ? 'info' : 'debug',
+          ENABLE_BETA_FEATURES: 'false',
+        },
+      },
+    };
+  };
+
+  const mergeConfig = (
+    targetEnvironment: string,
+    overrides: EnvironmentOverrides = {}
+  ): EnvironmentConfig => {
+    const baseConfig = createBaseConfig(targetEnvironment);
+    return {
+      ...baseConfig,
+      ...overrides,
+      environment: targetEnvironment,
+      isProductionLike: overrides.isProductionLike ?? baseConfig.isProductionLike,
+      tags: {
+        ...baseConfig.tags,
+        ...(overrides.tags ?? {}),
+      },
+      cognito: {
+        ...baseConfig.cognito,
+        ...(overrides.cognito ?? {}),
+        passwordPolicy: {
+          ...baseConfig.cognito.passwordPolicy,
+          ...(overrides.cognito?.passwordPolicy ?? {}),
+        },
+      },
+      lambda: {
+        ...baseConfig.lambda,
+        ...(overrides.lambda ?? {}),
+        environmentVariables: {
+          ...baseConfig.lambda.environmentVariables,
+          ...(overrides.lambda?.environmentVariables ?? {}),
+        },
+      },
+    };
   };
 
   const configs: Record<string, EnvironmentConfig> = {
-    dev: {
-      environment: 'dev',
+    dev: mergeConfig('dev', {
       deletionProtection: false,
       backupRetentionDays: 7,
       minCapacity: 0.5,
       maxCapacity: 1,
       enableWaf: false,
-      ...baseConfig,
-    },
-    staging: {
-      environment: 'staging',
+    }),
+    beta: mergeConfig('beta', {
       deletionProtection: false,
       backupRetentionDays: 14,
       minCapacity: 0.5,
       maxCapacity: 2,
       enableWaf: false,
-      ...baseConfig,
-    },
-    prod: {
-      environment: 'prod',
+      lambda: {
+        environmentVariables: {
+          ENABLE_BETA_FEATURES: 'true',
+        },
+      },
+    }),
+    staging: mergeConfig('staging', {
+      deletionProtection: false,
+      backupRetentionDays: 14,
+      minCapacity: 0.5,
+      maxCapacity: 2,
+      enableWaf: false,
+    }),
+    prod: mergeConfig('prod', {
       deletionProtection: true,
       backupRetentionDays: 30,
       minCapacity: 1,
       maxCapacity: 4,
       enableWaf: true,
-      ...baseConfig,
-    },
+    }),
+    blue: mergeConfig('blue', {
+      deletionProtection: true,
+      backupRetentionDays: 30,
+      minCapacity: 1,
+      maxCapacity: 4,
+      enableWaf: true,
+      tags: {
+        DeploymentColor: 'blue',
+      },
+    }),
+    green: mergeConfig('green', {
+      deletionProtection: true,
+      backupRetentionDays: 30,
+      minCapacity: 1,
+      maxCapacity: 4,
+      enableWaf: true,
+      tags: {
+        DeploymentColor: 'green',
+      },
+    }),
   };
 
-  return configs[environment] || configs.dev;
+  const selectedConfig = configs[environment];
+  if (!selectedConfig) {
+    throw new Error(
+      `Unknown environment: ${environment}. Available environments: ${Object.keys(configs).join(', ')}`
+    );
+  }
+
+  return selectedConfig;
 };

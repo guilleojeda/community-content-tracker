@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { DynamoDBClient, GetItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import { EmbeddingService } from '../../services/EmbeddingService';
+import { buildCorsHeaders } from '../../services/cors';
 
 // DynamoDB client initialization
 let dynamoClient: DynamoDBClient | null = null;
@@ -32,21 +33,25 @@ function getEmbeddingService(): EmbeddingService {
 /**
  * Create CORS headers
  */
-function getCorsHeaders() {
+function getCorsHeaders(origin?: string | null) {
   return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'OPTIONS,PUT',
+    ...buildCorsHeaders({ origin, methods: 'OPTIONS,PUT', allowCredentials: true }),
+    'Content-Type': 'application/json',
   };
 }
 
 /**
  * Create error response
  */
-function createErrorResponse(statusCode: number, message: string, details?: any): APIGatewayProxyResult {
+function createErrorResponse(
+  statusCode: number,
+  message: string,
+  details?: any,
+  origin?: string | null
+): APIGatewayProxyResult {
   return {
     statusCode,
-    headers: getCorsHeaders(),
+    headers: getCorsHeaders(origin),
     body: JSON.stringify({
       error: message,
       ...(details && { ...details }),
@@ -57,10 +62,14 @@ function createErrorResponse(statusCode: number, message: string, details?: any)
 /**
  * Create success response
  */
-function createSuccessResponse(statusCode: number, data: any): APIGatewayProxyResult {
+function createSuccessResponse(
+  statusCode: number,
+  data: any,
+  origin?: string | null
+): APIGatewayProxyResult {
   return {
     statusCode,
-    headers: getCorsHeaders(),
+    headers: getCorsHeaders(origin),
     body: JSON.stringify(data),
   };
 }
@@ -165,27 +174,33 @@ function validateUpdateRequest(body: any): { valid: boolean; error?: string } {
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('Update content request:', JSON.stringify(event, null, 2));
 
+  const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
+  const respondError = (statusCode: number, message: string, details?: any) =>
+    createErrorResponse(statusCode, message, details, originHeader);
+  const respondSuccess = (statusCode: number, data: any) =>
+    createSuccessResponse(statusCode, data, originHeader);
+
   const tableName = process.env.CONTENT_TABLE_NAME;
   if (!tableName) {
     console.error('CONTENT_TABLE_NAME environment variable not set');
-    return createErrorResponse(500, 'Failed to update content: Configuration error');
+    return respondError(500, 'Failed to update content: Configuration error');
   }
 
   try {
     // Check authentication
     if (!event.requestContext?.authorizer) {
-      return createErrorResponse(401, 'Unauthorized: Authentication required');
+      return respondError(401, 'Unauthorized: Authentication required');
     }
 
     const userId = getUserId(event);
     if (!userId) {
-      return createErrorResponse(401, 'Unauthorized: Invalid user credentials');
+      return respondError(401, 'Unauthorized: Invalid user credentials');
     }
 
     // Get content ID from path
     const contentId = event.pathParameters?.id;
     if (!contentId) {
-      return createErrorResponse(400, 'Content ID is required');
+      return respondError(400, 'Content ID is required');
     }
 
     // Parse and validate request body
@@ -193,13 +208,13 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     try {
       updateBody = JSON.parse(event.body || '{}');
     } catch {
-      return createErrorResponse(400, 'Invalid JSON in request body');
+      return respondError(400, 'Invalid JSON in request body');
     }
 
     // Validate update request
     const validation = validateUpdateRequest(updateBody);
     if (!validation.valid) {
-      return createErrorResponse(400, validation.error!);
+      return respondError(400, validation.error!);
     }
 
     const client = getDynamoClient();
@@ -213,7 +228,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const getResult = await client.send(getCommand);
 
     if (!getResult.Item) {
-      return createErrorResponse(404, 'Content not found');
+      return respondError(404, 'Content not found');
     }
 
     const existingContent = unmarshall(getResult.Item);
@@ -223,12 +238,12 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const isOwner = existingContent.userId === userId;
 
     if (!isOwner && !userIsAdmin) {
-      return createErrorResponse(403, 'You are not authorized to update this content');
+      return respondError(403, 'You are not authorized to update this content');
     }
 
     // Check optimistic locking
     if (existingContent.version !== updateBody.version) {
-      return createErrorResponse(409, 'version conflict: Content has been modified', {
+      return respondError(409, 'version conflict: Content has been modified', {
         currentVersion: existingContent.version,
         message: 'Please retry with the current version',
       });
@@ -333,21 +348,21 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const updateResult = await client.send(updateCommand);
 
     if (!updateResult.Attributes) {
-      return createErrorResponse(500, 'Failed to update content: No attributes returned');
+      return respondError(500, 'Failed to update content: No attributes returned');
     }
 
     const updatedContent = unmarshall(updateResult.Attributes);
 
     console.log('Content updated successfully:', contentId);
-    return createSuccessResponse(200, updatedContent);
+    return respondSuccess(200, updatedContent);
 
   } catch (error: any) {
     console.error('Error updating content:', error);
 
     if (error.name === 'ConditionalCheckFailedException') {
-      return createErrorResponse(409, 'version conflict: Content has been modified');
+      return respondError(409, 'version conflict: Content has been modified');
     }
 
-    return createErrorResponse(500, 'Failed to update content');
+    return respondError(500, 'Failed to update content');
   }
 }

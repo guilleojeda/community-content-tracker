@@ -1,58 +1,43 @@
 openapi: 3.0.3
 info:
   title: AWS Community Content Hub API
-  description: |
-    API for the AWS Community Content Hub - a platform for tracking and discovering
-    AWS community-generated content from contributors worldwide.
-
-    ## Features
-    - Semantic search powered by Amazon Bedrock
-    - Content tracking from blogs, YouTube, GitHub, and conferences
-    - User authentication with AWS Cognito
-    - Community profiles for AWS Heroes, Builders, and Ambassadors
-
-    ## Authentication
-    Most endpoints require authentication via JWT tokens obtained from the login endpoint.
-    Include the access token in the Authorization header: `Authorization: Bearer <token>`
+  description: API for searching and managing AWS community content
   version: 1.0.0
   contact:
     name: AWS Community Content Hub
-    email: support@example.com
-  license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    email: support@aws-community-hub.com
 
 servers:
-  - url: https://api.awscommunity.example.com
+  - url: https://api.aws-community-hub.com/v1
     description: Production API
   - url: http://localhost:3001
     description: Local development
 
 tags:
   - name: Search
-    description: Content search operations
-  - name: Stats
-    description: Platform statistics
-  - name: Authentication
-    description: User authentication and registration
-
-security:
-  - BearerAuth: []
+    description: Content search endpoints
+  - name: Auth
+    description: Authentication endpoints
+  - name: Content
+    description: Content management
+  - name: Users
+    description: User management
+  - name: Consent
+    description: User consent management and GDPR preferences
+  - name: Feedback
+    description: Beta feedback collection
 
 paths:
   /search:
     get:
+      summary: Search for content
+      description: |
+        Search for community content using semantic and keyword search.
+        Supports filtering by content type, tags, badges, and date range.
+        Returns public content for anonymous users, additional content for authenticated users.
+      operationId: searchContent
       tags:
         - Search
-      summary: Search for community content
-      description: |
-        Performs semantic search using Amazon Bedrock embeddings to find relevant
-        AWS community content. Supports filtering by content type, badges, tags,
-        and date ranges.
-      operationId: searchContent
-      security:
-        - BearerAuth: []
-        - {}  # Optional authentication
       parameters:
         - name: q
           in: query
@@ -62,53 +47,52 @@ paths:
             type: string
             minLength: 1
             maxLength: 500
-          example: "lambda performance optimization"
-
+            example: "AWS Lambda serverless"
         - name: limit
           in: query
           required: false
-          description: Maximum number of results to return
+          description: Number of results to return (max 100)
           schema:
             type: integer
             minimum: 1
             maximum: 100
             default: 10
-          example: 20
-
         - name: offset
           in: query
           required: false
-          description: Number of results to skip for pagination
+          description: Pagination offset
           schema:
             type: integer
             minimum: 0
             default: 0
-          example: 0
-
         - name: type
           in: query
           required: false
           description: Filter by content types (comma-separated)
           schema:
             type: string
-          example: "blog,youtube"
-
+            example: "blog,youtube"
         - name: tags
           in: query
           required: false
           description: Filter by tags (comma-separated)
           schema:
             type: string
-          example: "serverless,containers"
-
+            example: "serverless,lambda,api-gateway"
         - name: badges
           in: query
           required: false
-          description: Filter by contributor badges (comma-separated)
+          description: Filter by AWS program badges (comma-separated)
           schema:
             type: string
-          example: "hero,community_builder"
-
+            example: "hero,community_builder"
+        - name: visibility
+          in: query
+          required: false
+          description: Filter by content visibility levels (comma-separated)
+          schema:
+            type: string
+            example: "public,aws_community"
         - name: startDate
           in: query
           required: false
@@ -116,8 +100,7 @@ paths:
           schema:
             type: string
             format: date
-          example: "2024-01-01"
-
+            example: "2024-01-01"
         - name: endDate
           in: query
           required: false
@@ -125,53 +108,34 @@ paths:
           schema:
             type: string
             format: date
-          example: "2024-12-31"
-
+            example: "2024-12-31"
       responses:
         '200':
-          description: Search results
+          description: Successful search response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SearchResponse'
-              example:
-                results:
-                  - id: "123e4567-e89b-12d3-a456-426614174000"
-                    title: "Optimizing Lambda Cold Starts"
-                    description: "A comprehensive guide to reducing Lambda cold starts"
-                    contentType: "blog"
-                    visibility: "public"
-                    publishDate: "2024-09-15T00:00:00Z"
-                    captureDate: "2024-09-16T10:30:00Z"
-                    tags: ["serverless", "lambda", "performance"]
-                    isClaimed: true
-                    urls:
-                      - id: "url-123"
-                        url: "https://example.com/blog/lambda-optimization"
-                    author:
-                      username: "johndoe"
-                      profileSlug: "johndoe"
-                      badges: ["hero"]
-                    score: 0.95
-                total: 42
-                limit: 10
-                offset: 0
-
         '400':
-          $ref: '#/components/responses/ValidationError'
-
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
-          $ref: '#/components/responses/InternalError'
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /stats:
     get:
-      tags:
-        - Stats
       summary: Get platform statistics
-      description: Returns aggregate statistics about the platform including contributor count, content pieces, and activity metrics
-      operationId: getPlatformStats
-      security: []  # Public endpoint
-
+      description: Returns aggregated statistics about the platform
+      operationId: getStats
+      tags:
+        - Search
       responses:
         '200':
           description: Platform statistics
@@ -179,625 +143,535 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PlatformStats'
-              example:
-                contributors: 5000
-                contentPieces: 50000
-                dailyContent: 100
-                weeklyActiveUsers: 1000
-                uptime: "24/7"
-                lastUpdated: "2024-10-03T12:00:00Z"
-
         '500':
-          $ref: '#/components/responses/InternalError'
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  /auth/register:
-    post:
+  /users/{id}:
+    patch:
+      summary: Update user profile (right to rectification)
+      description: Allows authenticated users to update their own profile details including contact preferences and social links.
+      operationId: updateUserProfile
       tags:
-        - Authentication
-      summary: Register a new user
-      description: Creates a new user account with AWS Cognito and the application database
-      operationId: registerUser
-      security: []  # Public endpoint
-
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the user whose profile is being updated. Use `me` to reference the authenticated user.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RegisterRequest'
-            example:
-              email: "user@example.com"
-              password: "SecurePass123!@#"
-              username: "johndoe"
-
-      responses:
-        '201':
-          description: User successfully registered
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RegisterResponse'
-              example:
-                userId: "123e4567-e89b-12d3-a456-426614174000"
-                message: "Please check your email to verify your account"
-
-        '400':
-          $ref: '#/components/responses/ValidationError'
-
-        '409':
-          description: User already exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error:
-                  code: "DUPLICATE_RESOURCE"
-                  message: "User already exists - email: Email already registered"
-
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /auth/login:
-    post:
-      tags:
-        - Authentication
-      summary: Login user
-      description: Authenticates user credentials and returns JWT tokens
-      operationId: loginUser
-      security: []  # Public endpoint
-
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-            example:
-              email: "user@example.com"
-              password: "SecurePass123!@#"
-
+              $ref: '#/components/schemas/UpdateUserProfileRequest'
       responses:
         '200':
-          description: Successfully authenticated
+          description: Profile updated successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
-              example:
-                accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                idToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                expiresIn: 3600
-                user:
-                  id: "123e4567-e89b-12d3-a456-426614174000"
-                  email: "user@example.com"
-                  username: "johndoe"
-                  profileSlug: "johndoe"
-                  isAdmin: false
-                  isAwsEmployee: false
-
+                $ref: '#/components/schemas/UpdateUserProfileResponse'
         '400':
-          $ref: '#/components/responses/ValidationError'
-
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
-          description: Invalid credentials
+          description: Authentication required
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error:
-                  code: "AUTH_INVALID"
-                  message: "Invalid email or password"
-
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to update another user's profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
-          $ref: '#/components/responses/InternalError'
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  /auth/verify-email:
-    post:
+    delete:
+      summary: Delete user account (right to erasure)
+      description: Permanently deletes the authenticated user's account, associated content, and Cognito identity.
+      operationId: deleteAccount
       tags:
-        - Authentication
-      summary: Verify email address
-      description: Verifies user email with confirmation code sent during registration
-      operationId: verifyEmail
-      security: []  # Public endpoint
-
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/VerifyEmailRequest'
-            example:
-              email: "user@example.com"
-              confirmationCode: "123456"
-
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: me
+          description: ID of user to delete. Use `me` for the authenticated user.
       responses:
         '200':
-          description: Email successfully verified
+          description: Account deleted successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VerifyEmailResponse'
-              example:
-                message: "Email verified successfully"
-                verified: true
-
+                $ref: '#/components/schemas/DeleteAccountResponse'
         '400':
-          $ref: '#/components/responses/ValidationError'
-
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /auth/refresh:
-    post:
-      tags:
-        - Authentication
-      summary: Refresh access token
-      description: Obtains new access and ID tokens using a refresh token
-      operationId: refreshToken
-      security: []  # Public endpoint
-
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RefreshTokenRequest'
-            example:
-              refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-
-      responses:
-        '200':
-          description: Tokens successfully refreshed
+          description: Validation error (missing user ID)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RefreshTokenResponse'
-              example:
-                accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                idToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                expiresIn: 3600
-
-        '400':
-          $ref: '#/components/responses/ValidationError'
-
+                $ref: '#/components/schemas/Error'
         '401':
-          description: Invalid refresh token
+          description: Authentication required or invalid token
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error:
-                  code: "AUTH_INVALID"
-                  message: "Invalid or expired refresh token"
-
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to delete another user's account without admin privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
-          $ref: '#/components/responses/InternalError'
+          description: Failed to delete account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  /auth/forgot-password:
-    post:
+  /users/{id}/export:
+    get:
+      summary: Export user data (GDPR data portability)
+      description: Returns a full JSON export of the authenticated user's data, including content, channels, badges, consents, and relationships.
+      operationId: exportUserData
       tags:
-        - Authentication
-      summary: Request password reset
-      description: Sends a password reset confirmation code to the user's email
-      operationId: forgotPassword
-      security: []  # Public endpoint
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: me
+          description: ID of user to export. Use `me` for the authenticated user.
+      responses:
+        '200':
+          description: Export generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDataExport'
+        '400':
+          description: Missing user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to export another user's data without admin privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to generate export
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
+  /users/{id}/preferences:
+    patch:
+      summary: Update email and notification preferences
+      description: Enables users to update their communication preferences for newsletters and community notifications.
+      operationId: updateUserPreferences
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of user whose preferences will be updated. Use `me` for the authenticated user.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - email
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: Email address of the account
-            example:
-              email: "user@example.com"
-
+              $ref: '#/components/schemas/UpdatePreferencesRequest'
       responses:
         '200':
-          description: Password reset code sent
+          description: Preferences updated successfully
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-              example:
-                message: "Password reset code sent to email"
-
+                $ref: '#/components/schemas/UpdatePreferencesResponse'
         '400':
-          $ref: '#/components/responses/ValidationError'
-
+          description: Validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to update another user's preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
-          $ref: '#/components/responses/InternalError'
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  /auth/reset-password:
+  /user/consent:
     post:
+      summary: Grant or revoke user consent
+      description: Records the user's consent decision for analytics, functional, or marketing categories.
+      operationId: manageConsent
       tags:
-        - Authentication
-      summary: Reset password with confirmation code
-      description: Resets user password using the confirmation code from email
-      operationId: resetPassword
-      security: []  # Public endpoint
-
+        - Consent
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - email
-                - confirmationCode
-                - newPassword
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: Email address of the account
-                confirmationCode:
-                  type: string
-                  minLength: 6
-                  maxLength: 6
-                  description: 6-digit confirmation code from email
-                newPassword:
-                  type: string
-                  format: password
-                  minLength: 12
-                  description: New password (min 12 characters)
-            example:
-              email: "user@example.com"
-              confirmationCode: "123456"
-              newPassword: "NewSecurePass123!@#"
-
+              $ref: '#/components/schemas/ConsentRequest'
       responses:
         '200':
-          description: Password successfully reset
+          description: Consent updated successfully
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-              example:
-                message: "Password reset successful"
-
+                $ref: '#/components/schemas/ConsentResponse'
         '400':
-          $ref: '#/components/responses/ValidationError'
-
+          description: Invalid consent payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
-          $ref: '#/components/responses/InternalError'
+          description: Failed to update consent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      summary: Retrieve consent status for all categories
+      description: Returns the current consent decisions for the authenticated user.
+      operationId: getConsentStatus
+      tags:
+        - Consent
+      responses:
+        '200':
+          description: Consent status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentStatusResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to retrieve consent status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /user/consent/check:
+    post:
+      summary: Check whether a user has granted consent
+      description: Internal helper to verify if a specific consent type is granted for the current user.
+      operationId: checkUserConsent
+      tags:
+        - Consent
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentCheckRequest'
+      responses:
+        '200':
+          description: Consent check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentCheckResponse'
+        '500':
+          description: Failed to check consent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /feedback:
+    post:
+      summary: Submit beta feedback
+      description: Stores feedback submitted by beta participants. Requires beta features to be enabled.
+      operationId: submitFeedback
+      tags:
+        - Feedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+      responses:
+        '202':
+          description: Feedback accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackAcceptedResponse'
+        '400':
+          description: Invalid feedback payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Feedback collection disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to store feedback
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
-  securitySchemes:
-    BearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: JWT access token from the login endpoint
-
   schemas:
-    # Enums
-    ContentType:
-      type: string
-      enum:
-        - blog
-        - youtube
-        - github
-        - conference_talk
-        - podcast
-      description: Type of content
-
-    BadgeType:
-      type: string
-      enum:
-        - community_builder
-        - hero
-        - ambassador
-        - user_group_leader
-      description: AWS community badge type
-
-    Visibility:
-      type: string
-      enum:
-        - private
-        - aws_only
-        - aws_community
-        - public
-      description: Content visibility level
-
-    # Search Response
     SearchResponse:
       type: object
       required:
-        - results
+        - items
         - total
         - limit
         - offset
       properties:
-        results:
+        items:
           type: array
           items:
-            $ref: '#/components/schemas/ContentSearchResult'
+            $ref: '#/components/schemas/Content'
         total:
           type: integer
           description: Total number of results matching the query
+          example: 245
         limit:
           type: integer
-          description: Maximum results per page
+          description: Number of results returned in this response
+          example: 10
         offset:
           type: integer
-          description: Number of results skipped
+          description: Pagination offset
+          example: 0
 
-    ContentSearchResult:
+    Content:
       type: object
       required:
         - id
+        - userId
         - title
         - contentType
         - visibility
-        - captureDate
         - tags
-        - isClaimed
         - urls
+        - createdAt
+        - updatedAt
       properties:
         id:
           type: string
           format: uuid
+          description: Unique content identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        userId:
+          type: string
+          format: uuid
+          description: User who created/owns the content
+          example: "660e8400-e29b-41d4-a716-446655440000"
         title:
           type: string
+          description: Content title
+          example: "Building Serverless APIs with AWS Lambda"
         description:
           type: string
           nullable: true
+          description: Content description
+          example: "Learn how to build scalable serverless APIs using AWS Lambda and API Gateway"
         contentType:
-          $ref: '#/components/schemas/ContentType'
+          type: string
+          enum: [blog, youtube, github, conference_talk, podcast, social, whitepaper, tutorial, workshop, book]
+          description: Type of content
         visibility:
-          $ref: '#/components/schemas/Visibility'
+          type: string
+          enum: [public, aws_community, aws_only, private]
+          description: Visibility level of the content
         publishDate:
           type: string
           format: date-time
           nullable: true
+          description: Original publication date
         captureDate:
           type: string
           format: date-time
+          description: Date the content was captured by our system
+        metrics:
+          type: object
+          description: Engagement metrics
+          additionalProperties: true
         tags:
           type: array
           items:
             type: string
+          description: Tags associated with the content
+          example: ["serverless", "lambda", "api-gateway", "aws"]
         isClaimed:
           type: boolean
+          description: Whether the content has been claimed by its author
         originalAuthor:
           type: string
           nullable: true
+          description: Original author if different from user
         urls:
           type: array
           items:
-            $ref: '#/components/schemas/ContentUrl'
-        author:
-          $ref: '#/components/schemas/ContentAuthor'
-          nullable: true
-        score:
-          type: number
-          format: float
-          description: Relevance score (0-1)
+            type: object
+            properties:
+              id:
+                type: string
+              url:
+                type: string
+                format: uri
+          description: URLs associated with the content
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when content was added to the system
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when content was last updated
 
-    ContentUrl:
-      type: object
-      required:
-        - id
-        - url
-      properties:
-        id:
-          type: string
-        url:
-          type: string
-          format: uri
-
-    ContentAuthor:
-      type: object
-      required:
-        - username
-        - profileSlug
-      properties:
-        username:
-          type: string
-        profileSlug:
-          type: string
-        badges:
-          type: array
-          items:
-            $ref: '#/components/schemas/BadgeType'
-
-    # Platform Stats
     PlatformStats:
       type: object
       required:
-        - contributors
-        - contentPieces
-        - dailyContent
-        - weeklyActiveUsers
+        - totalUsers
+        - totalContent
+        - topContributors
+        - contentByType
+        - recentActivity
         - uptime
         - lastUpdated
       properties:
-        contributors:
+        totalUsers:
           type: integer
-          description: Total number of active contributors
-        contentPieces:
+          description: Total number of registered users
+          example: 5200
+        totalContent:
           type: integer
-          description: Total number of content pieces
-        dailyContent:
+          description: Total number of content pieces in the catalog
+          example: 48000
+        topContributors:
           type: integer
-          description: Content added in last 24 hours
-        weeklyActiveUsers:
-          type: integer
-          description: Users created in last 7 days
+          description: Active contributors with claimed content
+          example: 1600
+        contentByType:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Distribution of content by type (blog, youtube, github, etc.)
+          example:
+            blog: 12000
+            youtube: 8500
+            github: 4200
+        recentActivity:
+          type: object
+          required:
+            - last24h
+            - last7d
+            - last30d
+          properties:
+            last24h:
+              type: integer
+              description: Number of content pieces added in the last 24 hours
+              example: 120
+            last7d:
+              type: integer
+              description: Number of content pieces added in the last 7 days
+              example: 540
+            last30d:
+              type: integer
+              description: Number of content pieces added in the last 30 days
+              example: 2200
         uptime:
           type: string
-          description: Platform uptime
+          description: Human readable uptime indicator
+          example: "24/7"
         lastUpdated:
           type: string
           format: date-time
-          description: Timestamp of last stats update
+          description: ISO timestamp indicating when the stats were last refreshed
 
-    # Authentication Requests/Responses
-    RegisterRequest:
-      type: object
-      required:
-        - email
-        - password
-        - username
-      properties:
-        email:
-          type: string
-          format: email
-          maxLength: 255
-        password:
-          type: string
-          format: password
-          minLength: 12
-          description: Must contain uppercase, lowercase, numbers, and symbols
-        username:
-          type: string
-          minLength: 3
-          maxLength: 50
-          pattern: '^[a-zA-Z0-9_-]+$'
-          description: Alphanumeric, hyphens, and underscores only
-
-    RegisterResponse:
-      type: object
-      required:
-        - userId
-        - message
-      properties:
-        userId:
-          type: string
-          format: uuid
-        message:
-          type: string
-
-    LoginRequest:
-      type: object
-      required:
-        - email
-        - password
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-          format: password
-
-    LoginResponse:
-      type: object
-      required:
-        - accessToken
-        - idToken
-        - refreshToken
-        - expiresIn
-        - user
-      properties:
-        accessToken:
-          type: string
-          description: JWT access token for API authentication
-        idToken:
-          type: string
-          description: JWT ID token containing user information
-        refreshToken:
-          type: string
-          description: Token for refreshing access/ID tokens
-        expiresIn:
-          type: integer
-          description: Token expiration time in seconds
-        user:
-          $ref: '#/components/schemas/UserProfile'
-
-    UserProfile:
-      type: object
-      required:
-        - id
-        - email
-        - username
-        - profileSlug
-        - isAdmin
-        - isAwsEmployee
-      properties:
-        id:
-          type: string
-          format: uuid
-        email:
-          type: string
-          format: email
-        username:
-          type: string
-        profileSlug:
-          type: string
-        isAdmin:
-          type: boolean
-        isAwsEmployee:
-          type: boolean
-
-    VerifyEmailRequest:
-      type: object
-      required:
-        - email
-        - confirmationCode
-      properties:
-        email:
-          type: string
-          format: email
-        confirmationCode:
-          type: string
-          minLength: 6
-          maxLength: 6
-          description: 6-digit confirmation code from email
-
-    VerifyEmailResponse:
-      type: object
-      required:
-        - message
-        - verified
-      properties:
-        message:
-          type: string
-        verified:
-          type: boolean
-
-    RefreshTokenRequest:
-      type: object
-      required:
-        - refreshToken
-      properties:
-        refreshToken:
-          type: string
-
-    RefreshTokenResponse:
-      type: object
-      required:
-        - accessToken
-        - idToken
-        - expiresIn
-      properties:
-        accessToken:
-          type: string
-        idToken:
-          type: string
-        expiresIn:
-          type: integer
-
-    # Error Responses
-    ErrorResponse:
+    Error:
       type: object
       required:
         - error
@@ -811,36 +685,444 @@ components:
             code:
               type: string
               description: Machine-readable error code
+              enum:
+                - VALIDATION_ERROR
+                - AUTHENTICATION_ERROR
+                - AUTHORIZATION_ERROR
+                - NOT_FOUND
+                - CONFLICT
+                - RATE_LIMITED
+                - INTERNAL_ERROR
+              example: "VALIDATION_ERROR"
             message:
               type: string
               description: Human-readable error message
+              example: "Missing required query parameter: q"
+            field:
+              type: string
+              description: Field that caused the error (if applicable)
+              example: "q"
             details:
               type: object
+              description: Additional error details
               additionalProperties: true
-              description: Additional error context
 
-  responses:
-    ValidationError:
-      description: Validation error
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: "VALIDATION_ERROR"
-              message: "Validation failed"
-              details:
-                fields:
-                  email: "Invalid email format"
+    UserProfile:
+      type: object
+      required:
+        - id
+        - email
+        - username
+        - profileSlug
+        - defaultVisibility
+        - socialLinks
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        profileSlug:
+          type: string
+        bio:
+          type: string
+          nullable: true
+        defaultVisibility:
+          type: string
+          enum: [public, aws_community, aws_only, private]
+        socialLinks:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of social link type to URL
+        updatedAt:
+          type: string
+          format: date-time
 
-    InternalError:
-      description: Internal server error
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: "INTERNAL_ERROR"
-              message: "An unexpected error occurred"
+    UpdateUserProfileRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+        bio:
+          type: string
+          maxLength: 500
+        defaultVisibility:
+          type: string
+          enum: [public, aws_community, aws_only, private]
+        socialLinks:
+          type: object
+          properties:
+            twitter:
+              type: string
+              format: uri
+            linkedin:
+              type: string
+              format: uri
+            github:
+              type: string
+              format: uri
+            website:
+              type: string
+              format: uri
+      example:
+        email: "builder@example.com"
+        username: "aws_builder"
+        bio: "Serverless enthusiast"
+        defaultVisibility: "aws_community"
+        socialLinks:
+          twitter: "https://twitter.com/aws_builder"
+
+    UpdateUserProfileResponse:
+      type: object
+      required:
+        - message
+        - user
+      properties:
+        message:
+          type: string
+          example: "Profile updated successfully"
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    DeleteAccountResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Account deleted successfully"
+
+    UpdatePreferencesRequest:
+      type: object
+      properties:
+        receiveNewsletter:
+          type: boolean
+        receiveContentNotifications:
+          type: boolean
+        receiveCommunityUpdates:
+          type: boolean
+      example:
+        receiveNewsletter: true
+        receiveContentNotifications: false
+        receiveCommunityUpdates: true
+
+    UpdatePreferencesResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Preferences updated successfully"
+
+    Badge:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        badgeType:
+          type: string
+          enum: [community_builder, hero, ambassador, user_group_leader]
+        awardedAt:
+          type: string
+          format: date-time
+        awardedBy:
+          type: string
+          nullable: true
+        awardedReason:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        isActive:
+          type: boolean
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelType:
+          type: string
+        url:
+          type: string
+          format: uri
+        name:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+        lastSyncAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastSyncStatus:
+          type: string
+          nullable: true
+        syncFrequency:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ContentBookmark:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        contentId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    UserFollowEdge:
+      type: object
+      properties:
+        followerId:
+          type: string
+          format: uuid
+        followingId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    UserConsentRecord:
+      type: object
+      properties:
+        consentType:
+          type: string
+          enum: [analytics, functional, marketing]
+        granted:
+          type: boolean
+        grantedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        consentVersion:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserDataExport:
+      type: object
+      description: Comprehensive GDPR export for a user
+      required:
+        - user
+        - content
+        - badges
+        - channels
+        - bookmarks
+        - follows
+        - consents
+        - exportDate
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+        badges:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        bookmarks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentBookmark'
+        follows:
+          type: object
+          properties:
+            following:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserFollowEdge'
+            followers:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserFollowEdge'
+        consents:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserConsentRecord'
+        exportDate:
+          type: string
+          format: date-time
+
+    ConsentRequest:
+      type: object
+      required:
+        - consentType
+        - granted
+      properties:
+        consentType:
+          type: string
+          enum: [analytics, functional, marketing]
+        granted:
+          type: boolean
+        consentVersion:
+          type: string
+          example: "1.0"
+
+    ConsentResponse:
+      type: object
+      required:
+        - success
+        - data
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Consent granted"
+        data:
+          type: object
+          properties:
+            consentType:
+              type: string
+            granted:
+              type: boolean
+            grantedAt:
+              type: string
+              format: date-time
+              nullable: true
+            revokedAt:
+              type: string
+              format: date-time
+              nullable: true
+            consentVersion:
+              type: string
+
+    ConsentStatusResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/UserConsentRecord'
+
+    ConsentCheckRequest:
+      type: object
+      properties:
+        consentType:
+          type: string
+          enum: [analytics, functional, marketing]
+      example:
+        consentType: analytics
+
+    ConsentCheckResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - hasConsent
+            - consentType
+            - reason
+          properties:
+            hasConsent:
+              type: boolean
+            consentType:
+              type: string
+            reason:
+              type: string
+              example: consent_not_granted
+
+    FeedbackRequest:
+      type: object
+      required:
+        - category
+        - severity
+        - message
+      properties:
+        category:
+          type: string
+          enum: [bug, feature_request, usability, other]
+        severity:
+          type: string
+          enum: [p0, p1, p2, p3, p4]
+        message:
+          type: string
+          minLength: 10
+          maxLength: 4000
+        contact:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+      example:
+        category: bug
+        severity: p1
+        message: "Export button throws an error when clicked."
+        contact: "tester@example.com"
+        metadata:
+          page: "/dashboard"
+
+    FeedbackAcceptedResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Feedback received"
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from AWS Cognito
+
+security:
+  - BearerAuth: []
+  - {} # Allow anonymous access for public endpoints

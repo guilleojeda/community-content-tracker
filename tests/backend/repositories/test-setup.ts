@@ -4,7 +4,12 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { newDb, IMemoryDb, DataType } from 'pg-mem';
 import { randomUUID } from 'crypto';
+import { spawnSync } from 'child_process';
 import { resetDatabaseCache, setTestDatabasePool } from '../../../src/backend/services/database';
+
+jest.setTimeout(120000);
+
+const INITIAL_SCHEMA_MIGRATION = '20240101000000000_initial_schema.sql';
 
 export interface TestDatabaseSetup {
   container: StartedPostgreSqlContainer | null;
@@ -195,26 +200,45 @@ export class TestDatabase {
     console.log('Running database migrations...');
 
     const useSimplifiedSchema = this.pgMemDb !== null || this.localConnectionString !== null;
-    let migrationSQL: string | null = null;
+    const connectionString = this.container
+      ? this.container.getConnectionUri()
+      : this.localConnectionString ?? 'postgresql://pg-mem.local/test';
 
-    // Install required extensions first (must be done outside transaction)
     if (!useSimplifiedSchema) {
-      try {
-        await this.pool.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
-      } catch (error) {
-        console.warn('uuid-ossp extension unavailable in test environment, skipping.');
+      const backendDir = join(__dirname, '../../../src/backend');
+
+      const result = spawnSync(
+        'npx',
+        [
+          'node-pg-migrate',
+          'up',
+          '--database-url-var',
+          'DATABASE_URL',
+          '--migrations-dir',
+          'migrations',
+        ],
+        {
+          cwd: backendDir,
+          stdio: 'inherit',
+          env: {
+            ...process.env,
+            DATABASE_URL: connectionString,
+          },
+        }
+      );
+
+      if (result.status !== 0) {
+        throw new Error('Failed to execute database migrations for tests');
       }
 
-      try {
-        await this.pool.query('CREATE EXTENSION IF NOT EXISTS vector');
-      } catch (error) {
-        console.warn('vector extension unavailable in test environment, skipping.');
-      }
+      return;
     }
+
+    let migrationSQL: string | null = null;
 
     // Read the migration file
     if (!useSimplifiedSchema) {
-      const migrationPath = join(__dirname, '../../../src/backend/migrations/001_initial_schema.sql');
+      const migrationPath = join(__dirname, '../../../src/backend/migrations', INITIAL_SCHEMA_MIGRATION);
       migrationSQL = readFileSync(migrationPath, 'utf8');
 
       migrationSQL = migrationSQL
@@ -427,10 +451,50 @@ export class TestDatabase {
 
       } else {
         await client.query(migrationSQL);
+
+        const additionalMigrationPath = join(__dirname, '../../../src/backend/migrations/011_update_gdpr_export.sql');
+        const additionalMigrationSQL = readFileSync(additionalMigrationPath, 'utf8');
+        await client.query(additionalMigrationSQL);
       }
 
       // Ensure analytics table exists for tests that depend on it
       if (!useSimplifiedSchema) {
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS channels (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+            channel_type TEXT NOT NULL,
+            url TEXT NOT NULL,
+            name TEXT,
+            enabled BOOLEAN DEFAULT true NOT NULL,
+            last_sync_at TIMESTAMPTZ,
+            last_sync_status TEXT,
+            last_sync_error TEXT,
+            sync_frequency TEXT DEFAULT 'daily' NOT NULL,
+            metadata JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+            UNIQUE(user_id, url)
+          );
+        `);
+
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS user_consent (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            consent_type TEXT NOT NULL,
+            granted BOOLEAN NOT NULL DEFAULT false,
+            granted_at TIMESTAMPTZ,
+            revoked_at TIMESTAMPTZ,
+            consent_version TEXT DEFAULT '1.0' NOT NULL,
+            ip_address TEXT,
+            user_agent TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+            UNIQUE(user_id, consent_type)
+          );
+        `);
+
         await client.query(`
           CREATE TABLE IF NOT EXISTS content_analytics (
             content_id UUID PRIMARY KEY REFERENCES content(id) ON DELETE CASCADE,

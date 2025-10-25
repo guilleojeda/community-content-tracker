@@ -3,6 +3,8 @@ import { getDatabasePool } from '../../services/database';
 import { SearchService } from '../../services/SearchService';
 import { ContentType, BadgeType, Visibility } from '@aws-community-hub/shared';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
+import { consumeRateLimit } from '../../services/rateLimiter';
+import { buildCorsHeaders } from '../../services/cors';
 
 /**
  * GET /search - Search for content
@@ -19,14 +21,34 @@ import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwat
  * - endDate: End date for date range filter (ISO 8601)
  */
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
   const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'GET,OPTIONS',
-    'Content-Type': 'application/json'
+    ...buildCorsHeaders({ origin: originHeader, methods: 'GET,OPTIONS' }),
+    'Content-Type': 'application/json',
   };
 
   try {
+    const sourceIp = event.requestContext?.identity?.sourceIp || 'anonymous';
+    const rateLimit = await consumeRateLimit(`search:${sourceIp}`, 100, 60_000, 'anon');
+
+    if (!rateLimit.allowed) {
+      return {
+        statusCode: 429,
+        headers,
+        body: JSON.stringify({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Too many search requests from this IP address'
+          }
+        })
+      };
+    }
+
+    const responseHeaders = {
+      ...headers,
+      'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+      'X-RateLimit-Reset': rateLimit.reset.toString(),
+    };
     // Parse and validate query parameters
     const query = event.queryStringParameters?.q;
 
@@ -91,7 +113,27 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     // Tags filter
     if (event.queryStringParameters?.tags) {
-      filters.tags = event.queryStringParameters.tags.split(',').map(t => t.trim());
+      const rawTags = event.queryStringParameters.tags
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean)
+        .map(tag => tag.replace(/[^\w\s-]/g, ''))
+        .filter(Boolean);
+
+      if (rawTags.length === 0) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Tags filter must include at least one valid tag',
+            },
+          }),
+        };
+      }
+
+      filters.tags = rawTags;
     }
 
     // Badges filter
@@ -239,20 +281,20 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const searchLatency = Date.now() - searchStartTime;
 
     // Log search analytics (fire and forget)
-    logSearchAnalytics({
-      query,
-      resultCount: results.total,
-      latency: searchLatency,
-      userId: viewerId,
-      filters,
-      timestamp: new Date()
-    }).catch(err => {
-      console.warn('Failed to log search analytics:', err.message);
-    });
+logSearchAnalytics({
+  query,
+  resultCount: results.total,
+  latency: searchLatency,
+  userId: viewerId,
+  filters,
+  timestamp: new Date()
+}).catch(err => {
+  console.warn('Failed to log search analytics:', err.message);
+});
 
     return {
       statusCode: 200,
-      headers,
+      headers: responseHeaders,
       body: JSON.stringify(results)
     };
   } catch (error: any) {
@@ -274,15 +316,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 /**
  * Log search analytics to CloudWatch for tracking and monitoring
  */
-async function logSearchAnalytics(analytics: {
+export async function logSearchAnalytics(analytics: {
   query: string;
   resultCount: number;
   latency: number;
   userId?: string;
   filters: any;
   timestamp: Date;
-}): Promise<void> {
-  const cloudwatch = new CloudWatchClient({
+}, client?: CloudWatchClient): Promise<void> {
+  const cloudwatch = client ?? new CloudWatchClient({
     region: process.env.AWS_REGION || 'us-east-1'
   });
 

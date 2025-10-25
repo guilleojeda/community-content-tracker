@@ -1169,10 +1169,14 @@ describe('ApiClient', () => {
       await client.getSavedSearch('saved-1');
 
       await client.updatePreferences('user-1', { receiveNewsletter: true });
-      await client.exportUserData('user-1');
-      await client.deleteAccount('user-1');
+      await client.exportUserData();
+      await client.deleteAccount();
 
       expect(mockFetch).toHaveBeenCalledTimes(10);
+      const exportCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 2];
+      expect(exportCall[0]).toBe('http://localhost:3001/api/users/me/export');
+      const deleteCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(deleteCall[0]).toBe('http://localhost:3001/api/users/me');
     });
   });
 
@@ -1336,6 +1340,39 @@ describe('ApiClient', () => {
             defaultVisibility: Visibility.PUBLIC,
           }),
         })
+      );
+    });
+
+    it('should update consent preferences', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ success: true }),
+      });
+
+      await client.manageConsent({ consentType: 'analytics', granted: true });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3001/user/consent',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ consentType: 'analytics', granted: true }),
+        })
+      );
+    });
+
+    it('should retrieve consent status', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ analytics: { granted: true } }),
+      });
+
+      const result = await client.getConsentStatus();
+      expect(result).toEqual({ analytics: { granted: true } });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3001/user/consent',
+        expect.objectContaining({ method: 'GET' })
       );
     });
   });

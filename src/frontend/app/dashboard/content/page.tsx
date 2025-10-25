@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { apiClient } from '@/api/client';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Content, ContentType, Visibility } from '@shared/types';
+import { loadSharedApiClient } from '@/lib/api/lazyClient';
 
 interface ContentFormData {
   title: string;
@@ -64,26 +64,36 @@ export default function ContentManagementPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [formSubmitting, setFormSubmitting] = useState(false);
 
-  useEffect(() => {
-    fetchContent();
-  }, [contentTypeFilter, visibilityFilter, tagsFilter]);
-
-  const fetchContent = async () => {
+  const fetchContent = useCallback(async (
+    nextContentType: string,
+    nextVisibility: string,
+    nextTags: string
+  ) => {
     setLoading(true);
     setError(null);
     try {
       const filters: ContentFilters = {};
-      if (contentTypeFilter) filters.contentType = contentTypeFilter;
-      if (visibilityFilter) filters.visibility = visibilityFilter;
-      if (tagsFilter) filters.tags = [tagsFilter];
+      if (nextContentType) filters.contentType = nextContentType;
+      if (nextVisibility) filters.visibility = nextVisibility;
+      if (nextTags) filters.tags = [nextTags];
 
-      const result = await apiClient.listContent(filters);
+      const client = await loadSharedApiClient();
+      const result = await client.listContent(filters);
       setContent(result.content || /* istanbul ignore next */ []);
     } catch (err) {
       setError('Failed to load content. Please try again.');
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    fetchContent(contentTypeFilter, visibilityFilter, tagsFilter);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleFilterChange = (nextContentType: string, nextVisibility: string, nextTags: string) => {
+    fetchContent(nextContentType, nextVisibility, nextTags);
   };
 
   const validateForm = (): boolean => {
@@ -118,7 +128,8 @@ export default function ContentManagementPage() {
     setError(null);
 
     try {
-      await apiClient.createContent({
+      const client = await loadSharedApiClient();
+      await client.createContent({
         title: formData.title,
         description: formData.description || /* istanbul ignore next */ undefined,
         contentType: formData.contentType as ContentType,
@@ -130,7 +141,7 @@ export default function ContentManagementPage() {
 
       setShowAddModal(false);
       resetForm();
-      await fetchContent();
+      await fetchContent(contentTypeFilter, visibilityFilter, tagsFilter);
     } catch (err) {
       setError('Failed to create content. Please try again.');
     } finally {
@@ -145,7 +156,8 @@ export default function ContentManagementPage() {
     setError(null);
 
     try {
-      await apiClient.updateContent(selectedContent.id, {
+      const client = await loadSharedApiClient();
+      await client.updateContent(selectedContent.id, {
         title: formData.title,
         description: formData.description || /* istanbul ignore next */ undefined,
         contentType: formData.contentType as ContentType,
@@ -157,7 +169,7 @@ export default function ContentManagementPage() {
       setShowEditModal(false);
       setSelectedContent(null);
       resetForm();
-      await fetchContent();
+      await fetchContent(contentTypeFilter, visibilityFilter, tagsFilter);
     } catch (err) {
       setError('Failed to update content. Please try again.');
     } finally {
@@ -169,10 +181,11 @@ export default function ContentManagementPage() {
     if (!selectedContent) return;
 
     try {
-      await apiClient.deleteContent(selectedContent.id);
+      const client = await loadSharedApiClient();
+      await client.deleteContent(selectedContent.id);
       setShowDeleteConfirm(false);
       setSelectedContent(null);
-      await fetchContent();
+      await fetchContent(contentTypeFilter, visibilityFilter, tagsFilter);
     } catch (err) {
       setError('Failed to delete content. Please try again.');
     }
@@ -218,10 +231,11 @@ export default function ContentManagementPage() {
     if (selectedIds.length === 0 || !bulkVisibility) return;
 
     try {
-      await apiClient.bulkUpdateVisibility(selectedIds, bulkVisibility);
+      const client = await loadSharedApiClient();
+      await client.bulkUpdateVisibility(selectedIds, bulkVisibility);
       setSelectedIds([]);
       setBulkVisibility('');
-      await fetchContent();
+      await fetchContent(contentTypeFilter, visibilityFilter, tagsFilter);
     } catch (err) {
       setError('Failed to update visibility. Please try again.');
     }
@@ -297,7 +311,11 @@ export default function ContentManagementPage() {
             <select
               id="contentTypeFilter"
               value={contentTypeFilter}
-              onChange={(e) => setContentTypeFilter(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setContentTypeFilter(value);
+                handleFilterChange(value, visibilityFilter, tagsFilter);
+              }}
               className="w-full border rounded px-3 py-2"
             >
               <option value="">All Types</option>
@@ -314,7 +332,11 @@ export default function ContentManagementPage() {
             <select
               id="visibilityFilter"
               value={visibilityFilter}
-              onChange={(e) => setVisibilityFilter(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setVisibilityFilter(value);
+                handleFilterChange(contentTypeFilter, value, tagsFilter);
+              }}
               className="w-full border rounded px-3 py-2"
             >
               <option value="">All Visibility</option>
@@ -332,7 +354,11 @@ export default function ContentManagementPage() {
               id="tagsFilter"
               type="text"
               value={tagsFilter}
-              onChange={(e) => setTagsFilter(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTagsFilter(value);
+                handleFilterChange(contentTypeFilter, visibilityFilter, value);
+              }}
               placeholder="Filter by tags"
               className="w-full border rounded px-3 py-2"
             />

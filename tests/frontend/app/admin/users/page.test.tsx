@@ -138,10 +138,9 @@ describe('AdminUsersPage', () => {
 
     await waitFor(() => expect(screen.getByText('User Management')).toBeInTheDocument());
 
+    const aliceRow = await screen.findByRole('row', { name: /alice/i });
     const rows = screen.getAllByRole('row');
     expect(rows).toHaveLength(listResponse.users.length + 1); // header + rows
-
-    const aliceRow = screen.getByRole('row', { name: /alice/i });
     await userEvent.click(aliceRow);
 
     await waitFor(() => expect(screen.getByText(/Content pieces:/)).toBeInTheDocument());

@@ -1,0 +1,37 @@
+config:
+  target: "__TARGET__"
+  plugins: {}
+  http:
+    timeout: 60
+    pool: 2000
+    maxSockets: 2000
+    keepAlive: true
+  phases:
+    - name: warmup
+      duration: 30
+      arrivalRate: 50
+    - name: spike-to-1k
+      duration: 60
+      arrivalRate: 100
+      rampTo: 1000
+    - name: bulk-import
+      duration: 30
+      arrivalRate: 200
+  defaults:
+    headers:
+      Content-Type: application/json
+
+scenarios:
+  - name: search-load
+    weight: 3
+    flow:
+      - get:
+          url: "/api/search?q=aurora"
+  - name: bulk-content-ingest
+    weight: 1
+    flow:
+      - post:
+          url: "/api/content/bulk"
+          json:
+            batchId: "{{ $uuid }}"
+            itemCount: 50000

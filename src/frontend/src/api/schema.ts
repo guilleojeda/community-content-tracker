@@ -209,7 +209,7 @@ export interface components {
                  * @example VALIDATION_ERROR
                  * @enum {string}
                  */
-                code: "VALIDATION_ERROR" | "AUTHENTICATION_ERROR" | "AUTHORIZATION_ERROR" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMIT_EXCEEDED" | "INTERNAL_ERROR";
+                code: "VALIDATION_ERROR" | "AUTHENTICATION_ERROR" | "AUTHORIZATION_ERROR" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMITED" | "INTERNAL_ERROR";
                 /**
                  * @description Human-readable error message
                  * @example Missing required query parameter: q

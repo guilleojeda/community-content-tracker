@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
+import { getCacheClient } from '../../services/cache/cache';
 
 /**
  * Valid date grouping periods for DATE_TRUNC
@@ -47,6 +48,19 @@ export async function handler(
     const groupBy = validateGroupByPeriod(params.groupBy);
 
     const pool = await getDatabasePool();
+    const cache = await getCacheClient();
+    const cacheKey = [
+      'analytics',
+      userId,
+      groupBy,
+      startDate ?? 'all',
+      endDate ?? 'all',
+    ].join(':');
+
+    const cachedResponse = await cache.get<Record<string, any>>(cacheKey);
+    if (cachedResponse) {
+      return createSuccessResponse(200, cachedResponse);
+    }
 
     // Build date filter
     let dateFilter = '';
@@ -57,13 +71,26 @@ export async function handler(
       values.push(startDate, endDate);
     }
 
+    const shouldProfileQueries = process.env.ENABLE_QUERY_PROFILING === 'true';
+    const profileQuery = async (sql: string, params: any[]) => {
+      if (!shouldProfileQueries) {
+        return;
+      }
+      try {
+        await pool.query(`EXPLAIN ANALYZE ${sql}`, params);
+      } catch (profilingError: any) {
+        console.warn('Analytics profiling failed:', profilingError?.message ?? profilingError);
+      }
+    };
+
     // Get content by type distribution
     const contentByTypeQuery = `
       SELECT content_type, COUNT(*) as count
       FROM content
-      WHERE user_id = $1 AND deleted_at IS NULL ${dateFilter}
+      WHERE user_id = $1 ${dateFilter}
       GROUP BY content_type
     `;
+    await profileQuery(contentByTypeQuery, values);
     const contentByTypeResult = await pool.query(contentByTypeQuery, values);
 
     const contentByType: Record<string, number> = {};
@@ -75,11 +102,12 @@ export async function handler(
     const topTagsQuery = `
       SELECT UNNEST(tags) as tag, COUNT(*) as count
       FROM content
-      WHERE user_id = $1 AND deleted_at IS NULL ${dateFilter}
+      WHERE user_id = $1 ${dateFilter}
       GROUP BY tag
       ORDER BY count DESC
       LIMIT 10
     `;
+    await profileQuery(topTagsQuery, values);
     const topTagsResult = await pool.query(topTagsQuery, values);
 
     const topTags = topTagsResult.rows.map((row: any) => ({
@@ -89,12 +117,13 @@ export async function handler(
 
     // Get top performing content
     const topContentQuery = `
-      SELECT id, title, content_type, (metrics->>'views')::int as views
+      SELECT id, title, content_type, COALESCE((metrics->>'views')::int, 0) as views
       FROM content
-      WHERE user_id = $1 AND deleted_at IS NULL ${dateFilter}
-      ORDER BY (metrics->>'views')::int DESC NULLS LAST
+      WHERE user_id = $1 ${dateFilter}
+      ORDER BY COALESCE((metrics->>'views')::int, 0) DESC NULLS LAST
       LIMIT 10
     `;
+    await profileQuery(topContentQuery, values);
     const topContentResult = await pool.query(topContentQuery, values);
 
     const topContent = topContentResult.rows.map((row: any) => ({
@@ -115,6 +144,7 @@ export async function handler(
       GROUP BY date
       ORDER BY date
     `;
+    await profileQuery(timeSeriesQuery, values);
     const timeSeriesResult = await pool.query(timeSeriesQuery, values);
 
     const timeSeries = timeSeriesResult.rows.map((row: any) => ({
@@ -122,7 +152,7 @@ export async function handler(
       views: parseInt(row.views, 10),
     }));
 
-    return createSuccessResponse(200, {
+    const payload = {
       success: true,
       data: {
         contentByType,
@@ -132,7 +162,11 @@ export async function handler(
         dateRange: startDate && endDate ? { startDate, endDate } : null,
         groupBy,
       },
-    });
+    };
+
+    await cache.set(cacheKey, payload, 300);
+
+    return createSuccessResponse(200, payload);
   } catch (error: any) {
     console.error('User analytics error:', error);
     return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to fetch analytics');

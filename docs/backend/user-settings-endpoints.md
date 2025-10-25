@@ -128,7 +128,7 @@ All 6 missing backend API endpoints for user settings have been successfully imp
 ---
 
 ### 4. Export User Data (GDPR Compliance)
-**Endpoint:** `GET /users/:id/export`
+**Endpoint:** `GET /users/me/export`
 **File:** `/src/backend/lambdas/users/export-data.ts`
 **Test File:** `/tests/backend/lambdas/users/export-data.test.ts`
 
@@ -137,7 +137,7 @@ All 6 missing backend API endpoints for user settings have been successfully imp
 - Uses database stored procedure `export_user_data()`
 - Returns downloadable JSON file with proper Content-Disposition header
 - Includes user profile, all content, all badges
-- Admin users can export any user's data
+- Admin users can export any user's data via `/users/{userId}/export`
 
 **Response:**
 ```typescript
@@ -170,7 +170,7 @@ Content-Disposition: attachment; filename="user-data-{userId}-{timestamp}.json"
 **Test File:** `/tests/backend/lambdas/users/update-profile.test.ts`
 
 **Features:**
-- Updates username, bio, and default visibility
+- Updates username, bio, default visibility, and social links
 - Validates username uniqueness using UserRepository
 - Auto-generates profile slug from username
 - Partial updates supported (only provided fields are updated)
@@ -182,6 +182,7 @@ Content-Disposition: attachment; filename="user-data-{userId}-{timestamp}.json"
   username?: string;           // 3-30 chars, alphanumeric + underscore
   bio?: string;                // Max 500 chars, can be empty string to clear
   defaultVisibility?: Visibility; // 'private' | 'aws_only' | 'aws_community' | 'public'
+  socialLinks?: SocialLinks;   // Optional URLs for twitter, linkedin, github, website
 }
 ```
 
@@ -195,6 +196,7 @@ Content-Disposition: attachment; filename="user-data-{userId}-{timestamp}.json"
     profileSlug: string;
     bio?: string;
     defaultVisibility: Visibility;
+    socialLinks?: SocialLinks;
     updatedAt: Date;
   };
 }
@@ -212,7 +214,7 @@ Content-Disposition: attachment; filename="user-data-{userId}-{timestamp}.json"
 ---
 
 ### 6. Delete Account
-**Endpoint:** `DELETE /users/:id`
+**Endpoint:** `DELETE /users/me`
 **File:** `/src/backend/lambdas/users/delete-account.ts`
 **Test File:** `/tests/backend/lambdas/users/delete-account.test.ts`
 
@@ -220,7 +222,7 @@ Content-Disposition: attachment; filename="user-data-{userId}-{timestamp}.json"
 - Complete account deletion from both Cognito and database
 - Uses database stored procedure `delete_user_data()` for cascading deletes
 - Logs deletion for audit trail (userId, email, username, deletedBy, timestamp)
-- Admin users can delete any account
+- Admin users can delete any account by targeting `/users/{userId}`
 - Continues with database deletion even if Cognito deletion fails (prevents orphaned data)
 
 **Response:**

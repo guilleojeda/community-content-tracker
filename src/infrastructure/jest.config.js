@@ -13,6 +13,12 @@ module.exports = {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
+  coverageThreshold: {
+    global: {
+      lines: 90,
+      statements: 90
+    }
+  },
   forceExit: true,
   maxWorkers: '50%'
 };

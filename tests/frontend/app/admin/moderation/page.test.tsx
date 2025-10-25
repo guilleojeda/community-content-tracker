@@ -64,10 +64,10 @@ describe('AdminModerationPage', () => {
     render(<AdminModerationPage />);
 
     await waitFor(() => expect(screen.getByText('Content Moderation')).toBeInTheDocument());
-    expect(screen.getByText('Flagged Guide')).toBeInTheDocument();
+    await screen.findByText('Flagged Guide');
 
     await userEvent.selectOptions(screen.getByLabelText('Status Filter'), 'flagged');
-    expect(screen.getByText('Flagged Guide')).toBeInTheDocument();
+    await screen.findByText('Flagged Guide');
   });
 
   it('approves content and displays success message', async () => {

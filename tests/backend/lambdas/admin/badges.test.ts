@@ -683,6 +683,62 @@ describe('Badge Management Handler', () => {
       expect(body.success).toBe(true);
       expect(body.data.successful.length).toBeGreaterThan(0);
     });
+
+    it('should revoke badges in bulk and report failures', async () => {
+      const event: Partial<APIGatewayProxyEvent> = {
+        httpMethod: 'POST',
+        path: '/admin/badges/bulk',
+        body: JSON.stringify({
+          operation: 'revoke',
+          userIds: ['user-1', 'user-2', 'user-3'],
+          badgeType: 'hero'
+        }),
+        requestContext: {
+          authorizer: {
+            claims: {
+              sub: 'admin-456',
+              'cognito:groups': ['Admin']
+            }
+          }
+        } as any
+      };
+
+      mockBadgeRepo.revokeBadge.mockImplementation(async (userId: string) => userId !== 'user-2');
+
+      const response = await handler(event as APIGatewayProxyEvent, mockContext);
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.successful).toEqual(['user-1', 'user-3']);
+      expect(body.data.failed).toEqual([{ userId: 'user-2', reason: 'Badge not found' }]);
+    });
+
+    it('should reject unsupported bulk operations', async () => {
+      const event: Partial<APIGatewayProxyEvent> = {
+        httpMethod: 'POST',
+        path: '/admin/badges/bulk',
+        body: JSON.stringify({
+          operation: 'suspend',
+          userIds: ['user-1'],
+          badgeType: 'hero'
+        }),
+        requestContext: {
+          authorizer: {
+            claims: {
+              sub: 'admin-456',
+              'cognito:groups': ['Admin']
+            }
+          }
+        } as any
+      };
+
+      const response = await handler(event as APIGatewayProxyEvent, mockContext);
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.error.message).toContain('Unsupported bulk operation');
+    });
   });
 
   describe('Error Handling', () => {

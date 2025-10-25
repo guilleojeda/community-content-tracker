@@ -22,6 +22,10 @@ tags:
     description: Content management
   - name: Users
     description: User management
+  - name: Consent
+    description: User consent management and GDPR preferences
+  - name: Feedback
+    description: Beta feedback collection
 
 paths:
   /search:
@@ -139,6 +143,360 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PlatformStats'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/{id}:
+    patch:
+      summary: Update user profile (right to rectification)
+      description: Allows authenticated users to update their own profile details including contact preferences and social links.
+      operationId: updateUserProfile
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of the user whose profile is being updated. Use `me` to reference the authenticated user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserProfileRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateUserProfileResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to update another user's profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete user account (right to erasure)
+      description: Permanently deletes the authenticated user's account, associated content, and Cognito identity.
+      operationId: deleteAccount
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: me
+          description: ID of user to delete. Use `me` for the authenticated user.
+      responses:
+        '200':
+          description: Account deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteAccountResponse'
+        '400':
+          description: Validation error (missing user ID)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to delete another user's account without admin privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to delete account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/{id}/export:
+    get:
+      summary: Export user data (GDPR data portability)
+      description: Returns a full JSON export of the authenticated user's data, including content, channels, badges, consents, and relationships.
+      operationId: exportUserData
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: me
+          description: ID of user to export. Use `me` for the authenticated user.
+      responses:
+        '200':
+          description: Export generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDataExport'
+        '400':
+          description: Missing user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to export another user's data without admin privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to generate export
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/{id}/preferences:
+    patch:
+      summary: Update email and notification preferences
+      description: Enables users to update their communication preferences for newsletters and community notifications.
+      operationId: updateUserPreferences
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID of user whose preferences will be updated. Use `me` for the authenticated user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePreferencesRequest'
+      responses:
+        '200':
+          description: Preferences updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdatePreferencesResponse'
+        '400':
+          description: Validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Attempted to update another user's preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /user/consent:
+    post:
+      summary: Grant or revoke user consent
+      description: Records the user's consent decision for analytics, functional, or marketing categories.
+      operationId: manageConsent
+      tags:
+        - Consent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentRequest'
+      responses:
+        '200':
+          description: Consent updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentResponse'
+        '400':
+          description: Invalid consent payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to update consent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      summary: Retrieve consent status for all categories
+      description: Returns the current consent decisions for the authenticated user.
+      operationId: getConsentStatus
+      tags:
+        - Consent
+      responses:
+        '200':
+          description: Consent status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentStatusResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to retrieve consent status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /user/consent/check:
+    post:
+      summary: Check whether a user has granted consent
+      description: Internal helper to verify if a specific consent type is granted for the current user.
+      operationId: checkUserConsent
+      tags:
+        - Consent
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentCheckRequest'
+      responses:
+        '200':
+          description: Consent check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentCheckResponse'
+        '500':
+          description: Failed to check consent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /feedback:
+    post:
+      summary: Submit beta feedback
+      description: Stores feedback submitted by beta participants. Requires beta features to be enabled.
+      operationId: submitFeedback
+      tags:
+        - Feedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+      responses:
+        '202':
+          description: Feedback accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackAcceptedResponse'
+        '400':
+          description: Invalid feedback payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Feedback collection disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to store feedback
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
   schemas:
@@ -333,7 +691,7 @@ components:
                 - AUTHORIZATION_ERROR
                 - NOT_FOUND
                 - CONFLICT
-                - RATE_LIMIT_EXCEEDED
+                - RATE_LIMITED
                 - INTERNAL_ERROR
               example: "VALIDATION_ERROR"
             message:
@@ -348,6 +706,415 @@ components:
               type: object
               description: Additional error details
               additionalProperties: true
+
+    UserProfile:
+      type: object
+      required:
+        - id
+        - email
+        - username
+        - profileSlug
+        - defaultVisibility
+        - socialLinks
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        profileSlug:
+          type: string
+        bio:
+          type: string
+          nullable: true
+        defaultVisibility:
+          type: string
+          enum: [public, aws_community, aws_only, private]
+        socialLinks:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of social link type to URL
+        updatedAt:
+          type: string
+          format: date-time
+
+    UpdateUserProfileRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+        bio:
+          type: string
+          maxLength: 500
+        defaultVisibility:
+          type: string
+          enum: [public, aws_community, aws_only, private]
+        socialLinks:
+          type: object
+          properties:
+            twitter:
+              type: string
+              format: uri
+            linkedin:
+              type: string
+              format: uri
+            github:
+              type: string
+              format: uri
+            website:
+              type: string
+              format: uri
+      example:
+        email: "builder@example.com"
+        username: "aws_builder"
+        bio: "Serverless enthusiast"
+        defaultVisibility: "aws_community"
+        socialLinks:
+          twitter: "https://twitter.com/aws_builder"
+
+    UpdateUserProfileResponse:
+      type: object
+      required:
+        - message
+        - user
+      properties:
+        message:
+          type: string
+          example: "Profile updated successfully"
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    DeleteAccountResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Account deleted successfully"
+
+    UpdatePreferencesRequest:
+      type: object
+      properties:
+        receiveNewsletter:
+          type: boolean
+        receiveContentNotifications:
+          type: boolean
+        receiveCommunityUpdates:
+          type: boolean
+      example:
+        receiveNewsletter: true
+        receiveContentNotifications: false
+        receiveCommunityUpdates: true
+
+    UpdatePreferencesResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Preferences updated successfully"
+
+    Badge:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        badgeType:
+          type: string
+          enum: [community_builder, hero, ambassador, user_group_leader]
+        awardedAt:
+          type: string
+          format: date-time
+        awardedBy:
+          type: string
+          nullable: true
+        awardedReason:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        isActive:
+          type: boolean
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelType:
+          type: string
+        url:
+          type: string
+          format: uri
+        name:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+        lastSyncAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastSyncStatus:
+          type: string
+          nullable: true
+        syncFrequency:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ContentBookmark:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        contentId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    UserFollowEdge:
+      type: object
+      properties:
+        followerId:
+          type: string
+          format: uuid
+        followingId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    UserConsentRecord:
+      type: object
+      properties:
+        consentType:
+          type: string
+          enum: [analytics, functional, marketing]
+        granted:
+          type: boolean
+        grantedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        consentVersion:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserDataExport:
+      type: object
+      description: Comprehensive GDPR export for a user
+      required:
+        - user
+        - content
+        - badges
+        - channels
+        - bookmarks
+        - follows
+        - consents
+        - exportDate
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+        badges:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        bookmarks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentBookmark'
+        follows:
+          type: object
+          properties:
+            following:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserFollowEdge'
+            followers:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserFollowEdge'
+        consents:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserConsentRecord'
+        exportDate:
+          type: string
+          format: date-time
+
+    ConsentRequest:
+      type: object
+      required:
+        - consentType
+        - granted
+      properties:
+        consentType:
+          type: string
+          enum: [analytics, functional, marketing]
+        granted:
+          type: boolean
+        consentVersion:
+          type: string
+          example: "1.0"
+
+    ConsentResponse:
+      type: object
+      required:
+        - success
+        - data
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Consent granted"
+        data:
+          type: object
+          properties:
+            consentType:
+              type: string
+            granted:
+              type: boolean
+            grantedAt:
+              type: string
+              format: date-time
+              nullable: true
+            revokedAt:
+              type: string
+              format: date-time
+              nullable: true
+            consentVersion:
+              type: string
+
+    ConsentStatusResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/UserConsentRecord'
+
+    ConsentCheckRequest:
+      type: object
+      properties:
+        consentType:
+          type: string
+          enum: [analytics, functional, marketing]
+      example:
+        consentType: analytics
+
+    ConsentCheckResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - hasConsent
+            - consentType
+            - reason
+          properties:
+            hasConsent:
+              type: boolean
+            consentType:
+              type: string
+            reason:
+              type: string
+              example: consent_not_granted
+
+    FeedbackRequest:
+      type: object
+      required:
+        - category
+        - severity
+        - message
+      properties:
+        category:
+          type: string
+          enum: [bug, feature_request, usability, other]
+        severity:
+          type: string
+          enum: [p0, p1, p2, p3, p4]
+        message:
+          type: string
+          minLength: 10
+          maxLength: 4000
+        contact:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+      example:
+        category: bug
+        severity: p1
+        message: "Export button throws an error when clicked."
+        contact: "tester@example.com"
+        metadata:
+          page: "/dashboard"
+
+    FeedbackAcceptedResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Feedback received"
 
   securitySchemes:
     BearerAuth:

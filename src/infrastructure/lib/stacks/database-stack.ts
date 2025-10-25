@@ -5,6 +5,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as path from 'path';
 import { Construct } from 'constructs';
 import { PgVectorEnabler } from '../constructs/pgvector-enabler';
 
@@ -65,7 +66,8 @@ export class DatabaseStack extends cdk.Stack {
     cdk.Tags.of(this).add('Environment', props?.environment || 'dev');
 
     const environment = props?.environment || 'dev';
-    const isProd = environment === 'prod';
+    const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
+    const isProductionLike = productionLikeEnvs.has(environment);
 
     // Create VPC with public and private subnets
     this.vpc = new ec2.Vpc(this, 'CommunityContentVpc', {
@@ -111,7 +113,7 @@ export class DatabaseStack extends cdk.Stack {
 
     // Create security group for bastion host (only in non-prod)
     let bastionSecurityGroup: ec2.SecurityGroup | undefined;
-    if (!isProd) {
+    if (!isProductionLike) {
       bastionSecurityGroup = new ec2.SecurityGroup(this, 'BastionSecurityGroup', {
         vpc: this.vpc,
         description: 'Security group for bastion host',
@@ -140,7 +142,7 @@ export class DatabaseStack extends cdk.Stack {
     );
 
     // Allow bastion host to connect to database (dev only)
-    if (!isProd && bastionSecurityGroup) {
+    if (!isProductionLike && bastionSecurityGroup) {
       databaseSecurityGroup.addIngressRule(
         bastionSecurityGroup,
         ec2.Port.tcp(5432),
@@ -163,18 +165,34 @@ export class DatabaseStack extends cdk.Stack {
     this.youtubeApiKeySecret = new secretsmanager.Secret(this, 'YouTubeApiKeySecret', {
       description: 'YouTube Data API v3 key for content scraping',
       secretName: `youtube-api-key-${environment}`,
-      secretStringValue: cdk.SecretValue.unsafePlainText(
-        process.env.YOUTUBE_API_KEY || 'REPLACE_ME_WITH_ACTUAL_KEY'
-      ),
+      secretStringValue: cdk.SecretValue.unsafePlainText(process.env.YOUTUBE_API_KEY ?? ''),
+    });
+    const youtubeRotationFunction = this.createExternalApiKeyRotationFunction(
+      'YouTubeApiKeyRotationFunction',
+      this.youtubeApiKeySecret,
+      `/${environment}/api-keys/youtube/pending`,
+      'YouTube API key'
+    );
+    this.youtubeApiKeySecret.addRotationSchedule('YouTubeApiKeyRotationSchedule', {
+      rotationLambda: youtubeRotationFunction,
+      automaticallyAfter: cdk.Duration.days(isProductionLike ? 30 : 60),
     });
 
     // Create GitHub token secret (placeholder - should be set via CLI)
     this.githubTokenSecret = new secretsmanager.Secret(this, 'GitHubTokenSecret', {
       description: 'GitHub personal access token for content scraping',
       secretName: `github-token-${environment}`,
-      secretStringValue: cdk.SecretValue.unsafePlainText(
-        process.env.GITHUB_TOKEN || 'REPLACE_ME_WITH_ACTUAL_TOKEN'
-      ),
+      secretStringValue: cdk.SecretValue.unsafePlainText(process.env.GITHUB_TOKEN ?? ''),
+    });
+    const githubRotationFunction = this.createExternalApiKeyRotationFunction(
+      'GitHubTokenRotationFunction',
+      this.githubTokenSecret,
+      `/${environment}/api-keys/github/pending`,
+      'GitHub access token'
+    );
+    this.githubTokenSecret.addRotationSchedule('GitHubTokenRotationSchedule', {
+      rotationLambda: githubRotationFunction,
+      automaticallyAfter: cdk.Duration.days(isProductionLike ? 30 : 60),
     });
 
     // Create DB subnet group
@@ -195,19 +213,26 @@ export class DatabaseStack extends cdk.Stack {
       vpc: this.vpc,
       subnetGroup,
       securityGroups: [databaseSecurityGroup],
-      serverlessV2MinCapacity: props?.minCapacity || 0.5,
-      serverlessV2MaxCapacity: props?.maxCapacity || (isProd ? 4 : 1),
+      serverlessV2MinCapacity: props?.minCapacity ?? (isProductionLike ? 1 : 0.5),
+      serverlessV2MaxCapacity: props?.maxCapacity ?? (isProductionLike ? 4 : 1),
       backup: {
-        retention: cdk.Duration.days(props?.backupRetentionDays || 7),
+        retention: cdk.Duration.days(props?.backupRetentionDays ?? (isProductionLike ? 30 : 7)),
         preferredWindow: '03:00-04:00',
       },
       preferredMaintenanceWindow: 'Sun:04:00-Sun:05:00',
-      deletionProtection: props?.deletionProtection || false,
+      deletionProtection: props?.deletionProtection ?? isProductionLike,
       cloudwatchLogsExports: ['postgresql'],
-      cloudwatchLogsRetention: isProd ? cdk.aws_logs.RetentionDays.ONE_MONTH : cdk.aws_logs.RetentionDays.ONE_WEEK,
+      cloudwatchLogsRetention: isProductionLike ? cdk.aws_logs.RetentionDays.ONE_MONTH : cdk.aws_logs.RetentionDays.ONE_WEEK,
       defaultDatabaseName: 'community_content',
       writer: rds.ClusterInstance.serverlessV2('writer'),
     });
+
+    if (environment !== 'dev') {
+      const rotationInterval = isProductionLike ? cdk.Duration.days(30) : cdk.Duration.days(60);
+      this.cluster.addRotationSingleUser({
+        automaticallyAfter: rotationInterval,
+      });
+    }
 
     // Create RDS Proxy for connection pooling
     this.proxy = new rds.DatabaseProxy(this, 'DatabaseProxy', {
@@ -229,7 +254,7 @@ export class DatabaseStack extends cdk.Stack {
     });
 
     // Create bastion host for development access (only in non-prod environments)
-    if (!isProd) {
+    if (!isProductionLike) {
       const bastionRole = new iam.Role(this, 'BastionRole', {
         assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
         managedPolicies: [
@@ -322,5 +347,55 @@ echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
     cdk.Tags.of(this).add('Environment', environment);
     cdk.Tags.of(this).add('Project', 'community-content-hub');
     cdk.Tags.of(this).add('Component', 'database');
+  }
+
+  private createExternalApiKeyRotationFunction(
+    id: string,
+    secret: secretsmanager.Secret,
+    pendingParameterName: string,
+    alias: string
+  ): lambda.Function {
+    const functionTimeout = cdk.Duration.seconds(30);
+    const rotationFunction = new lambda.Function(this, id, {
+      description: `Secrets Manager rotation for ${alias}`,
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/api-key-rotation')),
+      timeout: functionTimeout,
+      memorySize: 256,
+      environment: {
+        PENDING_PARAMETER_NAME: pendingParameterName,
+        SECRET_ALIAS: alias,
+      },
+    });
+
+    rotationFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'secretsmanager:DescribeSecret',
+          'secretsmanager:PutSecretValue',
+          'secretsmanager:UpdateSecretVersionStage',
+          'secretsmanager:GetSecretValue',
+        ],
+        resources: [secret.secretArn],
+      })
+    );
+
+    const parameterArn = cdk.Stack.of(this).formatArn({
+      service: 'ssm',
+      resource: 'parameter',
+      resourceName: pendingParameterName.startsWith('/')
+        ? pendingParameterName.slice(1)
+        : pendingParameterName,
+    });
+
+    rotationFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameter', 'ssm:DeleteParameter'],
+        resources: [parameterArn],
+      })
+    );
+
+    return rotationFunction;
   }
 }

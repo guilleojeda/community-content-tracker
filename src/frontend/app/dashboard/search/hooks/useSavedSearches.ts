@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { SearchFilters } from '@shared/types';
-import { apiClient, SavedSearchEntry, SavedSearchListResponse } from '@/api';
+import type { SavedSearchEntry, SavedSearchListResponse } from '@/api';
+import { loadSharedApiClient } from '@/lib/api/lazyClient';
 
 interface SaveSearchInput {
   query: string;
@@ -20,7 +21,8 @@ export function useSavedSearches() {
     setLoading(true);
     setError(null);
     try {
-      const response: SavedSearchListResponse = await apiClient.getSavedSearches();
+      const client = await loadSharedApiClient();
+      const response: SavedSearchListResponse = await client.getSavedSearches();
       setSavedSearches(response.searches);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load saved searches');
@@ -56,8 +58,9 @@ export function useSavedSearches() {
             JSON.stringify(entry.filters ?? {}) === JSON.stringify(filtersPayload)
         );
 
+        const client = await loadSharedApiClient();
         if (existing) {
-          const updated = await apiClient.updateSavedSearch(existing.id, {
+          const updated = await client.updateSavedSearch(existing.id, {
             name,
             query: search.query,
             filters: filtersPayload,
@@ -69,7 +72,7 @@ export function useSavedSearches() {
           return updated;
         }
 
-        const created = await apiClient.saveSearch({
+        const created = await client.saveSearch({
           name,
           query: search.query,
           filters: filtersPayload,
@@ -87,7 +90,8 @@ export function useSavedSearches() {
 
   const deleteSavedSearch = useCallback(async (id: string) => {
     try {
-      await apiClient.deleteSavedSearch(id);
+      const client = await loadSharedApiClient();
+      await client.deleteSavedSearch(id);
       setSavedSearches(prev => prev.filter(entry => entry.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete saved search');
@@ -102,7 +106,8 @@ export function useSavedSearches() {
       }
 
       try {
-        const fetched = await apiClient.getSavedSearch(id);
+        const client = await loadSharedApiClient();
+        const fetched = await client.getSavedSearch(id);
         setSavedSearches(prev => {
           const without = prev.filter(entry => entry.id !== fetched.id);
           return [fetched, ...without];
@@ -125,7 +130,8 @@ export function useSavedSearches() {
           updates.filters as SearchFilters | undefined,
           updates.sortBy
         );
-        const updated = await apiClient.updateSavedSearch(id, {
+        const client = await loadSharedApiClient();
+        const updated = await client.updateSavedSearch(id, {
           name: updates.name,
           query: updates.query,
           filters: filtersPayload,

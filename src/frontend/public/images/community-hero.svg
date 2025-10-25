@@ -1,0 +1,20 @@
+<svg width="320" height="240" viewBox="0 0 320 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Community illustration">
+  <defs>
+    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f2937" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+  </defs>
+  <rect width="320" height="240" fill="url(#gradient)" rx="24" />
+  <g fill="#f97316" opacity="0.8">
+    <circle cx="60" cy="60" r="18" />
+    <circle cx="260" cy="70" r="22" />
+    <circle cx="110" cy="170" r="20" />
+    <circle cx="210" cy="165" r="18" />
+  </g>
+  <g stroke="#f3f4f6" stroke-width="4" opacity="0.7">
+    <line x1="60" y1="60" x2="110" y2="170" />
+    <line x1="110" y1="170" x2="210" y2="165" />
+    <line x1="210" y1="165" x2="260" y2="70" />
+  </g>
+</svg>

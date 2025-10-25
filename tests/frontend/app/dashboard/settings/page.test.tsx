@@ -4,6 +4,10 @@ import { useRouter } from 'next/navigation';
 import SettingsPage from '@/app/dashboard/settings/page';
 import { Visibility, User, MfaSetupResponse, UpdatePreferencesResponse, ChangePasswordResponse, UpdatePreferencesRequest, UpdateUserRequest } from '@/shared/types';
 
+jest.mock('next/image', () => ({ src, alt, unoptimized, priority, ...rest }: any) => (
+  <img data-next-image="true" src={src} alt={alt} {...rest} />
+));
+
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(),
 }));
@@ -14,8 +18,9 @@ const mockApiClient = {
   changePassword: jest.fn<Promise<ChangePasswordResponse>, [string, { currentPassword: string; newPassword: string }]>(),
   setupMfa: jest.fn<Promise<MfaSetupResponse>, [string]>(),
   updatePreferences: jest.fn<Promise<UpdatePreferencesResponse>, [string, UpdatePreferencesRequest]>(),
-  exportUserData: jest.fn<Promise<any>, [string]>(),
-  deleteAccount: jest.fn<Promise<any>, [string]>(),
+  exportUserData: jest.fn<Promise<any>, []>(),
+  deleteAccount: jest.fn<Promise<any>, []>(),
+  manageConsent: jest.fn(),
 };
 
 jest.mock('@/api/client', () => ({
@@ -31,6 +36,10 @@ const defaultUser: User = {
   defaultVisibility: Visibility.PUBLIC,
   isAdmin: false,
   isAwsEmployee: false,
+  socialLinks: {
+    twitter: 'https://twitter.com/testuser',
+    linkedin: 'https://linkedin.com/in/testuser',
+  },
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-02'),
 };
@@ -108,8 +117,66 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
 
     await waitFor(() => {
-      expect(mockApiClient.updateUserProfile).toHaveBeenCalledWith(defaultUser.id, expect.objectContaining({ username: 'updated' }));
+      expect(mockApiClient.updateUserProfile).toHaveBeenCalledWith(
+        defaultUser.id,
+        expect.objectContaining({ email: defaultUser.email, username: 'updated' })
+      );
       expect(screen.getByText(/profile updated successfully/i)).toBeInTheDocument();
+    });
+  });
+
+  it('updates email and notifies user to verify change', async () => {
+    const updatedEmail = 'new-email@example.com';
+    mockApiClient.updateUserProfile.mockResolvedValue({ ...defaultUser, email: updatedEmail });
+
+    await setupPage();
+
+    fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: updatedEmail } });
+    fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(() => {
+      expect(mockApiClient.updateUserProfile).toHaveBeenCalledWith(
+        defaultUser.id,
+        expect.objectContaining({ email: updatedEmail })
+      );
+      expect(
+        screen.getByText(/please verify your new email address/i)
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('saves social links updates', async () => {
+    mockApiClient.updateUserProfile.mockResolvedValue({
+      ...defaultUser,
+      socialLinks: {
+        twitter: 'https://twitter.com/newuser',
+        linkedin: 'https://linkedin.com/in/newuser',
+        github: 'https://github.com/newuser',
+        website: 'https://example.com',
+      },
+    });
+
+    await setupPage();
+
+    fireEvent.change(screen.getByLabelText(/twitter url/i), { target: { value: 'https://twitter.com/newuser' } });
+    fireEvent.change(screen.getByLabelText(/linkedin url/i), { target: { value: 'https://linkedin.com/in/newuser' } });
+    fireEvent.change(screen.getByLabelText(/github url/i), { target: { value: 'https://github.com/newuser' } });
+    fireEvent.change(screen.getByLabelText(/website url/i), { target: { value: 'https://example.com' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(() => {
+      expect(mockApiClient.updateUserProfile).toHaveBeenCalledWith(
+        defaultUser.id,
+        expect.objectContaining({
+          socialLinks: {
+            twitter: 'https://twitter.com/newuser',
+            linkedin: 'https://linkedin.com/in/newuser',
+            github: 'https://github.com/newuser',
+            website: 'https://example.com',
+          },
+        })
+      );
     });
   });
 
@@ -155,6 +222,7 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(mockApiClient.setupMfa).toHaveBeenCalledWith(defaultUser.id);
       expect(screen.getByText(/scan this qr code/i)).toBeInTheDocument();
+      expect(screen.getByRole('img', { name: /mfa qr code/i })).toHaveAttribute('data-next-image', 'true');
     });
   });
 
@@ -208,7 +276,7 @@ describe('SettingsPage', () => {
     });
 
     await waitFor(() => {
-      expect(mockApiClient.exportUserData).toHaveBeenCalledWith(defaultUser.id);
+      expect(mockApiClient.exportUserData).toHaveBeenCalled();
       expect(clickSpy).toHaveBeenCalled();
     });
 
@@ -238,7 +306,7 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /delete my account/i }));
 
     await waitFor(() => {
-      expect(mockApiClient.deleteAccount).toHaveBeenCalledWith(defaultUser.id);
+      expect(mockApiClient.deleteAccount).toHaveBeenCalled();
       expect(mockPush).toHaveBeenCalledWith('/');
     });
   });
@@ -440,7 +508,7 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /delete my account/i }));
 
     await waitFor(() => {
-      expect(mockApiClient.deleteAccount).toHaveBeenCalledWith(defaultUser.id);
+      expect(mockApiClient.deleteAccount).toHaveBeenCalled();
       expect(screen.getByText(/delete failed/i)).toBeInTheDocument();
     });
   });

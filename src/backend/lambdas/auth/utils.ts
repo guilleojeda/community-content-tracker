@@ -1,5 +1,8 @@
 import { UserRepository } from '../../repositories/UserRepository';
 import { BadgeType, RegisterRequest, LoginRequest, RefreshTokenRequest, VerifyEmailRequest } from '../../../shared/types';
+import { consumeRateLimit, clearRateLimiterStore } from '../../services/rateLimiter';
+import { buildCorsHeaders } from '../../services/cors';
+import type { CorsOptions } from '../../services/cors';
 
 /**
  * Rate limiting information
@@ -17,17 +20,6 @@ export interface UserBadge {
   badgeType: BadgeType;
   earnedAt: Date;
 }
-
-/**
- * Rate limit store interface
- */
-interface RateLimitEntry {
-  count: number;
-  resetTime: number;
-}
-
-// In-memory rate limit store (in production, use Redis or DynamoDB)
-const rateLimitStore = new Map<string, RateLimitEntry>();
 
 /**
  * Extract JWT token from Authorization header
@@ -67,63 +59,16 @@ export function isAdminOnlyEndpoint(resource: string): boolean {
  */
 export async function checkRateLimit(
   userId: string,
-  limitPerHour: number = 1000
+  limitPerInterval: number = 1000,
+  windowMs: number = 60_000
 ): Promise<RateLimitInfo> {
-  try {
-    const now = Date.now();
-    const resetTime = now + (60 * 60 * 1000); // 1 hour from now
-    const key = `ratelimit:${userId}`;
+  const result = await consumeRateLimit(userId, limitPerInterval, windowMs, 'user');
 
-    // Get current rate limit entry
-    let entry = rateLimitStore.get(key);
-
-    // Reset if expired
-    if (!entry || entry.resetTime <= now) {
-      entry = {
-        count: 0,
-        resetTime,
-      };
-    }
-
-    // Increment counter
-    entry.count += 1;
-
-    // Check if limit exceeded
-    if (entry.count > limitPerHour) {
-      return {
-        allowed: false,
-        remainingRequests: 0,
-        resetTime: entry.resetTime,
-      };
-    }
-
-    // Update store
-    rateLimitStore.set(key, entry);
-
-    // Clean up expired entries periodically
-    if (rateLimitStore.size > 10000) {
-      for (const [storeKey, storeEntry] of rateLimitStore.entries()) {
-        if (storeEntry.resetTime <= now) {
-          rateLimitStore.delete(storeKey);
-        }
-      }
-    }
-
-    return {
-      allowed: true,
-      remainingRequests: limitPerHour - entry.count,
-      resetTime: entry.resetTime,
-    };
-
-  } catch (error) {
-    console.error('Rate limit check failed:', error);
-    // Fail open - allow request if rate limiting fails
-    return {
-      allowed: true,
-      remainingRequests: 1000,
-      resetTime: Date.now() + (60 * 60 * 1000),
-    };
-  }
+  return {
+    allowed: result.allowed,
+    remainingRequests: result.remaining,
+    resetTime: result.reset,
+  };
 }
 
 /**
@@ -344,7 +289,7 @@ export function canAccessContent(
  * Log security events for monitoring
  */
 export interface SecurityEvent {
-  eventType: 'AUTHENTICATION_FAILED' | 'RATE_LIMIT_EXCEEDED' | 'UNAUTHORIZED_ACCESS' |
+  eventType: 'AUTHENTICATION_FAILED' | 'RATE_LIMITED' | 'UNAUTHORIZED_ACCESS' |
              'ADMIN_ACCESS' | 'TOKEN_EXPIRED' | 'SUSPICIOUS_ACTIVITY';
   userId?: string;
   ipAddress?: string;
@@ -422,7 +367,7 @@ export function detectSuspiciousActivity(
  * Clear rate limit store (useful for testing)
  */
 export function clearRateLimitStore(): void {
-  rateLimitStore.clear();
+  clearRateLimiterStore();
 }
 
 /**
@@ -653,12 +598,10 @@ export function generateProfileSlug(username: string, existingSlugs: string[] = 
 /**
  * Create standardized CORS headers
  */
-export function createCorsHeaders(): Record<string, string> {
+export function createCorsHeaders(options: CorsOptions = {}): Record<string, string> {
+  const cors = buildCorsHeaders(options);
   return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Max-Age': '86400',
+    ...cors,
     'Content-Type': 'application/json',
   };
 }
@@ -670,7 +613,8 @@ export function createErrorResponse(
   statusCode: number,
   errorCode: string,
   message: string,
-  details?: Record<string, any>
+  details?: Record<string, any>,
+  corsOptions?: CorsOptions
 ): {
   statusCode: number;
   headers: Record<string, string>;
@@ -678,7 +622,7 @@ export function createErrorResponse(
 } {
   return {
     statusCode,
-    headers: createCorsHeaders(),
+    headers: createCorsHeaders(corsOptions),
     body: JSON.stringify({
       error: {
         code: errorCode,
@@ -694,7 +638,8 @@ export function createErrorResponse(
  */
 export function createSuccessResponse(
   statusCode: number = 200,
-  data: Record<string, any>
+  data: Record<string, any>,
+  corsOptions?: CorsOptions
 ): {
   statusCode: number;
   headers: Record<string, string>;
@@ -702,7 +647,7 @@ export function createSuccessResponse(
 } {
   return {
     statusCode,
-    headers: createCorsHeaders(),
+    headers: createCorsHeaders(corsOptions),
     body: JSON.stringify(data),
   };
 }
@@ -885,7 +830,7 @@ export function healthCheck(): { status: 'healthy' | 'degraded' | 'unhealthy'; d
     return {
       status: 'healthy',
       details: {
-        rateLimitStoreSize: rateLimitStore.size,
+        rateLimitStoreSize: 'n/a',
         timestamp: now,
         version: '1.0.0',
       },

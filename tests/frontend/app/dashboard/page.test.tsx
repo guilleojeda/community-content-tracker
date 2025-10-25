@@ -12,15 +12,6 @@ jest.mock('@/api/client', () => ({
   getAuthenticatedApiClient: jest.fn(),
 }));
 
-jest.mock('recharts', () => ({
-  PieChart: ({ children }: any) => <div data-testid="pie-chart">{children}</div>,
-  Pie: ({ children }: any) => <div data-testid="pie">{children}</div>,
-  Cell: () => <div data-testid="cell" />,
-  ResponsiveContainer: ({ children }: any) => <div data-testid="responsive-container">{children}</div>,
-  Tooltip: () => <div data-testid="tooltip" />,
-  Legend: () => <div data-testid="legend" />,
-}));
-
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
   return {
@@ -281,7 +272,7 @@ describe('DashboardPage', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Visibility Distribution')).toBeInTheDocument();
-        expect(screen.getByTestId('pie-chart')).toBeInTheDocument();
+        expect(screen.getByTestId('visibility-chart')).toBeInTheDocument();
       });
     });
   });

@@ -1,28 +1,26 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  apiClient,
-  UserAnalyticsData,
-  CsvDownload,
-} from '@/api';
+import dynamic from 'next/dynamic';
+import type { UserAnalyticsData, CsvDownload } from '@/api';
 import { downloadBlob } from '@/utils/download';
 import { BadgeType, ContentType, ExportHistoryEntry } from '@shared/types';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip,
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-  Legend,
-} from 'recharts';
+import { EmptyState } from './components/EmptyState';
+import { loadSharedApiClient } from '@/lib/api/lazyClient';
+
+const AnalyticsVisualizations = dynamic(
+  () => import('./components/AnalyticsVisualizations'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="space-y-6">
+        <div className="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
+          Loading charts…
+        </div>
+      </div>
+    ),
+  }
+);
 
 const PROGRAM_EXPORT_OPTIONS = [
   { value: 'community_builder', label: 'Community Builders' },
@@ -30,8 +28,6 @@ const PROGRAM_EXPORT_OPTIONS = [
   { value: 'ambassador', label: 'Ambassadors' },
   { value: 'user_group_leader', label: 'User Group Leaders' },
 ] as const;
-
-const CHART_COLORS = ['#2563eb', '#16a34a', '#f97316', '#a855f7', '#f43f5e', '#14b8a6'];
 
 export default function AnalyticsDashboardPage(): JSX.Element {
   const [analytics, setAnalytics] = useState<UserAnalyticsData | null>(null);
@@ -62,13 +58,14 @@ export default function AnalyticsDashboardPage(): JSX.Element {
     setError(null);
     try {
       const params = { ...filters, ...override };
-      const data = await apiClient.getUserAnalytics({
+      const client = await loadSharedApiClient();
+      const data = await client.getUserAnalytics({
         startDate: params.startDate,
         endDate: params.endDate,
         groupBy: params.groupBy,
       });
       setAnalytics(data);
-      apiClient
+      client
         .trackAnalyticsEvents({
           eventType: 'page_view',
           metadata: {
@@ -93,7 +90,8 @@ export default function AnalyticsDashboardPage(): JSX.Element {
     try {
       const limit = override?.limit ?? historyPagination.limit ?? 10;
       const offset = override?.offset ?? (override?.offset === 0 ? 0 : historyPagination.offset ?? 0);
-      const response = await apiClient.getExportHistory({ limit, offset });
+      const client = await loadSharedApiClient();
+      const response = await client.getExportHistory({ limit, offset });
       setHistory(response.history);
       setHistoryPagination({
         total: response.total,
@@ -116,7 +114,8 @@ export default function AnalyticsDashboardPage(): JSX.Element {
   const handleExportAnalytics = async () => {
     setExporting(true);
     try {
-      const download = await apiClient.exportAnalyticsCsv(filters);
+      const client = await loadSharedApiClient();
+      const download = await client.exportAnalyticsCsv(filters);
       triggerDownload(download, 'analytics-export.csv');
       setMessage('Analytics CSV exported successfully.');
       await loadExportHistory({ offset: 0 });
@@ -130,7 +129,8 @@ export default function AnalyticsDashboardPage(): JSX.Element {
   const handleProgramExport = async () => {
     setExporting(true);
     try {
-      const download = await apiClient.exportProgramCsv({
+      const client = await loadSharedApiClient();
+      const download = await client.exportProgramCsv({
         programType: exportProgram,
         startDate: exportRange.startDate,
         endDate: exportRange.endDate,
@@ -257,108 +257,13 @@ export default function AnalyticsDashboardPage(): JSX.Element {
 
       {!loading && analytics && (
         <div className="space-y-6">
-          <section className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900">Content Views Over Time</h2>
-              <p className="text-sm text-gray-500">
-                Engagement trend grouped by {filters.groupBy}.
-              </p>
-              <div className="mt-4 h-64">
-                {timeSeries.length === 0 ? (
-                  <EmptyState message="No analytics data for the selected range." />
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={timeSeries}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis
-                        dataKey="date"
-                        tickFormatter={value => new Date(value).toLocaleDateString()}
-                      />
-                      <YAxis />
-                      <Tooltip
-                        labelFormatter={value => new Date(value).toLocaleString()}
-                      />
-                      <Line type="monotone" dataKey="views" stroke="#2563eb" strokeWidth={2} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900">Channel Performance</h2>
-              <p className="text-sm text-gray-500">
-                Distribution of content types published on the platform.
-              </p>
-              <div className="mt-4 h-64">
-                {contentDistribution.length === 0 ? (
-                  <EmptyState message="Add content to view channel performance." />
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={contentDistribution}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="type" tickFormatter={value => value.replace(/_/g, ' ')} />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="value" fill="#16a34a" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900">Topic Distribution</h2>
-              <p className="text-sm text-gray-500">
-                Top tags across your published content.
-              </p>
-              <div className="mt-4 h-64">
-                {topTags.length === 0 ? (
-                  <EmptyState message="No tag analytics available yet." />
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={topTags}
-                        dataKey="count"
-                        nameKey="tag"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={100}
-                        label={({ name }) => name}
-                      >
-                        {topTags.map((_, index) => (
-                          <Cell key={index} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900">Top Performing Content</h2>
-              <p className="text-sm text-gray-500">
-                Content items ranked by total views.
-              </p>
-              <div className="mt-4 space-y-3">
-                {topContent.length === 0 && (
-                  <EmptyState message="Performance metrics unavailable for the selected range." />
-                )}
-                {topContent.map(item => (
-                  <div key={item.id} className="rounded border border-gray-100 bg-gray-50 px-4 py-3 text-sm">
-                    <p className="font-medium text-gray-900">{item.title}</p>
-                    <p className="text-xs text-gray-500">
-                      {item.contentType} · {item.views.toLocaleString()} views
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
+          <AnalyticsVisualizations
+            timeSeries={timeSeries}
+            contentDistribution={contentDistribution}
+            topTags={topTags}
+            topContent={topContent}
+            groupBy={filters.groupBy}
+          />
 
           <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900">Exports</h2>
@@ -522,14 +427,6 @@ export default function AnalyticsDashboardPage(): JSX.Element {
           </section>
         </div>
       )}
-    </div>
-  );
-}
-
-function EmptyState({ message }: { message: string }): JSX.Element {
-  return (
-    <div className="flex h-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-sm text-gray-500">
-      {message}
     </div>
   );
 }

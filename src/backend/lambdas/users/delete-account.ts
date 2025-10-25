@@ -1,5 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { CognitoIdentityProviderClient, DeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { CognitoIdentityProviderClient, DeleteUserCommand, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { UserRepository } from '../../repositories/UserRepository';
 import { DeleteAccountResponse } from '../../../shared/types';
 import {
@@ -10,6 +10,7 @@ import {
 import { verifyJwtToken, TokenVerifierConfig } from '../auth/tokenVerifier';
 import { getDatabasePool } from '../../services/database';
 import { getAuthEnvironment } from '../auth/config';
+import { AuditLogService } from '../../services/AuditLogService';
 
 // Cognito client instance
 let cognitoClient: CognitoIdentityProviderClient | null = null;
@@ -53,17 +54,20 @@ function getTokenVerifierConfig(): TokenVerifierConfig {
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('Delete account request:', JSON.stringify(event, null, 2));
 
+  const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
+  const corsOptions = { origin: originHeader, methods: 'DELETE,OPTIONS', allowCredentials: true };
+
   try {
     // Extract user ID from path parameters
-    const userId = event.pathParameters?.id;
-    if (!userId) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required');
+    const rawUserId = event.pathParameters?.id;
+    if (!rawUserId) {
+      return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required', undefined, corsOptions);
     }
 
     // Extract and verify access token
     const accessToken = extractTokenFromHeader(event.headers.Authorization);
     if (!accessToken) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required');
+      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required', undefined, corsOptions);
     }
 
     // Verify token and get user
@@ -75,20 +79,21 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (!verificationResult.isValid || !verificationResult.user) {
       console.error('Token verification failed:', verificationResult.error);
-      return createErrorResponse(401, 'AUTH_INVALID', 'Invalid authentication token');
+      return createErrorResponse(401, 'AUTH_INVALID', 'Invalid authentication token', undefined, corsOptions);
     }
 
     const authenticatedUser = verificationResult.user;
+    const targetUserId = rawUserId === 'me' ? authenticatedUser.id : rawUserId;
 
     // Check if authenticated user is deleting their own account (or is admin)
-    if (authenticatedUser.id !== userId && !authenticatedUser.isAdmin) {
-      return createErrorResponse(403, 'PERMISSION_DENIED', 'You can only delete your own account');
+    if (authenticatedUser.id !== targetUserId && !authenticatedUser.isAdmin) {
+      return createErrorResponse(403, 'PERMISSION_DENIED', 'You can only delete your own account', undefined, corsOptions);
     }
 
     // Get user to verify existence
-    const userToDelete = await userRepository.findById(userId);
+    const userToDelete = await userRepository.findById(targetUserId);
     if (!userToDelete) {
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+      return createErrorResponse(404, 'NOT_FOUND', 'User not found', undefined, corsOptions);
     }
 
     // Log deletion for audit trail
@@ -102,14 +107,28 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     // Step 1: Delete from Cognito
     const cognito = getCognitoClient();
+    const isSelfDelete = authenticatedUser.id === targetUserId;
 
     try {
-      await cognito.send(
-        new DeleteUserCommand({
-          AccessToken: accessToken,
-        })
-      );
-      console.log('User deleted from Cognito:', userId);
+      if (isSelfDelete) {
+        await cognito.send(
+          new DeleteUserCommand({
+            AccessToken: accessToken,
+          })
+        );
+      } else {
+        if (!tokenConfig.cognitoUserPoolId || !userToDelete.cognitoSub) {
+          throw new Error('Missing Cognito identifiers for administrative deletion');
+        }
+
+        await cognito.send(
+          new AdminDeleteUserCommand({
+            UserPoolId: tokenConfig.cognitoUserPoolId,
+            Username: userToDelete.cognitoSub,
+          })
+        );
+      }
+      console.log('User deleted from Cognito:', targetUserId);
     } catch (cognitoError: any) {
       console.error('Cognito deletion error:', cognitoError);
       // Continue with database deletion even if Cognito fails
@@ -120,25 +139,45 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     // Step 2: Delete from database (cascades to all related tables)
     let deleted: boolean;
     try {
-      deleted = await userRepository.deleteUserData(userId);
+      deleted = await userRepository.deleteUserData(targetUserId);
     } catch (dbError: any) {
       console.error('Database deletion error:', dbError);
-      return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to delete user data from database');
+      return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to delete user data from database', undefined, corsOptions);
     }
 
     if (!deleted) {
-      return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to delete user data from database');
+      return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to delete user data from database', undefined, corsOptions);
     }
 
-    console.log('Account deleted successfully for user:', userId);
+    console.log('Account deleted successfully for user:', targetUserId);
+
+    const auditLog = new AuditLogService(dbPool);
+    await auditLog.log({
+      userId: isSelfDelete ? null : authenticatedUser.id,
+      action: 'user.account.delete',
+      resourceType: 'user',
+      resourceId: targetUserId,
+      oldValues: {
+        email: userToDelete.email,
+        username: userToDelete.username,
+      },
+      newValues: {
+        deletedBy: authenticatedUser.id,
+        deletionMode: isSelfDelete ? 'self_service' : 'administrative',
+      },
+    });
 
     const response: DeleteAccountResponse = {
       message: 'Account deleted successfully',
     };
 
-    return createSuccessResponse(200, response);
+    return createSuccessResponse(200, response, corsOptions);
   } catch (error: any) {
     console.error('Unexpected account deletion error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while deleting account');
+    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while deleting account', undefined, {
+      origin: originHeader,
+      methods: 'DELETE,OPTIONS',
+      allowCredentials: true,
+    });
   }
 }

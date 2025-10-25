@@ -207,4 +207,32 @@ describe('useSavedSearches', () => {
     expect(updated).toBeNull();
     expect(result.current.error).toBe('Update failed');
   });
+
+  it('surfaces errors when deleting a saved search fails', async () => {
+    mockedApiClient.deleteSavedSearch.mockRejectedValueOnce(new Error('Delete failed'));
+
+    const { result } = renderHook(() => useSavedSearches());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.deleteSavedSearch('missing-id');
+    });
+
+    expect(result.current.error).toBe('Delete failed');
+  });
+
+  it('returns null and sets error when loadSearch API call fails', async () => {
+    mockedApiClient.getSavedSearch.mockRejectedValueOnce(new Error('Load failed'));
+
+    const { result } = renderHook(() => useSavedSearches());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let loaded: SavedSearchEntry | null = sampleSearch;
+    await act(async () => {
+      loaded = await result.current.loadSearch('unknown-id');
+    });
+
+    expect(loaded).toBeNull();
+    expect(result.current.error).toBe('Load failed');
+  });
 });

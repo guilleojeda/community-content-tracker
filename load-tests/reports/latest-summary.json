@@ -1,0 +1,10 @@
+{
+  "durationSeconds": 120.388,
+  "scenariosCompleted": 40500,
+  "requestsCompleted": 40500,
+  "responsesCompleted": 40500,
+  "failedUsers": 0,
+  "latencyP95": 1,
+  "throughputRps": 328,
+  "errors": {}
+}

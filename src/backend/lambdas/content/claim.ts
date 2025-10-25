@@ -9,6 +9,7 @@ import {
   parseRequestBody,
 } from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
+import { buildCorsHeaders } from '../../services/cors';
 
 interface ClaimRequest {
   contentIds?: string[];
@@ -31,6 +32,9 @@ export async function handler(
 ): Promise<APIGatewayProxyResult> {
   console.log('Claim content request:', JSON.stringify(event, null, 2));
 
+  const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
+  const corsOptions = { origin: originHeader, methods: 'POST,OPTIONS', allowCredentials: true };
+
   try {
     // Extract user ID from authorizer context
     const userId = event.requestContext.authorizer?.userId;
@@ -41,7 +45,9 @@ export async function handler(
       return createErrorResponse(
         401,
         'AUTH_REQUIRED',
-        'Authentication required'
+        'Authentication required',
+        undefined,
+        corsOptions
       );
     }
 
@@ -54,7 +60,7 @@ export async function handler(
     // Get claiming user details for matching
     const claimingUser = await userRepository.findById(userId);
     if (!claimingUser) {
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+      return createErrorResponse(404, 'NOT_FOUND', 'User not found', undefined, corsOptions);
     }
 
     // Check if admin override is requested
@@ -63,7 +69,9 @@ export async function handler(
       return createErrorResponse(
         403,
         'PERMISSION_DENIED',
-        'Admin privileges required for admin override'
+        'Admin privileges required for admin override',
+        undefined,
+        corsOptions
       );
     }
 
@@ -85,7 +93,9 @@ export async function handler(
         return createErrorResponse(
           400,
           'VALIDATION_ERROR',
-          'contentIds array is required for bulk claim'
+          'contentIds array is required for bulk claim',
+          undefined,
+          corsOptions
         );
       }
 
@@ -220,12 +230,14 @@ export async function handler(
         return createSuccessResponse(200, {
           message: result.message || 'Content claimed successfully',
           contentId: result.contentId,
-        });
+        }, corsOptions);
       } else {
         return createErrorResponse(
           400,
           'CLAIM_FAILED',
-          result.message || 'Failed to claim content'
+          result.message || 'Failed to claim content',
+          undefined,
+          corsOptions
         );
       }
     } else {
@@ -236,8 +248,8 @@ export async function handler(
       return {
         statusCode,
         headers: {
+          ...buildCorsHeaders(corsOptions),
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           message: `Claimed ${successCount} of ${contentIds.length} content items`,
@@ -256,7 +268,9 @@ export async function handler(
     return createErrorResponse(
       500,
       'INTERNAL_ERROR',
-      'An unexpected error occurred'
+      'An unexpected error occurred',
+      undefined,
+      corsOptions
     );
   }
 }

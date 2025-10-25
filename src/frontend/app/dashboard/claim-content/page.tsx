@@ -6,8 +6,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { apiClient } from '@/api/client';
 import { Content, ContentType } from '@shared/types';
+import { loadSharedApiClient } from '@/lib/api/lazyClient';
 
 interface Notification {
   type: 'success' | 'error' | 'info';
@@ -45,7 +45,8 @@ export default function ClaimContentPage() {
     setError(null);
 
     try {
-      const response = await apiClient.getUnclaimedContent(filters);
+      const client = await loadSharedApiClient();
+      const response = await client.getUnclaimedContent(filters);
       setContent(response.content);
       setTotal(response.total);
     } catch (err) {
@@ -107,7 +108,8 @@ export default function ClaimContentPage() {
       async () => {
         setConfirmDialog(null);
         try {
-          await apiClient.claimContent(contentId);
+          const client = await loadSharedApiClient();
+          await client.claimContent(contentId);
           showNotification('success', 'Successfully claimed content');
           setContent(prev => prev.filter(c => c.id !== contentId));
           setTotal(prev => prev - 1);
@@ -128,7 +130,8 @@ export default function ClaimContentPage() {
       async () => {
         setConfirmDialog(null);
         try {
-          const result = await apiClient.bulkClaimContent(Array.from(selectedIds));
+          const client = await loadSharedApiClient();
+          const result = await client.bulkClaimContent(Array.from(selectedIds));
 
           if (result.failed > 0) {
             showNotification(

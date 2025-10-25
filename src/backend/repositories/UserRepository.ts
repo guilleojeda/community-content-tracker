@@ -1,6 +1,7 @@
 import { Pool, PoolClient } from 'pg';
 import { BaseRepository, FindAllOptions } from './BaseRepository';
-import { User, Visibility } from '@aws-community-hub/shared';
+import { Visibility } from '@aws-community-hub/shared';
+import type { User, SocialLinks } from '@aws-community-hub/shared';
 
 export interface UserSearchOptions extends FindAllOptions {
   includeAwsEmployees?: boolean;
@@ -22,6 +23,7 @@ export interface UserCreateData {
   isAdmin?: boolean;
   isAwsEmployee?: boolean;
   bio?: string | null;
+  socialLinks?: SocialLinks | null;
   receiveNewsletter?: boolean;
   receiveContentNotifications?: boolean;
   receiveCommunityUpdates?: boolean;
@@ -35,6 +37,7 @@ export interface UserUpdateData {
   isAdmin?: boolean;
   isAwsEmployee?: boolean;
   bio?: string | null;
+  socialLinks?: SocialLinks | null;
   receiveNewsletter?: boolean;
   receiveContentNotifications?: boolean;
   receiveCommunityUpdates?: boolean;
@@ -44,9 +47,14 @@ export interface GDPRExportData {
   user: User;
   content: any[];
   badges: any[];
+  channels: any[];
   bookmarks: any[];
-  follows: any[];
-  export_date: Date;
+  follows: {
+    following: any[];
+    followers: any[];
+  };
+  consents: any[];
+  export_date: string;
 }
 
 /**
@@ -74,6 +82,7 @@ export class UserRepository extends BaseRepository {
       isAdmin: row.is_admin,
       isAwsEmployee: row.is_aws_employee,
       bio: row.bio ?? undefined,
+      socialLinks: row.social_links ? (row.social_links as SocialLinks) : undefined,
       receiveNewsletter: row.receive_newsletter ?? undefined,
       receiveContentNotifications: row.receive_content_notifications ?? undefined,
       receiveCommunityUpdates: row.receive_community_updates ?? undefined,
@@ -96,6 +105,7 @@ export class UserRepository extends BaseRepository {
     if (data.isAdmin !== undefined) transformed.is_admin = data.isAdmin;
     if (data.isAwsEmployee !== undefined) transformed.is_aws_employee = data.isAwsEmployee;
     if (data.bio !== undefined) transformed.bio = data.bio;
+    if (data.socialLinks !== undefined) transformed.social_links = data.socialLinks ?? {};
     if (data.receiveNewsletter !== undefined) transformed.receive_newsletter = data.receiveNewsletter;
     if (data.receiveContentNotifications !== undefined) {
       transformed.receive_content_notifications = data.receiveContentNotifications;
@@ -407,23 +417,49 @@ export class UserRepository extends BaseRepository {
         return null;
       }
 
-      const [contentResult, badgeResult, bookmarkResult, followingResult, followersResult] = await Promise.all([
-        this.executeQuery('SELECT * FROM content WHERE user_id = $1 ORDER BY created_at DESC', [userId]),
+      const [
+        contentResult,
+        badgeResult,
+        bookmarkResult,
+        followingResult,
+        followersResult,
+        channelResult,
+        consentResult
+      ] = await Promise.all([
+        this.executeQuery(
+          `SELECT c.*,
+            COALESCE(
+              (
+                SELECT json_agg(json_build_object('id', cu.id, 'url', cu.url))
+                FROM content_urls cu
+                WHERE cu.content_id = c.id
+              ),
+              '[]'::json
+            ) AS urls
+          FROM content c
+          WHERE c.user_id = $1
+          ORDER BY c.created_at DESC`,
+          [userId]
+        ),
         this.executeQuery('SELECT * FROM user_badges WHERE user_id = $1 AND is_active = true', [userId]),
         this.executeQuery('SELECT * FROM content_bookmarks WHERE user_id = $1', [userId]),
         this.executeQuery('SELECT * FROM user_follows WHERE follower_id = $1', [userId]),
         this.executeQuery('SELECT * FROM user_follows WHERE following_id = $1', [userId]),
+        this.executeQuery('SELECT * FROM channels WHERE user_id = $1 ORDER BY created_at DESC', [userId]),
+        this.executeQuery('SELECT * FROM user_consent WHERE user_id = $1', [userId]),
       ]);
 
       return {
         user: userResult.rows[0],
         content: contentResult.rows,
         badges: badgeResult.rows,
+        channels: channelResult.rows,
         bookmarks: bookmarkResult.rows,
         follows: {
           following: followingResult.rows,
           followers: followersResult.rows,
         },
+        consents: consentResult.rows,
         export_date: new Date().toISOString(),
       };
     }
@@ -448,7 +484,8 @@ export class UserRepository extends BaseRepository {
    */
   async deleteUserData(userId: string): Promise<boolean> {
     if (process.env.TEST_DB_INMEMORY === 'true') {
-      const client = await this.pool.connect();
+      const pool = this.pool as Pool;
+      const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await client.query('DELETE FROM content_bookmarks WHERE user_id = $1', [userId]);
@@ -456,7 +493,7 @@ export class UserRepository extends BaseRepository {
         await client.query('DELETE FROM content WHERE user_id = $1', [userId]);
         const deleteResult = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
         await client.query('COMMIT');
-        return deleteResult.rowCount > 0;
+        return (deleteResult?.rowCount ?? 0) > 0;
       } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error deleting user data:', error);

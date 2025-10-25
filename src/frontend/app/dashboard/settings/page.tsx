@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { User, Visibility } from '@shared/types';
-import { getAuthenticatedApiClient } from '@/api/client';
+import Image from 'next/image';
+import { User, Visibility, SocialLinks } from '@shared/types';
+import { loadAuthenticatedApiClient } from '@/lib/api/lazyClient';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -12,8 +13,10 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
 
   // Profile state
+  const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
+  const [socialLinks, setSocialLinks] = useState<SocialLinks>({});
   const [defaultVisibility, setDefaultVisibility] = useState<Visibility>(Visibility.PUBLIC);
   const [profileSuccess, setProfileSuccess] = useState('');
   const [profileError, setProfileError] = useState('');
@@ -48,8 +51,6 @@ export default function SettingsPage() {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
-  const apiClient = getAuthenticatedApiClient();
-
   useEffect(() => {
     fetchUserData();
   }, []);
@@ -65,10 +66,13 @@ export default function SettingsPage() {
         return;
       }
 
+      const apiClient = await loadAuthenticatedApiClient();
       const userData = await apiClient.getCurrentUser();
       setUser(userData);
+      setEmail(userData.email);
       setUsername(userData.username);
       setBio(userData.bio || /* istanbul ignore next */ '');
+      setSocialLinks(userData.socialLinks || {});
       setDefaultVisibility(userData.defaultVisibility);
 
       // Initialize MFA status from user data
@@ -111,13 +115,23 @@ export default function SettingsPage() {
     }
 
     try {
+      const apiClient = await loadAuthenticatedApiClient();
       const updatedUser = await apiClient.updateUserProfile(user.id, {
+        email: email.trim(),
         username,
         bio,
         defaultVisibility,
+        socialLinks,
       });
       setUser(updatedUser);
-      setProfileSuccess('Profile updated successfully');
+      setEmail(updatedUser.email);
+      setSocialLinks(updatedUser.socialLinks || {});
+      const emailChanged = updatedUser.email !== user.email;
+      setProfileSuccess(
+        emailChanged
+          ? 'Profile updated successfully. Please verify your new email address via the confirmation link we just sent.'
+          : 'Profile updated successfully'
+      );
 
       setTimeout(() => setProfileSuccess(''), 5000);
     } catch (err: any) {
@@ -191,6 +205,7 @@ export default function SettingsPage() {
     }
 
     try {
+      const apiClient = await loadAuthenticatedApiClient();
       await apiClient.changePassword(user.id, {
         currentPassword,
         newPassword,
@@ -223,6 +238,7 @@ export default function SettingsPage() {
     }
 
     try {
+      const apiClient = await loadAuthenticatedApiClient();
       const data = await apiClient.setupMfa(user.id);
       setMfaQrCode(data.qrCode);
       setMfaSecret(data.secret);
@@ -249,6 +265,7 @@ export default function SettingsPage() {
     }
 
     try {
+      const apiClient = await loadAuthenticatedApiClient();
       await apiClient.updatePreferences(user.id, {
         receiveNewsletter,
         receiveContentNotifications,
@@ -279,6 +296,7 @@ export default function SettingsPage() {
     }
 
     try {
+      const apiClient = await loadAuthenticatedApiClient();
       const data = await apiClient.exportUserData(user.id);
 
       // Create and download JSON file
@@ -319,6 +337,7 @@ export default function SettingsPage() {
     }
 
     try {
+      const apiClient = await loadAuthenticatedApiClient();
       await apiClient.deleteAccount(user.id);
 
       // Clear tokens and redirect
@@ -362,6 +381,23 @@ export default function SettingsPage() {
 
           <form onSubmit={handleProfileUpdate} className="space-y-4">
             <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                Email
+              </label>
+              <input
+                type="email"
+                id="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Updating your email will trigger a verification email to confirm the change.
+              </p>
+            </div>
+
+            <div>
               <label htmlFor="username" className="block text-sm font-medium text-gray-700">
                 Username
               </label>
@@ -403,6 +439,61 @@ export default function SettingsPage() {
                 <option value={Visibility.AWS_COMMUNITY}>AWS Community</option>
                 <option value={Visibility.PUBLIC}>Public</option>
               </select>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label htmlFor="social-twitter" className="block text-sm font-medium text-gray-700">
+                  Twitter URL
+                </label>
+                <input
+                  type="url"
+                  id="social-twitter"
+                  value={socialLinks.twitter ?? ''}
+                  onChange={(e) => setSocialLinks(prev => ({ ...prev, twitter: e.target.value }))}
+                  placeholder="https://twitter.com/your-handle"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="social-linkedin" className="block text-sm font-medium text-gray-700">
+                  LinkedIn URL
+                </label>
+                <input
+                  type="url"
+                  id="social-linkedin"
+                  value={socialLinks.linkedin ?? ''}
+                  onChange={(e) => setSocialLinks(prev => ({ ...prev, linkedin: e.target.value }))}
+                  placeholder="https://linkedin.com/in/you"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="social-github" className="block text-sm font-medium text-gray-700">
+                  GitHub URL
+                </label>
+                <input
+                  type="url"
+                  id="social-github"
+                  value={socialLinks.github ?? ''}
+                  onChange={(e) => setSocialLinks(prev => ({ ...prev, github: e.target.value }))}
+                  placeholder="https://github.com/you"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="social-website" className="block text-sm font-medium text-gray-700">
+                  Website URL
+                </label>
+                <input
+                  type="url"
+                  id="social-website"
+                  value={socialLinks.website ?? ''}
+                  onChange={(e) => setSocialLinks(prev => ({ ...prev, website: e.target.value }))}
+                  placeholder="https://example.com"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
             </div>
 
             {profileError && (
@@ -540,7 +631,14 @@ export default function SettingsPage() {
             ) : (
               <div>
                 <p className="text-sm text-gray-600 mb-2">Scan this QR code with your authenticator app:</p>
-                <img src={mfaQrCode} alt="MFA QR Code" className="w-48 h-48" />
+                <Image
+                  src={mfaQrCode}
+                  alt="MFA QR Code"
+                  width={192}
+                  height={192}
+                  className="w-48 h-48"
+                  unoptimized
+                />
                 <p className="text-xs text-gray-500 mt-2">Secret: {mfaSecret}</p>
               </div>
             )}

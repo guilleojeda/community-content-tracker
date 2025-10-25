@@ -4,25 +4,30 @@ import { ContentType, Visibility, CreateContentRequest, ApiErrorResponse } from 
 import { ContentRepository, ContentCreateData } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { getDatabasePool } from '../../services/database';
+import { buildCorsHeaders } from '../../services/cors';
 
 // CORS headers
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-};
+const getCorsHeaders = (origin?: string | null) => ({
+  ...buildCorsHeaders({ origin, methods: 'GET,POST,PUT,DELETE,OPTIONS', allowCredentials: true }),
+  'Content-Type': 'application/json',
+});
 
 // Response builders
-const successResponse = (statusCode: number, body: any): APIGatewayProxyResult => ({
+const successResponse = (statusCode: number, body: any, origin?: string | null): APIGatewayProxyResult => ({
   statusCode,
   headers: {
-    ...CORS_HEADERS,
-    'Content-Type': 'application/json',
+    ...getCorsHeaders(origin),
   },
   body: JSON.stringify(body),
 });
 
-const errorResponse = (statusCode: number, code: string, message: string, details?: any): APIGatewayProxyResult => {
+const errorResponse = (
+  statusCode: number,
+  code: string,
+  message: string,
+  details?: any,
+  origin?: string | null
+): APIGatewayProxyResult => {
   const response: ApiErrorResponse = {
     error: {
       code,
@@ -34,8 +39,7 @@ const errorResponse = (statusCode: number, code: string, message: string, detail
   return {
     statusCode,
     headers: {
-      ...CORS_HEADERS,
-      'Content-Type': 'application/json',
+      ...getCorsHeaders(origin),
     },
     body: JSON.stringify(response),
   };
@@ -172,10 +176,17 @@ export const handler = async (
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> => {
+  const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
+  const respondError = (status: number, code: string, message: string, details?: any) =>
+    errorResponse(status, code, message, details, originHeader);
+  const respondSuccess = (status: number, body: any) =>
+    successResponse(status, body, originHeader);
+
   try {
+
     // Check authentication
     if (!event.requestContext?.authorizer?.userId) {
-      return errorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+      return respondError(401, 'AUTH_REQUIRED', 'Authentication required');
     }
 
     const userId = event.requestContext.authorizer.userId;
@@ -184,17 +195,17 @@ export const handler = async (
     let requestBody: CreateContentRequest;
     try {
       if (!event.body) {
-        return errorResponse(400, 'VALIDATION_ERROR', 'Request body is required');
+        return respondError(400, 'VALIDATION_ERROR', 'Request body is required');
       }
       requestBody = JSON.parse(event.body);
     } catch (error) {
-      return errorResponse(400, 'VALIDATION_ERROR', 'Invalid JSON in request body');
+      return respondError(400, 'VALIDATION_ERROR', 'Invalid JSON in request body');
     }
 
     // Validate input
     const validation = validateInput(requestBody);
     if (!validation.isValid) {
-      return errorResponse(400, 'VALIDATION_ERROR', 'Validation failed', validation.errors);
+      return respondError(400, 'VALIDATION_ERROR', 'Validation failed', validation.errors);
     }
 
     // Get database connection
@@ -207,11 +218,11 @@ export const handler = async (
       user = await userRepo.findById(userId);
     } catch (error) {
       // Handle invalid UUID format or other database errors
-      return errorResponse(401, 'AUTH_INVALID', 'Invalid user');
+      return respondError(401, 'AUTH_INVALID', 'Invalid user');
     }
 
     if (!user) {
-      return errorResponse(401, 'AUTH_INVALID', 'Invalid user');
+      return respondError(401, 'AUTH_INVALID', 'Invalid user');
     }
 
     // Trim whitespace from title and tags
@@ -224,7 +235,7 @@ export const handler = async (
     // Check for URL duplication across existing content
     const duplicationCheck = await checkUrlDuplication(pool, userId, uniqueUrls);
     if (duplicationCheck.isDuplicate) {
-      return errorResponse(
+      return respondError(
         409,
         'DUPLICATE_RESOURCE',
         `URL already exists in your content: ${duplicationCheck.duplicateUrl}`
@@ -250,21 +261,17 @@ export const handler = async (
     const createdContent = await contentRepo.createContent(contentData);
 
     // Return success response with created content
-    return successResponse(201, createdContent);
+    return respondSuccess(201, createdContent);
 
-  } catch (error) {
-    console.error('Error creating content:', error);
+  } catch (err) {
+    console.error('Error creating content:', err);
 
     // Handle specific error types
-    if (error instanceof Error) {
+    if (err instanceof Error) {
       // Log the full error for debugging
-      console.error('Error stack:', error.stack);
+      console.error('Error stack:', err.stack);
     }
 
-    return errorResponse(
-      500,
-      'INTERNAL_ERROR',
-      'An unexpected error occurred while creating content'
-    );
+    return respondError(500, 'INTERNAL_ERROR', 'An unexpected error occurred while creating content');
   }
 };

@@ -18,12 +18,16 @@ export interface PublicApiStackProps extends cdk.StackProps {
 export class PublicApiStack extends cdk.Stack {
   public readonly searchFunction: lambda.Function;
   public readonly statsFunction: lambda.Function;
+  public readonly searchIntegration: lambda.IFunction;
+  public readonly statsIntegration: lambda.IFunction;
 
   constructor(scope: Construct, id: string, props: PublicApiStackProps) {
     super(scope, id, props);
 
     const envName = props.environment;
     const enableTracing = props.enableTracing ?? true;
+    const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
+    const isProductionLike = productionLikeEnvs.has(envName);
 
     // Common Lambda configuration
     const lambdaRuntime = lambda.Runtime.NODEJS_18_X;
@@ -37,6 +41,7 @@ export class PublicApiStack extends cdk.Stack {
       DB_NAME: process.env.DB_NAME || 'community_content_hub',
       DB_SECRET_ARN: props.databaseSecretArn,
       NODE_ENV: envName,
+      ENABLE_BETA_FEATURES: process.env.ENABLE_BETA_FEATURES ?? (envName === 'beta' ? 'true' : 'false'),
     };
 
     // Search Lambda Function
@@ -71,6 +76,29 @@ export class PublicApiStack extends cdk.Stack {
       description: 'Platform statistics endpoint',
       tracing: enableTracing ? lambda.Tracing.ACTIVE : lambda.Tracing.DISABLED,
     });
+
+    const useProvisionedConcurrency = isProductionLike || envName === 'beta';
+
+    if (useProvisionedConcurrency) {
+      const baseProvisioned = isProductionLike ? 5 : 1;
+      const searchAlias = new lambda.Alias(this, 'SearchFunctionAlias', {
+        aliasName: `${envName}-live`,
+        version: this.searchFunction.currentVersion,
+        provisionedConcurrentExecutions: baseProvisioned,
+      });
+
+      const scaling = searchAlias.addAutoScaling({
+        minCapacity: baseProvisioned,
+        maxCapacity: isProductionLike ? 30 : 5,
+      });
+      scaling.scaleOnUtilization({ utilizationTarget: 0.75 });
+
+      this.searchIntegration = searchAlias;
+    } else {
+      this.searchIntegration = this.searchFunction;
+    }
+
+    this.statsIntegration = this.statsFunction;
 
     new logs.LogRetention(this, 'SearchFunctionRetention', {
       logGroupName: this.searchFunction.logGroup.logGroupName,
@@ -138,6 +166,6 @@ export class PublicApiStack extends cdk.Stack {
     cdk.Tags.of(this).add('Project', 'CommunityContentTracker');
     cdk.Tags.of(this).add('Component', 'PublicApi');
     cdk.Tags.of(this).add('Environment', envName);
-    cdk.Tags.of(this).add('Sprint', '5');
+    cdk.Tags.of(this).add('Sprint', '8');
   }
 }

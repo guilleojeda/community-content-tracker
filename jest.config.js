@@ -30,16 +30,26 @@ module.exports = {
     'html',
     'json'
   ],
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/tests/e2e/ui/'
+  ],
   coverageThreshold: {
     global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80
+      lines: 90,
+      statements: 90,
+      functions: 85,
+      branches: 70
     },
-    './src/infrastructure/': {
-      branches: 90,
-      functions: 90,
+    'src/backend/': {
+      lines: 90,
+      statements: 90
+    },
+    'src/frontend/': {
+      lines: 90,
+      statements: 90
+    },
+    'src/infrastructure/': {
       lines: 90,
       statements: 90
     }

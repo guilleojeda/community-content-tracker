@@ -1,6 +1,9 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/users/update-profile';
 import { Visibility } from '@aws-community-hub/shared';
+import { CognitoIdentityProviderClient, UpdateUserAttributesCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { mockClient } from 'aws-sdk-client-mock';
+import 'aws-sdk-client-mock-jest';
 
 // Mock dependencies
 jest.mock('../../../../src/backend/services/database', () => ({
@@ -14,6 +17,8 @@ const mockPool = {
 
 const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
 const { getDatabasePool } = require('../../../../src/backend/services/database');
+const cognitoMock = mockClient(CognitoIdentityProviderClient);
+const originalCognitoRegion = process.env.COGNITO_REGION;
 
 describe('Update Profile Lambda', () => {
   const validUserId = '550e8400-e29b-41d4-a716-446655440000';
@@ -29,6 +34,10 @@ describe('Update Profile Lambda', () => {
     isAdmin: false,
     isAwsEmployee: false,
     bio: 'Current bio',
+    socialLinks: {
+      twitter: 'https://twitter.com/testuser',
+      github: 'https://github.com/testuser',
+    },
     receiveNewsletter: true,
     receiveContentNotifications: true,
     receiveCommunityUpdates: false,
@@ -49,6 +58,7 @@ describe('Update Profile Lambda', () => {
     receive_newsletter: mockUser.receiveNewsletter,
     receive_content_notifications: mockUser.receiveContentNotifications,
     receive_community_updates: mockUser.receiveCommunityUpdates,
+    social_links: mockUser.socialLinks,
     created_at: mockUser.createdAt,
     updated_at: mockUser.updatedAt,
     ...overrides,
@@ -57,6 +67,7 @@ describe('Update Profile Lambda', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPool.query.mockReset();
+    cognitoMock.reset();
     // Configure default mock to return proper PostgreSQL structure
     mockPool.query.mockImplementation(() =>
       Promise.resolve({
@@ -72,6 +83,8 @@ describe('Update Profile Lambda', () => {
       isValid: true,
       user: mockUser,
     });
+    cognitoMock.on(UpdateUserAttributesCommand).resolves({});
+    process.env.COGNITO_REGION = 'us-east-1';
   });
 
   const createEvent = (body: any, userId?: string, authHeader?: string): Partial<APIGatewayProxyEvent> => ({
@@ -138,6 +151,20 @@ describe('Update Profile Lambda', () => {
       expect(body.error.details.fields.username).toContain('between 3 and 30 characters');
     });
 
+    it('should reject script tags in profile fields', async () => {
+      const event = createEvent(
+        { bio: '<script>alert("xss")</script>' },
+        validUserId,
+        `Bearer ${validAccessToken}`
+      );
+
+      const result = await handler(event as APIGatewayProxyEvent);
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body);
+      expect(body.error.details.fields.bio).toContain('script');
+    });
+
     it('should return 400 if username contains invalid characters', async () => {
       const event = createEvent(
         { username: 'user@name' },
@@ -166,6 +193,22 @@ describe('Update Profile Lambda', () => {
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
       expect(body.error.details.fields.bio).toContain('cannot exceed 500 characters');
+    });
+
+    it('should return 400 if email is invalid', async () => {
+      const event = createEvent(
+        { email: 'invalid-email' },
+        validUserId,
+        `Bearer ${validAccessToken}`
+      );
+
+      const result = await handler(event as APIGatewayProxyEvent);
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details.fields.email).toContain('valid email');
+      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
     });
 
     it('should return 400 if visibility is invalid', async () => {
@@ -229,8 +272,10 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.message).toBe('Profile updated successfully');
+      expect(body.user.email).toBe(mockUser.email);
       expect(body.user.username).toBe('newusername');
       expect(body.user.profileSlug).toBe('newusername');
+      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
     });
 
     it('should successfully update bio', async () => {
@@ -256,7 +301,9 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.message).toBe('Profile updated successfully');
+      expect(body.user.email).toBe(mockUser.email);
       expect(body.user.bio).toBe('New bio description');
+      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
     });
 
     it('should successfully update default visibility', async () => {
@@ -286,7 +333,43 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.message).toBe('Profile updated successfully');
+      expect(body.user.email).toBe(mockUser.email);
       expect(body.user.defaultVisibility).toBe(Visibility.PRIVATE);
+      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+    });
+
+    it('should update email and trigger Cognito update', async () => {
+      const newEmail = 'updated@example.com';
+      const updatedUser = { ...mockUser, email: newEmail };
+
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 0, command: 'SELECT', oid: 0, fields: [] }) // email uniqueness
+        .mockResolvedValueOnce({
+          rows: [
+            buildUserRow({
+              email: updatedUser.email,
+              updated_at: updatedUser.updatedAt,
+            }),
+          ],
+          rowCount: 1,
+          command: 'UPDATE',
+          oid: 0,
+          fields: [],
+        });
+
+      const event = createEvent({ email: newEmail }, validUserId, `Bearer ${validAccessToken}`);
+
+      const result = await handler(event as APIGatewayProxyEvent);
+
+      expect(result.statusCode).toBe(200);
+      const body = JSON.parse(result.body);
+      expect(body.user.email).toBe(newEmail);
+      expect(cognitoMock).toHaveReceivedCommandWith(UpdateUserAttributesCommand, {
+        AccessToken: validAccessToken,
+        UserAttributes: [
+          { Name: 'email', Value: newEmail },
+        ],
+      });
     });
 
     it('should successfully update multiple fields at once', async () => {
@@ -333,6 +416,7 @@ describe('Update Profile Lambda', () => {
       expect(body.user.username).toBe('newuser');
       expect(body.user.bio).toBe('New bio');
       expect(body.user.defaultVisibility).toBe(Visibility.AWS_ONLY);
+      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
     });
 
     it('should allow clearing bio by setting it to empty string', async () => {
@@ -358,10 +442,60 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.user.bio).toBe('');
+      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+    });
+
+    it('should update social links when provided', async () => {
+      const updatedLinks = {
+        twitter: 'https://twitter.com/newuser',
+        linkedin: 'https://linkedin.com/in/newuser',
+      };
+
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          buildUserRow({
+            social_links: updatedLinks,
+            updated_at: mockUser.updatedAt,
+          }),
+        ],
+        rowCount: 1,
+        command: 'UPDATE',
+        oid: 0,
+        fields: [],
+      });
+
+      const event = createEvent(
+        { socialLinks: updatedLinks },
+        validUserId,
+        `Bearer ${validAccessToken}`
+      );
+
+      const result = await handler(event as APIGatewayProxyEvent);
+
+      expect(result.statusCode).toBe(200);
+      const body = JSON.parse(result.body);
+      expect(body.user.socialLinks).toEqual(updatedLinks);
+      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
     });
   });
 
   describe('Error Handling', () => {
+    it('should return 500 when Cognito email update fails', async () => {
+      const newEmail = 'failure@example.com';
+      cognitoMock.on(UpdateUserAttributesCommand).rejects(new Error('cognito failure'));
+
+      mockPool.query.mockReset();
+
+      const event = createEvent({ email: newEmail }, validUserId, `Bearer ${validAccessToken}`);
+
+      const result = await handler(event as APIGatewayProxyEvent);
+
+      expect(result.statusCode).toBe(500);
+      const body = JSON.parse(result.body);
+      expect(body.error.code).toBe('INTERNAL_ERROR');
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
     it('should return 409 if username already exists', async () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: 'other-user' }],
@@ -421,3 +555,10 @@ describe('Update Profile Lambda', () => {
     });
   });
 });
+  afterEach(() => {
+    if (originalCognitoRegion === undefined) {
+      delete process.env.COGNITO_REGION;
+    } else {
+      process.env.COGNITO_REGION = originalCognitoRegion;
+    }
+  });

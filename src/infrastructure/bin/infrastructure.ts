@@ -9,10 +9,8 @@ import { ApplicationApiStack } from '../lib/stacks/ApplicationApiStack';
 import { QueueStack } from '../lib/stacks/QueueStack';
 import { ScraperStack } from '../lib/stacks/ScraperStack';
 import { PublicApiStack } from '../lib/stacks/PublicApiStack';
+import { MonitoringStack } from '../lib/stacks/MonitoringStack';
 import { getEnvironmentConfig } from '../lib/config/environments';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as path from 'path';
-
 const app = new cdk.App();
 
 // Get environment from context or default to 'dev'
@@ -25,6 +23,11 @@ const certificateArn = app.node.tryGetContext('certificateArn') || process.env.C
 // Capitalize first letter of environment for stack naming
 const capitalizeFirst = (str: string) => str.charAt(0).toUpperCase() + str.slice(1);
 const envCapitalized = capitalizeFirst(environment);
+
+const corsOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
+  .split(',')
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
 
 // Common stack properties
 const commonProps: cdk.StackProps = {
@@ -41,17 +44,18 @@ const commonProps: cdk.StackProps = {
   },
 };
 
-const isProd = environment === 'prod';
-const isStaging = environment === 'staging';
+const config = getEnvironmentConfig(environment);
+const isProductionLike = config.isProductionLike === true;
+const isBeta = environment === 'beta';
 
 // Create Database Stack
 const databaseStack = new DatabaseStack(app, `CommunityContentHub-Database-${envCapitalized}`, {
   ...commonProps,
   environment,
-  deletionProtection: isProd,
-  backupRetentionDays: isProd ? 30 : isStaging ? 14 : 7,
-  minCapacity: isProd ? 1 : 0.5,
-  maxCapacity: isProd ? 4 : isStaging ? 2 : 1,
+  deletionProtection: config.deletionProtection ?? isProductionLike,
+  backupRetentionDays: config.backupRetentionDays ?? (isProductionLike ? 30 : 7),
+  minCapacity: config.minCapacity ?? (isProductionLike ? 1 : 0.5),
+  maxCapacity: config.maxCapacity ?? (isProductionLike ? 4 : 1),
 });
 
 // Create Static Site Stack
@@ -60,18 +64,14 @@ const staticSiteStack = new StaticSiteStack(app, `CommunityContentHub-StaticSite
   environment,
   domainName,
   certificateArn,
-  enableWaf: isProd,
+  enableWaf: config.enableWaf ?? isProductionLike,
 });
 
 // Create Cognito Stack
-const config = getEnvironmentConfig(environment);
 const cognitoStack = new CognitoStack(app, `CommunityContentHub-Cognito-${envCapitalized}`, {
   ...commonProps,
   config,
 });
-
-// Note: Lambda functions will be created inline in the API Gateway stack
-// to avoid circular dependencies with Cognito stack
 
 // Create Queue Stack for content ingestion
 const queueStack = new QueueStack(app, `CommunityContentHub-Queue-${envCapitalized}`, {
@@ -98,7 +98,7 @@ const publicApiStack = new PublicApiStack(app, `CommunityContentHub-PublicApi-${
   ...commonProps,
   environment,
   databaseSecretArn: databaseStack.databaseSecret.secretArn,
-  enableTracing: isProd,
+  enableTracing: config.lambda.tracing === 'Active',
 });
 
 // Add dependencies
@@ -109,7 +109,10 @@ const applicationApiStack = new ApplicationApiStack(app, `CommunityContentHub-Ap
   ...commonProps,
   environment,
   databaseSecretArn: databaseStack.databaseSecret.secretArn,
-  enableTracing: isProd,
+  enableTracing: config.lambda.tracing === 'Active',
+  config,
+  userPool: cognitoStack.userPool,
+  userPoolClient: cognitoStack.userPoolClient,
 });
 
 applicationApiStack.addDependency(databaseStack);
@@ -119,15 +122,20 @@ const apiGatewayStack = new ApiGatewayStack(app, `CommunityContentHub-ApiGateway
   ...commonProps,
   userPool: cognitoStack.userPool,
   userPoolClient: cognitoStack.userPoolClient,
+  authorizerLambda: applicationApiStack.authorizerFunction,
+  registerLambda: applicationApiStack.registerFunction,
+  loginLambda: applicationApiStack.loginFunction,
+  refreshLambda: applicationApiStack.refreshFunction,
+  verifyEmailLambda: applicationApiStack.verifyEmailFunction,
   channelCreateLambda: scraperStack.channelCreateFunction,
   channelListLambda: scraperStack.channelListFunction,
   channelUpdateLambda: scraperStack.channelUpdateFunction,
   channelDeleteLambda: scraperStack.channelDeleteFunction,
   channelSyncLambda: scraperStack.channelSyncFunction,
-  searchLambda: publicApiStack.searchFunction,
-  statsLambda: publicApiStack.statsFunction,
+  searchLambda: publicApiStack.searchIntegration,
+  statsLambda: publicApiStack.statsIntegration,
   environment,
-  enableTracing: isProd,
+  enableTracing: (config.lambda.tracing === 'Active') || isBeta,
   adminDashboardLambda: applicationApiStack.adminDashboardFunction,
   adminUserManagementLambda: applicationApiStack.adminUserManagementFunction,
   adminBadgesLambda: applicationApiStack.adminBadgesFunction,
@@ -139,18 +147,50 @@ const apiGatewayStack = new ApiGatewayStack(app, `CommunityContentHub-ApiGateway
   exportCsvLambda: applicationApiStack.exportCsvFunction,
   exportHistoryLambda: applicationApiStack.exportHistoryFunction,
   contentFindDuplicatesLambda: applicationApiStack.contentFindDuplicatesFunction,
+  userExportLambda: applicationApiStack.userExportFunction,
+  userDeleteAccountLambda: applicationApiStack.userDeleteAccountFunction,
+  userUpdateProfileLambda: applicationApiStack.userUpdateProfileFunction,
+  userUpdatePreferencesLambda: applicationApiStack.userUpdatePreferencesFunction,
+  userManageConsentLambda: applicationApiStack.userManageConsentFunction,
+  userBadgesLambda: applicationApiStack.userBadgesFunction,
+  feedbackIngestLambda: applicationApiStack.feedbackIngestFunction,
+  allowedOrigins: corsOrigins.length > 0 ? corsOrigins : ['http://localhost:3000'],
 });
 
 // Add dependencies - API Gateway depends on Cognito, Scraper, and Public API stacks
 apiGatewayStack.addDependency(cognitoStack);
 apiGatewayStack.addDependency(scraperStack);
 apiGatewayStack.addDependency(publicApiStack);
-apiGatewayStack.addDependency(applicationApiStack);
+
+const monitoringStack = new MonitoringStack(app, `CommunityContentHub-Monitoring-${envCapitalized}`, {
+  ...commonProps,
+  environment,
+  searchFunction: publicApiStack.searchFunction,
+  statsFunction: publicApiStack.statsFunction,
+  analyticsTrackFunction: applicationApiStack.analyticsTrackFunction,
+  analyticsUserFunction: applicationApiStack.analyticsUserFunction,
+  analyticsExportFunction: applicationApiStack.analyticsExportFunction,
+  dataRetentionFunction: applicationApiStack.dataRetentionFunction,
+  userExportFunction: applicationApiStack.userExportFunction,
+  userDeleteAccountFunction: applicationApiStack.userDeleteAccountFunction,
+  userManageConsentFunction: applicationApiStack.userManageConsentFunction,
+  feedbackIngestFunction: applicationApiStack.feedbackIngestFunction,
+  databaseCluster: databaseStack.cluster,
+  databaseProxy: databaseStack.proxy,
+  contentQueue: queueStack.contentProcessingQueue,
+  contentDeadLetterQueue: queueStack.contentProcessingDLQ,
+  syntheticCheckUrl: domainName ? `https://${domainName}` : undefined,
+});
+
+monitoringStack.addDependency(applicationApiStack);
+monitoringStack.addDependency(publicApiStack);
+monitoringStack.addDependency(databaseStack);
+monitoringStack.addDependency(queueStack);
 
 // Add metadata to the app
 app.node.addMetadata('environment', environment);
 app.node.addMetadata('version', '1.0.0');
-app.node.addMetadata('sprint', '7');
+app.node.addMetadata('sprint', '8');
 app.node.addMetadata('description', 'AWS Community Content Hub - Sprint 7 Infrastructure');
 
 console.log(`Synthesizing Community Content Hub infrastructure for environment: ${environment}`);
@@ -162,4 +202,5 @@ console.log(`Scraper Stack: CommunityContentHub-Scraper-${envCapitalized}`);
 console.log(`Public API Stack: CommunityContentHub-PublicApi-${envCapitalized}`);
 console.log(`Application API Stack: CommunityContentHub-ApplicationApi-${envCapitalized}`);
 console.log(`API Gateway Stack: CommunityContentHub-ApiGateway-${envCapitalized}`);
+console.log(`Monitoring Stack: CommunityContentHub-Monitoring-${envCapitalized}`);
 console.log(`Configuration validated for ${environment} environment`);

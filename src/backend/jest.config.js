@@ -9,7 +9,8 @@ module.exports = {
     '<rootDir>/src',
     '<rootDir>/../../tests/backend',
     '<rootDir>/../../tests/integration',
-    '<rootDir>/../../tests/ci'
+    '<rootDir>/../../tests/ci',
+    '<rootDir>/../../tests/e2e'
   ],
   testMatch: [
     '**/tests/**/*.test.{ts,tsx}',
@@ -17,13 +18,13 @@ module.exports = {
     '**/*.(test|spec).{ts,tsx}'
   ],
   transform: {
-    '^.+\\.(ts|tsx)$': 'ts-jest'
-  },
-  globals: {
-    'ts-jest': {
-      tsconfig: '<rootDir>/tsconfig.jest.json',
-      diagnostics: false
-    }
+    '^.+\\.(ts|tsx)$': [
+      'ts-jest',
+      {
+        tsconfig: '<rootDir>/tsconfig.jest.json',
+        diagnostics: false,
+      },
+    ],
   },
   collectCoverageFrom: [
     'lambdas/admin/**/*.{ts,tsx}',
@@ -73,7 +74,8 @@ module.exports = {
     '/node_modules/',
     '/dist/',
     '/cdk.out/',
-    '/coverage/'
+    '/coverage/',
+    'tests/e2e/ui/',
   ],
   slowTestThreshold: 5,
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],

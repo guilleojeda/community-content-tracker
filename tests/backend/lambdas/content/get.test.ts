@@ -173,7 +173,7 @@ describe('Get Content Lambda Handler', () => {
         }),
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': 'http://localhost:3000',
         },
       });
 
@@ -595,8 +595,8 @@ describe('Get Content Lambda Handler', () => {
         body: JSON.stringify({ id: content.id }),
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+          'Access-Control-Allow-Origin': 'http://localhost:3000',
+          'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
           'Access-Control-Allow-Methods': 'GET,OPTIONS',
         },
       });
@@ -615,7 +615,7 @@ describe('Get Content Lambda Handler', () => {
         body: JSON.stringify({ error: { code: 'NOT_FOUND' } }),
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': 'http://localhost:3000',
         },
       });
 

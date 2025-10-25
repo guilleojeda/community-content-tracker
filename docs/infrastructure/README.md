@@ -146,33 +146,20 @@ src/infrastructure/
 ### ApiGatewayStack
 
 **Resources Created:**
-- REST API with regional endpoint
-- JWT authorizer integration
-- CORS configuration
-- CloudWatch logging
-- WAF protection (production only)
-- Throttling and caching
+- Regional REST API fronting all backend Lambdas
+- JWT authorizer wired to the shared auth Lambda (`auth/authorizer`)
+- Auth route integrations (`/auth/register|login|refresh|verify-email`) composed from the Application API stack
+- Configurable CORS allow-list derived from the `CORS_ORIGIN` environment variable (comma separated)
+- CloudWatch logging and throttling, optional WAF in production
 
-**API Structure:**
-```
-/health                    # Health check (no auth)
-/v1/
-  /auth/
-    /login                 # Authentication endpoints
-    /signup
-    /refresh
-    /logout
-    /verify
-  /users/                  # User management (JWT required)
-    /me
-    /{userId}
-  /content/                # Content management (JWT required)
-    /{contentId}
-  /search/                 # Search endpoints (JWT required)
-  /admin/                  # Admin endpoints (JWT + admin role)
-    /users/
-    /content/
-```
+**Endpoint Overview:**
+- `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/verify-email`
+- `/users/{id}` (export, deletion, profile updates)
+- `/content/*`, `/channels/*`, `/analytics/*`, `/export/*`
+- `/search`, `/stats` public read endpoints
+- `/admin/*` (protected via authorizer context and admin badge)
+
+> **Note:** API Gateway no longer uses placeholder Lambdas. All integrations reference the concrete handlers defined in `ApplicationApiStack`, so CDK deployments reflect the real business logic.
 
 ## Security Features
 

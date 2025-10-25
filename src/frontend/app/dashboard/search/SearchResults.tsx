@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { User, Badge } from '@shared/types';
 import { getBadgeLabel, getBadgeBadgeClass } from '@/lib/constants/ui';
 import type { components as ApiComponents } from '@/api';
-import { apiClient } from '@/api/client';
+import { loadSharedApiClient } from '@/lib/api/lazyClient';
 
 type SearchResultItem =
   ApiComponents['schemas']['SearchResponse']['items'][number] & {
@@ -110,17 +110,20 @@ export default function SearchResults({
                       target="_blank"
                       rel="noopener noreferrer"
                       className="hover:text-blue-600 transition-colors"
-                      onClick={() => {
-                        apiClient
-                          .trackAnalyticsEvents({
+                      onClick={async () => {
+                        try {
+                          const client = await loadSharedApiClient();
+                          await client.trackAnalyticsEvents({
                             eventType: 'content_click',
                             contentId: item.id,
                             metadata: {
                               source: 'search_results',
                               url: item.urls?.[0]?.url,
                             },
-                          })
-                          .catch(() => {});
+                          });
+                        } catch (err) {
+                          // ignore analytics errors
+                        }
                       }}
                     >
                       {item.title}

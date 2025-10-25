@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { DatabaseStack } from './stacks/database-stack';
 import { StaticSiteStack } from './stacks/static-site-stack';
+import { getEnvironmentConfig } from './config/environments';
 
 export interface CommunityContentAppProps {
   /**
@@ -49,7 +50,8 @@ export class CommunityContentApp extends Construct {
     super(scope, id);
 
     const { environment } = props;
-    const isProd = environment === 'prod';
+    const config = getEnvironmentConfig(environment);
+    const isProductionLike = config.isProductionLike === true;
     const isStaging = environment === 'staging';
 
     // Common stack properties
@@ -72,10 +74,10 @@ export class CommunityContentApp extends Construct {
       ...commonProps,
       stackName: `CommunityContentHub-Database-${this.capitalizeFirst(environment)}`,
       environment,
-      deletionProtection: isProd,
-      backupRetentionDays: isProd ? 30 : isStaging ? 14 : 7,
-      minCapacity: isProd ? 1 : 0.5,
-      maxCapacity: isProd ? 4 : isStaging ? 2 : 1,
+      deletionProtection: config.deletionProtection ?? isProductionLike,
+      backupRetentionDays: config.backupRetentionDays ?? (isProductionLike ? 30 : isStaging ? 14 : 7),
+      minCapacity: config.minCapacity ?? (isProductionLike ? 1 : 0.5),
+      maxCapacity: config.maxCapacity ?? (isProductionLike ? 4 : isStaging ? 2 : 1),
     });
 
     // Create Static Site Stack
@@ -85,7 +87,7 @@ export class CommunityContentApp extends Construct {
       environment,
       domainName: props.domainName,
       certificateArn: props.certificateArn,
-      enableWaf: props.enableWaf || isProd,
+      enableWaf: props.enableWaf ?? (config.enableWaf ?? isProductionLike),
     });
 
     // Add cross-stack references if needed in future sprints
@@ -143,22 +145,38 @@ export class EnvironmentConfig {
         enableWaf: false,
         priceClass: 'PriceClass_100',
       },
-      staging: {
-        deletionProtection: false,
-        backupRetentionDays: 14,
-        minCapacity: 0.5,
-        maxCapacity: 2,
+    staging: {
+      deletionProtection: false,
+      backupRetentionDays: 14,
+      minCapacity: 0.5,
+      maxCapacity: 2,
         enableWaf: false,
         priceClass: 'PriceClass_100',
       },
-      prod: {
-        deletionProtection: true,
-        backupRetentionDays: 30,
-        minCapacity: 1,
-        maxCapacity: 4,
-        enableWaf: true,
-        priceClass: 'PriceClass_All',
-      },
+    prod: {
+      deletionProtection: true,
+      backupRetentionDays: 30,
+      minCapacity: 1,
+      maxCapacity: 4,
+      enableWaf: true,
+      priceClass: 'PriceClass_All',
+    },
+    blue: {
+      deletionProtection: true,
+      backupRetentionDays: 30,
+      minCapacity: 1,
+      maxCapacity: 4,
+      enableWaf: true,
+      priceClass: 'PriceClass_All',
+    },
+    green: {
+      deletionProtection: true,
+      backupRetentionDays: 30,
+      minCapacity: 1,
+      maxCapacity: 4,
+      enableWaf: true,
+      priceClass: 'PriceClass_All',
+    },
     };
 
     return configs[environment as keyof typeof configs] || configs.dev;
@@ -168,7 +186,8 @@ export class EnvironmentConfig {
    * Validate environment-specific domain configuration
    */
   static validateDomainConfig(environment: string, domainName?: string, certificateArn?: string): void {
-    if (environment === 'prod') {
+    const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
+    if (productionLikeEnvs.has(environment)) {
       if (!domainName || !certificateArn) {
         throw new Error('Production environment requires both domainName and certificateArn');
       }

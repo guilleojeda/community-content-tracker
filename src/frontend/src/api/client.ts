@@ -1273,15 +1273,28 @@ export class ApiClient {
     });
   }
 
-  async exportUserData(userId: string): Promise<UserDataExport> {
+  async exportUserData(userId: string = 'me'): Promise<UserDataExport> {
     return this.request<UserDataExport>(`/api/users/${userId}/export`, {
       method: 'GET',
     });
   }
 
-  async deleteAccount(userId: string): Promise<DeleteAccountResponse> {
+  async deleteAccount(userId: string = 'me'): Promise<DeleteAccountResponse> {
     return this.request<DeleteAccountResponse>(`/api/users/${userId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async manageConsent(payload: { consentType: string; granted: boolean; consentVersion?: string }): Promise<any> {
+    return this.request('/user/consent', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getConsentStatus(): Promise<Record<string, any>> {
+    return this.request<Record<string, any>>('/user/consent', {
+      method: 'GET',
     });
   }
 }

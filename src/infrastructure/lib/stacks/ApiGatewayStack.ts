@@ -4,12 +4,16 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as xray from 'aws-cdk-lib/aws-xray';
 import { Construct } from 'constructs';
 
 export interface ApiGatewayStackProps extends cdk.StackProps {
   userPool: cognito.IUserPool;
   userPoolClient: cognito.IUserPoolClient;
+  authorizerLambda: lambda.IFunction;
+  registerLambda: lambda.IFunction;
+  loginLambda: lambda.IFunction;
+  refreshLambda: lambda.IFunction;
+  verifyEmailLambda: lambda.IFunction;
   channelCreateLambda: lambda.IFunction;
   channelListLambda: lambda.IFunction;
   channelUpdateLambda: lambda.IFunction;
@@ -30,6 +34,14 @@ export interface ApiGatewayStackProps extends cdk.StackProps {
   exportCsvLambda: lambda.IFunction;
   exportHistoryLambda: lambda.IFunction;
   contentFindDuplicatesLambda: lambda.IFunction;
+  userExportLambda: lambda.IFunction;
+  userDeleteAccountLambda: lambda.IFunction;
+  userUpdateProfileLambda: lambda.IFunction;
+  userUpdatePreferencesLambda: lambda.IFunction;
+  userManageConsentLambda: lambda.IFunction;
+  userBadgesLambda: lambda.IFunction;
+  feedbackIngestLambda: lambda.IFunction;
+  allowedOrigins?: string[];
 }
 
 export class ApiGatewayStack extends cdk.Stack {
@@ -48,43 +60,61 @@ export class ApiGatewayStack extends cdk.Stack {
     this.envName = props.environment || 'dev';
     const enableTracing = props.enableTracing ?? true;
 
-    // Create auth Lambda functions inline to avoid circular dependencies
-    const createPlaceholderLambda = (name: string, description: string) => {
-      return new lambda.Function(this, name, {
-        functionName: `community-content-tracker-${this.envName}-${name.toLowerCase()}`,
-        runtime: lambda.Runtime.NODEJS_18_X,
-        handler: 'index.handler',
-        code: lambda.Code.fromInline(`
-          exports.handler = async (event) => {
-            console.log('Event:', JSON.stringify(event, null, 2));
-            return {
-              statusCode: 200,
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-              },
-              body: JSON.stringify({
-                message: '${name} placeholder - to be implemented',
-                timestamp: new Date().toISOString()
-              })
-            };
-          };
-        `),
-        environment: {
-          USER_POOL_ID: props.userPool.userPoolId,
-          CLIENT_ID: props.userPoolClient.userPoolClientId,
-          ENVIRONMENT: this.envName,
-        },
-        description,
-      });
-    };
+    if (!props.authorizerLambda || !props.registerLambda || !props.loginLambda || !props.refreshLambda || !props.verifyEmailLambda) {
+      throw new Error('ApiGatewayStack requires auth lambda integrations');
+    }
 
-    // Create placeholder Lambda functions (these will be replaced with actual implementations)
-    this.authorizerLambda = createPlaceholderLambda('AuthorizerFunction', 'JWT token authorizer for API Gateway');
-    this.registerLambda = createPlaceholderLambda('RegisterFunction', 'User registration endpoint');
-    this.loginLambda = createPlaceholderLambda('LoginFunction', 'User login endpoint');
-    this.refreshLambda = createPlaceholderLambda('RefreshFunction', 'Token refresh endpoint');
-    this.verifyEmailLambda = createPlaceholderLambda('VerifyEmailFunction', 'Email verification endpoint');
+    const importLambda = (id: string, fn: lambda.IFunction): lambda.IFunction =>
+      lambda.Function.fromFunctionAttributes(this, id, {
+        functionArn: fn.functionArn,
+        sameEnvironment: true,
+      });
+    const importOptionalLambda = (id: string, fn?: lambda.IFunction): lambda.IFunction | undefined =>
+      fn
+        ? lambda.Function.fromFunctionAttributes(this, id, {
+            functionArn: fn.functionArn,
+            sameEnvironment: true,
+          })
+        : undefined;
+
+    this.authorizerLambda = importLambda('AuthorizerLambdaImport', props.authorizerLambda);
+    this.registerLambda = importLambda('RegisterLambdaImport', props.registerLambda);
+    this.loginLambda = importLambda('LoginLambdaImport', props.loginLambda);
+    this.refreshLambda = importLambda('RefreshLambdaImport', props.refreshLambda);
+    this.verifyEmailLambda = importLambda('VerifyEmailLambdaImport', props.verifyEmailLambda);
+
+    const channelCreateLambda = importLambda('ChannelCreateLambdaImport', props.channelCreateLambda);
+    const channelListLambda = importLambda('ChannelListLambdaImport', props.channelListLambda);
+    const channelUpdateLambda = importLambda('ChannelUpdateLambdaImport', props.channelUpdateLambda);
+    const channelDeleteLambda = importLambda('ChannelDeleteLambdaImport', props.channelDeleteLambda);
+    const channelSyncLambda = importLambda('ChannelSyncLambdaImport', props.channelSyncLambda);
+    const searchLambda = importOptionalLambda('SearchLambdaImport', props.searchLambda);
+    const statsLambda = importOptionalLambda('StatsLambdaImport', props.statsLambda);
+    const adminDashboardLambda = importLambda('AdminDashboardLambdaImport', props.adminDashboardLambda);
+    const adminUserManagementLambda = importLambda('AdminUserManagementLambdaImport', props.adminUserManagementLambda);
+    const adminBadgesLambda = importLambda('AdminBadgesLambdaImport', props.adminBadgesLambda);
+    const adminModerationLambda = importLambda('AdminModerationLambdaImport', props.adminModerationLambda);
+    const adminAuditLogLambda = importLambda('AdminAuditLogLambdaImport', props.adminAuditLogLambda);
+    const analyticsTrackLambda = importLambda('AnalyticsTrackLambdaImport', props.analyticsTrackLambda);
+    const analyticsUserLambda = importLambda('AnalyticsUserLambdaImport', props.analyticsUserLambda);
+    const analyticsExportLambda = importLambda('AnalyticsExportLambdaImport', props.analyticsExportLambda);
+    const exportCsvLambda = importLambda('ExportCsvLambdaImport', props.exportCsvLambda);
+    const exportHistoryLambda = importLambda('ExportHistoryLambdaImport', props.exportHistoryLambda);
+    const contentFindDuplicatesLambda = importLambda('ContentFindDuplicatesLambdaImport', props.contentFindDuplicatesLambda);
+    const userExportLambda = importLambda('UserExportLambdaImport', props.userExportLambda);
+    const userDeleteAccountLambda = importLambda('UserDeleteAccountLambdaImport', props.userDeleteAccountLambda);
+    const userUpdateProfileLambda = importLambda('UserUpdateProfileLambdaImport', props.userUpdateProfileLambda);
+    const userUpdatePreferencesLambda = importLambda('UserUpdatePreferencesLambdaImport', props.userUpdatePreferencesLambda);
+    const userManageConsentLambda = importLambda('UserManageConsentLambdaImport', props.userManageConsentLambda);
+    const userBadgesLambda = importLambda('UserBadgesLambdaImport', props.userBadgesLambda);
+    const feedbackIngestLambda = importLambda('FeedbackIngestLambdaImport', props.feedbackIngestLambda);
+
+    const allowedOrigins =
+      props.allowedOrigins && props.allowedOrigins.length > 0
+        ? props.allowedOrigins
+        : (process.env.CORS_ORIGIN
+            ? process.env.CORS_ORIGIN.split(',').map(value => value.trim()).filter(Boolean)
+            : ['http://localhost:3000']);
 
     // Create API Gateway REST API with X-Ray tracing
     this.api = new apigateway.RestApi(this, 'CommunityContentTrackerApi', {
@@ -100,7 +130,7 @@ export class ApiGatewayStack extends cdk.Stack {
         throttlingBurstLimit: 200,
       },
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowOrigins: allowedOrigins,
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders: [
           'Content-Type',
@@ -108,7 +138,9 @@ export class ApiGatewayStack extends cdk.Stack {
           'Authorization',
           'X-Api-Key',
           'X-Amz-Security-Token',
+          'Origin',
         ],
+        allowCredentials: true,
       },
     });
 
@@ -365,7 +397,7 @@ export class ApiGatewayStack extends cdk.Stack {
     const channelsResource = this.api.root.addResource('channels');
 
     // POST /channels - Create new channel
-    channelsResource.addMethod('POST', new apigateway.LambdaIntegration(props.channelCreateLambda, {
+    channelsResource.addMethod('POST', new apigateway.LambdaIntegration(channelCreateLambda, {
       proxy: true,
     }), {
       authorizationType: apigateway.AuthorizationType.CUSTOM,
@@ -379,7 +411,7 @@ export class ApiGatewayStack extends cdk.Stack {
     });
 
     // GET /channels - List user's channels
-    channelsResource.addMethod('GET', new apigateway.LambdaIntegration(props.channelListLambda, {
+    channelsResource.addMethod('GET', new apigateway.LambdaIntegration(channelListLambda, {
       proxy: true,
     }), {
       authorizationType: apigateway.AuthorizationType.CUSTOM,
@@ -394,7 +426,7 @@ export class ApiGatewayStack extends cdk.Stack {
     const channelIdResource = channelsResource.addResource('{id}');
 
     // PUT /channels/:id - Update channel
-    channelIdResource.addMethod('PUT', new apigateway.LambdaIntegration(props.channelUpdateLambda, {
+    channelIdResource.addMethod('PUT', new apigateway.LambdaIntegration(channelUpdateLambda, {
       proxy: true,
     }), {
       authorizationType: apigateway.AuthorizationType.CUSTOM,
@@ -410,7 +442,7 @@ export class ApiGatewayStack extends cdk.Stack {
     });
 
     // DELETE /channels/:id - Delete channel
-    channelIdResource.addMethod('DELETE', new apigateway.LambdaIntegration(props.channelDeleteLambda, {
+    channelIdResource.addMethod('DELETE', new apigateway.LambdaIntegration(channelDeleteLambda, {
       proxy: true,
     }), {
       authorizationType: apigateway.AuthorizationType.CUSTOM,
@@ -425,7 +457,7 @@ export class ApiGatewayStack extends cdk.Stack {
 
     // POST /channels/:id/sync - Manual sync trigger
     const syncResource = channelIdResource.addResource('sync');
-    syncResource.addMethod('POST', new apigateway.LambdaIntegration(props.channelSyncLambda, {
+    syncResource.addMethod('POST', new apigateway.LambdaIntegration(channelSyncLambda, {
       proxy: true,
     }), {
       authorizationType: apigateway.AuthorizationType.CUSTOM,
@@ -458,7 +490,7 @@ export class ApiGatewayStack extends cdk.Stack {
     });
 
     const adminResource = this.api.root.addResource('admin');
-    const adminDashboardIntegration = new apigateway.LambdaIntegration(props.adminDashboardLambda, {
+    const adminDashboardIntegration = new apigateway.LambdaIntegration(adminDashboardLambda, {
       proxy: true,
     });
 
@@ -467,7 +499,7 @@ export class ApiGatewayStack extends cdk.Stack {
     dashboardResource.addResource('system-health').addMethod('GET', adminDashboardIntegration, protectedOptions());
 
     const adminUsersResource = adminResource.addResource('users');
-    const adminUserIntegration = new apigateway.LambdaIntegration(props.adminUserManagementLambda, { proxy: true });
+    const adminUserIntegration = new apigateway.LambdaIntegration(adminUserManagementLambda, { proxy: true });
     adminUsersResource.addMethod('GET', adminUserIntegration, protectedOptions());
     adminUsersResource.addResource('export').addMethod('POST', adminUserIntegration, protectedOptions());
 
@@ -475,12 +507,12 @@ export class ApiGatewayStack extends cdk.Stack {
     adminUserIdResource.addMethod('GET', adminUserIntegration, protectedOptions());
     adminUserIdResource.addResource('aws-employee').addMethod(
       'PUT',
-      new apigateway.LambdaIntegration(props.adminBadgesLambda, { proxy: true }),
+      new apigateway.LambdaIntegration(adminBadgesLambda, { proxy: true }),
       protectedOptions()
     );
 
     const adminBadgesResource = adminResource.addResource('badges');
-    const adminBadgesIntegration = new apigateway.LambdaIntegration(props.adminBadgesLambda, { proxy: true });
+    const adminBadgesIntegration = new apigateway.LambdaIntegration(adminBadgesLambda, { proxy: true });
     adminBadgesResource.addMethod('POST', adminBadgesIntegration, protectedOptions());
     adminBadgesResource.addMethod('DELETE', adminBadgesIntegration, protectedOptions());
     adminBadgesResource.addResource('bulk').addMethod('POST', adminBadgesIntegration, protectedOptions());
@@ -493,12 +525,12 @@ export class ApiGatewayStack extends cdk.Stack {
       .addResource('audit-log')
       .addMethod(
         'GET',
-        new apigateway.LambdaIntegration(props.adminAuditLogLambda, { proxy: true }),
+        new apigateway.LambdaIntegration(adminAuditLogLambda, { proxy: true }),
         protectedOptions()
       );
 
     const adminContentResource = adminResource.addResource('content');
-    const adminModerationIntegration = new apigateway.LambdaIntegration(props.adminModerationLambda, { proxy: true });
+    const adminModerationIntegration = new apigateway.LambdaIntegration(adminModerationLambda, { proxy: true });
     adminContentResource.addResource('flagged').addMethod('GET', adminModerationIntegration, protectedOptions());
     const adminContentIdResource = adminContentResource.addResource('{id}');
     adminContentIdResource.addMethod('DELETE', adminModerationIntegration, protectedOptions());
@@ -510,7 +542,7 @@ export class ApiGatewayStack extends cdk.Stack {
       .addResource('track')
       .addMethod(
         'POST',
-        new apigateway.LambdaIntegration(props.analyticsTrackLambda, { proxy: true }),
+        new apigateway.LambdaIntegration(analyticsTrackLambda, { proxy: true }),
         {
           authorizationType: apigateway.AuthorizationType.NONE,
           methodResponses: [{ statusCode: '200' }, { statusCode: '400' }, { statusCode: '500' }],
@@ -520,7 +552,7 @@ export class ApiGatewayStack extends cdk.Stack {
     const analyticsUserResource = analyticsResource.addResource('user');
     analyticsUserResource.addMethod(
       'GET',
-      new apigateway.LambdaIntegration(props.analyticsUserLambda, { proxy: true }),
+      new apigateway.LambdaIntegration(analyticsUserLambda, { proxy: true }),
       protectedOptions()
     );
 
@@ -528,7 +560,7 @@ export class ApiGatewayStack extends cdk.Stack {
       .addResource('export')
       .addMethod(
         'POST',
-        new apigateway.LambdaIntegration(props.analyticsExportLambda, { proxy: true }),
+        new apigateway.LambdaIntegration(analyticsExportLambda, { proxy: true }),
         protectedOptions({
           methodResponses: [
             { statusCode: '200' },
@@ -541,7 +573,7 @@ export class ApiGatewayStack extends cdk.Stack {
     const exportResource = this.api.root.addResource('export');
     exportResource.addResource('csv').addMethod(
       'POST',
-      new apigateway.LambdaIntegration(props.exportCsvLambda, { proxy: true }),
+      new apigateway.LambdaIntegration(exportCsvLambda, { proxy: true }),
       protectedOptions({
         methodResponses: [
           { statusCode: '200' },
@@ -553,16 +585,87 @@ export class ApiGatewayStack extends cdk.Stack {
 
     exportResource.addResource('history').addMethod(
       'GET',
-      new apigateway.LambdaIntegration(props.exportHistoryLambda, { proxy: true }),
+      new apigateway.LambdaIntegration(exportHistoryLambda, { proxy: true }),
       protectedOptions()
     );
 
     const contentResource = this.api.root.addResource('content');
     contentResource.addResource('duplicates').addMethod(
       'GET',
-      new apigateway.LambdaIntegration(props.contentFindDuplicatesLambda, { proxy: true }),
+      new apigateway.LambdaIntegration(contentFindDuplicatesLambda, { proxy: true }),
       protectedOptions()
     );
+
+    const usersResource = this.api.root.addResource('users');
+    const userIdResource = usersResource.addResource('{id}');
+
+    userIdResource.addMethod(
+      'DELETE',
+      new apigateway.LambdaIntegration(userDeleteAccountLambda, { proxy: true }),
+      protectedOptions()
+    );
+
+    userIdResource.addMethod(
+      'PATCH',
+      new apigateway.LambdaIntegration(userUpdateProfileLambda, { proxy: true }),
+      protectedOptions({
+        requestValidator,
+      })
+    );
+
+    const userExportResource = userIdResource.addResource('export');
+    userExportResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(userExportLambda, { proxy: true }),
+      protectedOptions()
+    );
+
+    const userPreferencesResource = userIdResource.addResource('preferences');
+    userPreferencesResource.addMethod(
+      'PATCH',
+      new apigateway.LambdaIntegration(userUpdatePreferencesLambda, { proxy: true }),
+      protectedOptions({
+        requestValidator,
+      })
+    );
+
+    const userBadgesResource = userIdResource.addResource('badges');
+    userBadgesResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(userBadgesLambda, { proxy: true }),
+      {
+        authorizationType: apigateway.AuthorizationType.NONE,
+        methodResponses: [
+          { statusCode: '200', responseModels: { 'application/json': apigateway.Model.EMPTY_MODEL } },
+          { statusCode: '400', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+          { statusCode: '404', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+          { statusCode: '500', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+        ],
+      }
+    );
+
+    const userResource = this.api.root.addResource('user');
+    const consentResource = userResource.addResource('consent');
+
+    const consentIntegration = new apigateway.LambdaIntegration(userManageConsentLambda, { proxy: true });
+
+    consentResource.addMethod('POST', consentIntegration, protectedOptions({ requestValidator }));
+    consentResource.addMethod('GET', consentIntegration, protectedOptions());
+    consentResource
+      .addResource('check')
+      .addMethod('POST', consentIntegration, protectedOptions({ requestValidator }));
+
+    const feedbackResource = this.api.root.addResource('feedback');
+    const feedbackIntegration = new apigateway.LambdaIntegration(feedbackIngestLambda, { proxy: true });
+
+    feedbackResource.addMethod('POST', feedbackIntegration, {
+      authorizationType: apigateway.AuthorizationType.NONE,
+      methodResponses: [
+        { statusCode: '202', responseModels: { 'application/json': apigateway.Model.EMPTY_MODEL } },
+        { statusCode: '400', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+        { statusCode: '500', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+      ],
+    });
 
     // Outputs
     new cdk.CfnOutput(this, 'ApiEndpoint', {
@@ -584,10 +687,10 @@ export class ApiGatewayStack extends cdk.Stack {
     });
 
     // Public API endpoints (Sprint 5)
-    if (props.searchLambda) {
+    if (searchLambda) {
       // GET /search - Public search endpoint
       const searchResource = this.api.root.addResource('search');
-      searchResource.addMethod('GET', new apigateway.LambdaIntegration(props.searchLambda, {
+      searchResource.addMethod('GET', new apigateway.LambdaIntegration(searchLambda, {
         proxy: true,
       }), {
         authorizationType: apigateway.AuthorizationType.NONE,
@@ -610,10 +713,10 @@ export class ApiGatewayStack extends cdk.Stack {
       });
     }
 
-    if (props.statsLambda) {
+    if (statsLambda) {
       // GET /stats - Public statistics endpoint
       const statsResource = this.api.root.addResource('stats');
-      statsResource.addMethod('GET', new apigateway.LambdaIntegration(props.statsLambda, {
+      statsResource.addMethod('GET', new apigateway.LambdaIntegration(statsLambda, {
         proxy: true,
       }), {
         authorizationType: apigateway.AuthorizationType.NONE,

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
+  <rect width="800" height="450" fill="#edf2f7"/>
+  <rect x="40" y="40" width="720" height="360" rx="12" fill="#fff" stroke="#cbd5f5"/>
+  <text x="70" y="85" font-family="Arial" font-size="20" fill="#2d3748">Analytics</text>
+  <rect x="70" y="100" width="300" height="40" rx="6" fill="#f7fafc" stroke="#d1d5db"/>
+  <rect x="390" y="100" width="300" height="40" rx="6" fill="#f7fafc" stroke="#d1d5db"/>
+  <rect x="70" y="160" width="300" height="200" rx="6" fill="#f7fafc" stroke="#d1d5db"/>
+  <rect x="390" y="160" width="300" height="200" rx="6" fill="#f7fafc" stroke="#d1d5db"/>
+  <text x="90" y="190" font-family="Arial" font-size="14" fill="#4a5568">Channel distribution</text>
+  <text x="410" y="190" font-family="Arial" font-size="14" fill="#4a5568">Top tags</text>
+</svg>

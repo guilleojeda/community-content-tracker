@@ -3,6 +3,7 @@ import { getDatabasePool } from '../../../../src/backend/services/database';
 import { ContentType, Visibility, BadgeType } from '@aws-community-hub/shared';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { Pool } from 'pg';
+import { consumeRateLimit } from '../../../../src/backend/services/rateLimiter';
 
 // Mock dependencies
 jest.mock('../../../../src/backend/services/database', () => ({
@@ -14,11 +15,17 @@ jest.mock('../../../../src/backend/services/SearchService', () => ({
   SearchService: jest.fn()
 }));
 
+jest.mock('../../../../src/backend/services/rateLimiter', () => ({
+  __esModule: true,
+  consumeRateLimit: jest.fn(),
+}));
+
 describe('GET /search Lambda handler', () => {
   let mockSearchService: any;
   let mockPool: jest.Mocked<Pool>;
   let mockGetSearchService: jest.MockedFunction<any>;
   let mockGetDatabasePool: jest.MockedFunction<typeof getDatabasePool>;
+  const mockConsumeRateLimit = consumeRateLimit as jest.MockedFunction<typeof consumeRateLimit>;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -44,6 +51,7 @@ describe('GET /search Lambda handler', () => {
     const { getSearchService } = require('../../../../src/backend/services/SearchService');
     mockGetSearchService = getSearchService as jest.MockedFunction<any>;
     mockGetSearchService.mockReturnValue(mockSearchService);
+    mockConsumeRateLimit.mockResolvedValue({ allowed: true, remaining: 99, reset: Date.now() + 60000 });
   });
 
   const createEvent = (queryParams: Record<string, string> = {}, authorizer?: any): APIGatewayProxyEvent => ({
@@ -66,7 +74,7 @@ describe('GET /search Lambda handler', () => {
       requestId: 'test',
       requestTime: 'test',
       requestTimeEpoch: 0,
-      identity: {} as any,
+      identity: { sourceIp: '127.0.0.1' } as any,
       authorizer: authorizer || null,
       resourceId: 'test',
       resourcePath: '/search'
@@ -114,6 +122,7 @@ describe('GET /search Lambda handler', () => {
       expect(body.items).toHaveLength(1);
       expect(body.total).toBe(1);
       expect(body.items[0].title).toBe('AWS Lambda Guide');
+      expect(response.headers?.['X-RateLimit-Remaining']).toBeDefined();
     });
 
     it('should return 400 for missing query parameter', async () => {
@@ -173,6 +182,33 @@ describe('GET /search Lambda handler', () => {
         [],
         false
       );
+    });
+
+    it('should safely handle SQL-like input patterns', async () => {
+      const event = createEvent({ q: "1' OR '1'='1" });
+      const mockResults = { items: [], total: 0, limit: 10, offset: 0 };
+      mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
+
+      const response = await handler(event) as APIGatewayProxyResult;
+
+      expect(response.statusCode).toBe(200);
+      expect(mockSearchService.search).toHaveBeenCalledWith(
+        expect.objectContaining({ query: "1' OR '1'='1" }),
+        false,
+        [],
+        false
+      );
+    });
+
+    it('should enforce rate limiting for anonymous users', async () => {
+      mockConsumeRateLimit.mockResolvedValueOnce({ allowed: false, remaining: 0, reset: Date.now() + 60000 });
+
+      const event = createEvent({ q: 'AWS' });
+      const response = await handler(event) as APIGatewayProxyResult;
+
+      expect(response.statusCode).toBe(429);
+      const body = JSON.parse(response.body);
+      expect(body.error.code).toBe('RATE_LIMITED');
     });
 
     it('should use default pagination values', async () => {
@@ -261,6 +297,35 @@ describe('GET /search Lambda handler', () => {
           query: 'AWS',
           filters: expect.objectContaining({
             tags: ['serverless', 'lambda']
+          })
+        }),
+        false,
+        [],
+        false
+      );
+    });
+
+    it('sanitizes tags to remove unsafe characters', async () => {
+      const event = createEvent({
+        q: 'AWS',
+        tags: 'serverless,<script>alert(1)</script>'
+      });
+
+      const mockResults = {
+        items: [],
+        total: 0,
+        limit: 10,
+        offset: 0
+      };
+
+      mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
+
+      await handler(event);
+
+      expect(mockSearchService.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            tags: ['serverless', 'scriptalert1script']
           })
         }),
         false,
@@ -539,6 +604,44 @@ describe('GET /search Lambda handler', () => {
       const body = JSON.parse(response.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
     });
+
+    it('should return 400 when limit is outside allowed range', async () => {
+      const event = createEvent({
+        q: 'AWS',
+        limit: '101'
+      });
+
+      const response = await handler(event) as APIGatewayProxyResult;
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.error.message).toContain('limit must be between 1 and 100');
+    });
+
+    it('should return 400 when date range is partially provided', async () => {
+      const event = createEvent({
+        q: 'AWS',
+        startDate: '2024-01-01'
+      });
+
+      const response = await handler(event) as APIGatewayProxyResult;
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.error.message).toContain('Both startDate and endDate must be provided');
+    });
+
+    it('should return 400 when tags filter is emptied after sanitization', async () => {
+      const event = createEvent({
+        q: 'AWS',
+        tags: '!!!'
+      });
+
+      const response = await handler(event) as APIGatewayProxyResult;
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.error.message).toContain('Tags filter');
+    });
   });
 
   describe('CORS headers', () => {
@@ -559,9 +662,10 @@ describe('GET /search Lambda handler', () => {
 
       // Assert
       expect(response.headers).toMatchObject({
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        'Content-Type': 'application/json'
+        'Access-Control-Allow-Origin': 'http://localhost:3000',
+        'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+        'Content-Type': 'application/json',
+        Vary: 'Origin',
       });
     });
   });

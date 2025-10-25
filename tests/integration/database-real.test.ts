@@ -49,11 +49,11 @@ const shouldRunRealDbTests = process.env.RUN_REAL_DB_TESTS === 'true';
   async function runMigrations(): Promise<void> {
     const migrationsDir = path.join(__dirname, '../../src/backend/migrations');
     const migrationFiles = [
-      '001_initial_schema.sql',
-      '002_sprint_3_additions.sql',
-      '004_create_channels_table.sql',
-      '005_add_user_profile_fields.sql',
-      '006_add_missing_user_fields.sql',
+      '20240101000000000_initial_schema.sql',
+      '20240115000000000_sprint_3_additions.sql',
+      '20240201000000000_create_channels_table.sql',
+      '20240215000000000_add_user_profile_fields.sql',
+      '20240301000000000_add_missing_user_fields.sql',
     ];
 
     for (const file of migrationFiles) {

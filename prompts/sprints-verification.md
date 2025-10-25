@@ -1,4 +1,4 @@
-With [X] = 7
+With [X] = 8
 You are verifying the implementation of Sprint [X] of the AWS Community Content Hub project.
 
 ## Project Documentation - READ THESE FIRST

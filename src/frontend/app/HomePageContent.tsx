@@ -2,11 +2,22 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
+import dynamic from 'next/dynamic';
 import { getPublicApiClient } from '@/api/client';
 
 import type { components } from '@/api/schema';
 
 type PlatformStats = components['schemas']['PlatformStats'];
+
+const StatsSection = dynamic(() => import('./sections/StatsSection'), {
+  loading: () => (
+    <section className="py-16 bg-gray-100">
+      <div className="container mx-auto px-4 text-center text-gray-600">Loading statistics...</div>
+    </section>
+  ),
+  ssr: false,
+});
 
 export default function HomePageContent() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,32 +54,45 @@ export default function HomePageContent() {
     <div>
       {/* Hero Section */}
       <section className="bg-gradient-to-r from-aws-blue to-gray-700 text-white py-20">
-        <div className="container mx-auto px-4 text-center">
-          <h1 className="text-5xl font-bold mb-6">
-            Discover AWS Community Content
-          </h1>
-          <p className="text-xl mb-8 text-gray-200">
-            Search and track community-generated content from AWS contributors worldwide
-          </p>
+        <div className="container mx-auto px-4">
+          <div className="grid md:grid-cols-2 gap-10 items-center">
+            <div className="text-center md:text-left">
+              <h1 className="text-5xl font-bold mb-6">
+                Discover AWS Community Content
+              </h1>
+              <p className="text-xl mb-8 text-gray-200">
+                Search and track community-generated content from AWS contributors worldwide
+              </p>
 
-          {/* Search Bar */}
-          <form onSubmit={handleSearch} className="max-w-3xl mx-auto">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Search for AWS content..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 px-6 py-4 rounded-lg text-gray-900 text-lg focus:ring-2 focus:ring-aws-orange"
-              />
-              <button
-                type="submit"
-                className="btn-primary px-8 py-4 text-lg"
-              >
-                Search
-              </button>
+              {/* Search Bar */}
+              <form onSubmit={handleSearch} className="max-w-3xl mx-auto md:mx-0">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Search for AWS content..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="flex-1 px-6 py-4 rounded-lg text-gray-900 text-lg focus:ring-2 focus:ring-aws-orange"
+                  />
+                  <button
+                    type="submit"
+                    className="btn-primary px-8 py-4 text-lg"
+                  >
+                    Search
+                  </button>
+                </div>
+              </form>
             </div>
-          </form>
+            <div className="hidden md:block">
+              <Image
+                src="/images/community-hero.svg"
+                alt="Community illustration"
+                width={400}
+                height={300}
+                priority
+              />
+            </div>
+          </div>
         </div>
       </section>
 
@@ -100,43 +124,7 @@ export default function HomePageContent() {
       </section>
 
       {/* Stats Section - Only show if data is available */}
-      {(statsLoading || stats) && (
-        <section className="py-16 bg-gray-100">
-          <div className="container mx-auto px-4">
-            <h2 className="text-3xl font-bold text-center mb-12">Platform Stats</h2>
-            {statsLoading ? (
-              <div className="text-center text-gray-600">Loading statistics...</div>
-            ) : stats ? (
-              <div className="grid md:grid-cols-4 gap-8 text-center">
-                <div>
-                  <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.topContributors?.toLocaleString() ?? 0}+
-                  </div>
-                  <div className="text-gray-600">Contributors</div>
-                </div>
-                <div>
-                  <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.totalContent?.toLocaleString() ?? 0}+
-                  </div>
-                  <div className="text-gray-600">Content Pieces</div>
-                </div>
-                <div>
-                  <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.recentActivity?.last24h?.toLocaleString() ?? 0}+
-                  </div>
-                  <div className="text-gray-600">Last 24 Hours</div>
-                </div>
-                <div>
-                  <div className="text-4xl font-bold text-aws-orange mb-2">
-                    {stats.totalUsers?.toLocaleString() ?? 0}+
-                  </div>
-                  <div className="text-gray-600">Registered Users</div>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </section>
-      )}
+      <StatsSection stats={stats} loading={statsLoading} />
 
       {/* Call to Action */}
       <section className="py-16 bg-aws-blue text-white text-center">

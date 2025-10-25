@@ -14,7 +14,7 @@
 
 @layer components {
   .btn-primary {
-    @apply px-4 py-2 bg-aws-orange text-white rounded-lg hover:bg-orange-600 transition-colors;
+    @apply px-4 py-2 bg-aws-orange text-gray-900 rounded-lg hover:bg-orange-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-500;
   }
 
   .btn-secondary {
@@ -24,4 +24,5 @@
   .input-field {
     @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-aws-orange focus:border-transparent;
   }
+
 }

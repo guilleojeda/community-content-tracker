@@ -309,6 +309,7 @@ export class ScraperStack extends cdk.Stack {
     });
 
     // EventBridge Rule for daily scheduling (runs at 2 AM UTC)
+    const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
     const dailyScheduleRule = new events.Rule(this, 'DailyScraperSchedule', {
       ruleName: `daily-scraper-schedule-${environment}`,
       description: 'Triggers content scrapers daily at 2 AM UTC',
@@ -319,7 +320,7 @@ export class ScraperStack extends cdk.Stack {
         month: '*',
         year: '*',
       }),
-      enabled: environment === 'prod' || environment === 'staging',
+      enabled: productionLikeEnvs.has(environment) || environment === 'staging',
     });
 
     // Add orchestrator as target for the rule

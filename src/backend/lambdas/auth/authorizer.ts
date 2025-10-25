@@ -112,7 +112,7 @@ export interface AuthorizerConfig {
   cognitoRegion: string;
   allowedAudiences: string[];
   issuer: string;
-  rateLimitPerHour: number;
+  rateLimitPerMinute: number;
   tokenVerificationTimeoutMs: number;
 }
 
@@ -129,7 +129,7 @@ function loadConfig(): AuthorizerConfig {
     cognitoRegion: authEnv.region,
     allowedAudiences,
     issuer: `https://cognito-idp.${authEnv.region}.amazonaws.com/${authEnv.userPoolId}`,
-    rateLimitPerHour: parseInt(process.env.RATE_LIMIT_PER_HOUR || '1000', 10),
+    rateLimitPerMinute: parseInt(process.env.AUTH_RATE_LIMIT_PER_MINUTE || '1000', 10),
     tokenVerificationTimeoutMs: authEnv.tokenVerificationTimeoutMs,
   };
 }
@@ -177,7 +177,7 @@ async function enrichUserContext(
     const badges = await getUserBadges(userId, userRepository);
 
     // Check rate limit
-    const rateLimitInfo = await checkRateLimit(userId, config.rateLimitPerHour);
+    const rateLimitInfo = await checkRateLimit(userId, config.rateLimitPerMinute, 60_000);
 
     return {
       badges,
@@ -304,18 +304,18 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     // Check rate limit
     if (enrichedContext.rateLimitInfo && !enrichedContext.rateLimitInfo.allowed) {
       logSecurityEvent({
-        eventType: 'RATE_LIMIT_EXCEEDED',
+        eventType: 'RATE_LIMITED',
         userId: user.id,
         ipAddress: event.requestContext.identity.sourceIp,
         userAgent: event.requestContext.identity.userAgent,
         resource: event.resource,
-        details: `Rate limit exceeded: ${config.rateLimitPerHour} requests per hour`,
+        details: `Rate limit exceeded: ${config.rateLimitPerMinute} requests per minute`,
         timestamp: new Date(),
       });
 
       const rateLimitResponse = createUnauthorizedResponse(
         event.methodArn,
-        'RATE_LIMIT_EXCEEDED',
+        'RATE_LIMITED',
         'Too many requests'
       );
       rateLimitResponse.context.rateLimitRemaining = enrichedContext.rateLimitInfo.remainingRequests.toString();

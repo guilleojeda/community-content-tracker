@@ -224,6 +224,19 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
         Type: 'String',
       });
     });
+
+    it('should configure rotation for external API key secrets', () => {
+      template.resourceCountIs('AWS::SecretsManager::RotationSchedule', 2);
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        Handler: 'index.handler',
+        Runtime: Match.stringLikeRegexp('nodejs'),
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({
+            PENDING_PARAMETER_NAME: Match.stringLikeRegexp('api-keys/youtube'),
+          }),
+        }),
+      });
+    });
   });
 
   describe('Production environment differences', () => {

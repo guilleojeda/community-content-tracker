@@ -11,6 +11,9 @@ describe('UserRepository', () => {
     const setup = await setupTestDatabase();
     pool = setup.pool;
     userRepository = new UserRepository(pool);
+    await pool.query(`ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS social_links JSONB DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT false`);
   });
 
   afterAll(async () => {
@@ -460,6 +463,25 @@ describe('UserRepository', () => {
     });
   });
 
+  describe('updateUser', () => {
+    it('should persist social links and return them', async () => {
+      const user = await createTestUser(pool);
+
+      const updated = await userRepository.updateUser(user.id, {
+        socialLinks: {
+          twitter: 'https://twitter.com/rectified',
+          website: 'https://example.com',
+        },
+      });
+
+      expect(updated).not.toBeNull();
+      expect(updated?.socialLinks).toEqual({
+        twitter: 'https://twitter.com/rectified',
+        website: 'https://example.com',
+      });
+    });
+  });
+
   describe('GDPR compliance', () => {
     it('should export user data in JSON format', async () => {
       const user = await createTestUser(pool, {
@@ -472,8 +494,10 @@ describe('UserRepository', () => {
       expect(exportData).toHaveProperty('user');
       expect(exportData).toHaveProperty('content');
       expect(exportData).toHaveProperty('badges');
+      expect(exportData).toHaveProperty('channels');
       expect(exportData).toHaveProperty('bookmarks');
       expect(exportData).toHaveProperty('follows');
+      expect(exportData).toHaveProperty('consents');
       expect(exportData).toHaveProperty('export_date');
 
       expect(exportData.user).toMatchObject({

@@ -58,7 +58,8 @@ export class StaticSiteStack extends cdk.Stack {
     cdk.Tags.of(this).add('Environment', props?.environment || 'dev');
 
     const environment = props?.environment || 'dev';
-    const isProd = environment === 'prod';
+    const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
+    const isProductionLike = productionLikeEnvs.has(environment);
 
     // Create S3 bucket for static site hosting
     this.bucket = new s3.Bucket(this, 'StaticSiteBucket', {
@@ -67,9 +68,9 @@ export class StaticSiteStack extends cdk.Stack {
       websiteErrorDocument: 'error.html',
       publicReadAccess: false,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: !isProd,
-      versioned: isProd,
+      removalPolicy: isProductionLike ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: !isProductionLike,
+      versioned: isProductionLike,
       encryption: s3.BucketEncryption.S3_MANAGED,
     });
 
@@ -257,7 +258,7 @@ export class StaticSiteStack extends cdk.Stack {
           ttl: cdk.Duration.minutes(30),
         },
       ],
-      priceClass: isProd ? cloudfront.PriceClass.PRICE_CLASS_ALL : cloudfront.PriceClass.PRICE_CLASS_100,
+      priceClass: isProductionLike ? cloudfront.PriceClass.PRICE_CLASS_ALL : cloudfront.PriceClass.PRICE_CLASS_100,
       enabled: true,
       httpVersion: cloudfront.HttpVersion.HTTP2,
       comment: `Community Content Hub ${environment} distribution`,

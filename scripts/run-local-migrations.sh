@@ -11,10 +11,14 @@ DB_NAME="${DB_NAME:-contenthub}"
 
 cleanup() {
   if [[ "${KEEP_DB:-0}" != "1" ]]; then
-    ${COMPOSE_COMMAND} down >/dev/null 2>&1 || true
+    ${COMPOSE_COMMAND} down -v >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
+
+if [[ "${KEEP_DB:-0}" != "1" ]]; then
+  ${COMPOSE_COMMAND} down -v >/dev/null 2>&1 || true
+fi
 
 echo "Starting PostgreSQL container (port ${DB_PORT})..."
 DB_PORT="${DB_PORT}" ${COMPOSE_COMMAND} up -d postgres >/dev/null
