@@ -283,4 +283,4 @@ Contributors will be recognized in our README file and release notes. We appreci
 
 ---
 
-Thank you for contributing to the AWS Community Content Hub! 🚀
+Thank you for contributing to the AWS Community Content Hub!

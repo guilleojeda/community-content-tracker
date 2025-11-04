@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick start guide for Claude Flow
 
-echo "🚀 Claude Flow Quick Start"
+echo "LAUNCH Claude Flow Quick Start"
 echo "=========================="
 echo ""
 echo "1. Initialize a swarm:"

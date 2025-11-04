@@ -245,13 +245,13 @@ claude-flow pair --start \
 
 | Mode | You Write | AI Writes | Best For | Switch Time |
 |------|-----------|-----------|----------|-------------|
-| Driver | ✅ | ❌ | Learning, Control | N/A |
-| Navigator | ❌ | ✅ | Speed, Generation | N/A |
-| Switch | ✅/❌ | ✅/❌ | Balance, Long Sessions | 5-60min |
-| TDD | ✅/❌ | ✅/❌ | Test-First | Per cycle |
-| Review | ✅ | ❌ | Quality | N/A |
-| Mentor | ✅ | ❌ | Learning | N/A |
-| Debug | ✅/❌ | ✅/❌ | Fixing | N/A |
+| Driver | PASS | FAIL | Learning, Control | N/A |
+| Navigator | FAIL | PASS | Speed, Generation | N/A |
+| Switch | PASS/FAIL | PASS/FAIL | Balance, Long Sessions | 5-60min |
+| TDD | PASS/FAIL | PASS/FAIL | Test-First | Per cycle |
+| Review | PASS | FAIL | Quality | N/A |
+| Mentor | PASS | FAIL | Learning | N/A |
+| Debug | PASS/FAIL | PASS/FAIL | Fixing | N/A |
 
 ## Mode Combinations
 

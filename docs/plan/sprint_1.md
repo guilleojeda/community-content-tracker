@@ -18,14 +18,14 @@ Acceptance Criteria:
  Code of Conduct established
 Technical Details:
 Repository Structure:
-├── packages/
+├── src/
 │   ├── backend/        # Lambda functions
 │   ├── frontend/       # Next.js application
 │   ├── shared/         # Shared types and utilities
 │   └── infrastructure/ # CDK code
-├── docs/              # ADRs and documentation
-├── scripts/           # Build and deployment scripts
-└── tests/            # E2E tests
+├── docs/               # ADRs and documentation
+├── scripts/            # Build and deployment scripts
+└── tests/              # Automated test suites
 
 Task 1.2: CDK Infrastructure Bootstrap
 Epic: E1

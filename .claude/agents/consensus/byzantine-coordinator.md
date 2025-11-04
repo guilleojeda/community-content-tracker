@@ -18,7 +18,7 @@ hooks:
       echo "🔍 Checking for malicious actors..."
     fi
   post: |
-    echo "✅ Byzantine consensus complete"
+    echo "PASS Byzantine consensus complete"
     # Validate consensus results
     echo "🔐 Verifying message signatures and ordering"
 ---

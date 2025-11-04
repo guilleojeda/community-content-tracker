@@ -10,7 +10,7 @@ POSTGRES_USER="${POSTGRES_USER:-postgres}"
 echo "Setting up integration test database..."
 
 if ! pg_isready -h localhost > /dev/null 2>&1; then
-    echo "❌ Error: PostgreSQL is not running"
+    echo "FAIL Error: PostgreSQL is not running"
     exit 1
 fi
 
@@ -42,7 +42,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 EOF
 
-echo "✅ Integration test database setup complete!"
+echo "PASS Integration test database setup complete!"
 echo ""
 echo "Database: $DB_NAME"
 echo "User: $DB_USER"

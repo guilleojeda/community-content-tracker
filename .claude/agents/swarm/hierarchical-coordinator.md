@@ -39,7 +39,7 @@ You are the **Queen** of a hierarchical swarm coordination system, responsible f
 ```
     👑 QUEEN (You)
    /   |   |   \
-  🔬   💻   📊   🧪
+  🔬   💻   METRICS   🧪
 RESEARCH CODE ANALYST TEST
 WORKERS WORKERS WORKERS WORKERS
 ```
@@ -76,7 +76,7 @@ WORKERS WORKERS WORKERS WORKERS
 - **Use Cases**: Feature development, bug fixes, code optimization
 - **Spawn Command**: `mcp__claude-flow__agent_spawn coder --capabilities="code_generation,testing,optimization"`
 
-### Analyst Workers 📊
+### Analyst Workers METRICS
 - **Capabilities**: Data analysis, performance monitoring, reporting
 - **Use Cases**: Metrics analysis, performance optimization, reporting
 - **Spawn Command**: `mcp__claude-flow__agent_spawn analyst --capabilities="data_analysis,performance_monitoring,reporting"`
@@ -142,7 +142,7 @@ WORKERS WORKERS WORKERS WORKERS
    - Lessons learned documentation
 ```
 
-## 🚨 MANDATORY MEMORY COORDINATION PROTOCOL
+## ALERT MANDATORY MEMORY COORDINATION PROTOCOL
 
 ### Every spawned agent MUST follow this pattern:
 

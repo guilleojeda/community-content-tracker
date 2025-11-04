@@ -12,18 +12,26 @@ describe('Export History Lambda', () => {
     const setup = await setupTestDatabase();
     pool = setup.pool;
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS analytics_events (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        event_type TEXT NOT NULL,
-        user_id UUID,
-        session_id TEXT,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        ip_address TEXT,
-        user_agent TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
-      )
-    `);
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS analytics_events (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          event_type TEXT NOT NULL,
+          user_id UUID,
+          session_id TEXT,
+          metadata JSONB DEFAULT '{}'::jsonb,
+          ip_address TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+        )
+      `);
+    } catch (error: any) {
+      if (process.env.TEST_DB_INMEMORY === 'true') {
+        console.warn('analytics_events table creation skipped for in-memory tests:', error.message);
+      } else {
+        throw error;
+      }
+    }
   });
 
   afterAll(async () => {

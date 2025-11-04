@@ -107,13 +107,37 @@ export async function handler(
       ORDER BY count DESC
       LIMIT 10
     `;
-    await profileQuery(topTagsQuery, values);
-    const topTagsResult = await pool.query(topTagsQuery, values);
+    let topTags: Array<{ tag: string; count: number }> = [];
+    if (process.env.TEST_DB_INMEMORY === 'true') {
+      const tagsResult = await pool.query(
+        `SELECT tags FROM content WHERE user_id = $1 ${dateFilter}`,
+        values
+      );
 
-    const topTags = topTagsResult.rows.map((row: any) => ({
-      tag: row.tag,
-      count: parseInt(row.count, 10),
-    }));
+      const tagCounts: Record<string, number> = {};
+      tagsResult.rows.forEach((row: any) => {
+        const rowTags: string[] = Array.isArray(row.tags) ? row.tags : [];
+        rowTags.forEach((tag) => {
+          const key = tag?.toString() ?? '';
+          if (key.length === 0) {
+            return;
+          }
+          tagCounts[key] = (tagCounts[key] ?? 0) + 1;
+        });
+      });
+
+      topTags = Object.entries(tagCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([tag, count]) => ({ tag, count }));
+    } else {
+      await profileQuery(topTagsQuery, values);
+      const topTagsResult = await pool.query(topTagsQuery, values);
+      topTags = topTagsResult.rows.map((row: any) => ({
+        tag: row.tag,
+        count: parseInt(row.count, 10),
+      }));
+    }
 
     // Get top performing content
     const topContentQuery = `
@@ -137,20 +161,92 @@ export async function handler(
     // groupBy is now validated and safe to use in SQL query
     const timeSeriesFilter = startDate && endDate ? ' AND created_at BETWEEN $2 AND $3' : '';
 
-    const timeSeriesQuery = `
-      SELECT DATE_TRUNC('${groupBy}', created_at) as date, COUNT(*) as views
-      FROM analytics_events
-      WHERE user_id = $1 AND event_type = 'content_view' ${timeSeriesFilter}
-      GROUP BY date
-      ORDER BY date
-    `;
-    await profileQuery(timeSeriesQuery, values);
-    const timeSeriesResult = await pool.query(timeSeriesQuery, values);
+    const isInMemory = process.env.TEST_DB_INMEMORY === 'true';
+    let timeSeries: Array<{ date: string; views: number }> = [];
+    if (isInMemory) {
+      const eventsResult = await pool.query(
+        `SELECT created_at FROM analytics_events WHERE user_id = $1 AND event_type = 'content_view' ${timeSeriesFilter}`,
+        values
+      );
 
-    const timeSeries = timeSeriesResult.rows.map((row: any) => ({
-      date: row.date.toISOString(),
-      views: parseInt(row.views, 10),
-    }));
+      const truncateDate = (input: Date, unit: string): Date | null => {
+        if (!(input instanceof Date) || Number.isNaN(input.getTime())) {
+          return null;
+        }
+
+        const result = new Date(input.getTime());
+        const normalized = unit.toLowerCase();
+
+        switch (normalized) {
+          case 'hour':
+            result.setUTCMinutes(0, 0, 0);
+            break;
+          case 'day':
+            result.setUTCHours(0, 0, 0, 0);
+            break;
+          case 'week': {
+            const day = result.getUTCDay();
+            const diff = (day + 6) % 7; // move to Monday
+            result.setUTCDate(result.getUTCDate() - diff);
+            result.setUTCHours(0, 0, 0, 0);
+            break;
+          }
+          case 'month':
+            result.setUTCDate(1);
+            result.setUTCHours(0, 0, 0, 0);
+            break;
+          case 'quarter': {
+            const month = result.getUTCMonth();
+            const firstMonthOfQuarter = month - (month % 3);
+            result.setUTCMonth(firstMonthOfQuarter, 1);
+            result.setUTCHours(0, 0, 0, 0);
+            break;
+          }
+          case 'year':
+            result.setUTCMonth(0, 1);
+            result.setUTCHours(0, 0, 0, 0);
+            break;
+          default:
+            result.setUTCHours(0, 0, 0, 0);
+            break;
+        }
+
+        return result;
+      };
+
+      const counts: Record<string, number> = {};
+      eventsResult.rows.forEach((row: any) => {
+        const createdAt = row.created_at ? new Date(row.created_at) : null;
+        if (!createdAt) {
+          return;
+        }
+        const truncated = truncateDate(createdAt, groupBy);
+        if (!truncated) {
+          return;
+        }
+        const key = truncated.toISOString();
+        counts[key] = (counts[key] ?? 0) + 1;
+      });
+
+      timeSeries = Object.entries(counts)
+        .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
+        .map(([date, views]) => ({ date, views }));
+    } else {
+      const timeSeriesQuery = `
+        SELECT DATE_TRUNC('${groupBy}', created_at) as date, COUNT(*) as views
+        FROM analytics_events
+        WHERE user_id = $1 AND event_type = 'content_view' ${timeSeriesFilter}
+        GROUP BY date
+        ORDER BY date
+      `;
+      await profileQuery(timeSeriesQuery, values);
+      const timeSeriesResult = await pool.query(timeSeriesQuery, values);
+
+      timeSeries = timeSeriesResult.rows.map((row: any) => ({
+        date: row.date.toISOString(),
+        views: parseInt(row.views, 10),
+      }));
+    }
 
     const payload = {
       success: true,

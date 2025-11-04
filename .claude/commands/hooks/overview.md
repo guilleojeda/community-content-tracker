@@ -116,11 +116,11 @@ mcp__claude-flow__memory_usage {
 ```
 
 ## Benefits
-- 🤖 Automatic agent assignment based on file type
+- BOT Automatic agent assignment based on file type
 - 🎨 Consistent code formatting
 - 🧠 Continuous neural pattern improvement  
 - 💾 Cross-session memory persistence via MCP tools
-- 📊 Performance metrics tracking through memory
+- METRICS Performance metrics tracking through memory
 - 🔄 Automatic memory coordination between agents
 - 🎯 Smart agent spawning based on task analysis
 

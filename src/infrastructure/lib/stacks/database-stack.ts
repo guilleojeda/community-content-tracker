@@ -213,6 +213,7 @@ export class DatabaseStack extends cdk.Stack {
       vpc: this.vpc,
       subnetGroup,
       securityGroups: [databaseSecurityGroup],
+      enableDataApi: true,
       serverlessV2MinCapacity: props?.minCapacity ?? (isProductionLike ? 1 : 0.5),
       serverlessV2MaxCapacity: props?.maxCapacity ?? (isProductionLike ? 4 : 1),
       backup: {

@@ -47,7 +47,7 @@ claude-flow pair --start \
 > AI performs security review, suggests improvements
 
 /commit --message "feat: JWT authentication with refresh tokens"
-✅ Truth Score: 0.98 - Committed successfully
+PASS Truth Score: 0.98 - Committed successfully
 ```
 
 ## Example 2: Bug Fixing Session
@@ -87,7 +87,7 @@ claude-flow pair --start \
 > AI generates proper cleanup code
 
 /test
-> Memory stable at 150MB ✅
+> Memory stable at 150MB PASS
 
 /commit --message "fix: memory leak in event emitters"
 ```
@@ -121,14 +121,14 @@ claude-flow pair --start \
 > You write just enough code to pass tests
 
 /test
-> Tests passing: 3/3 ✅
+> Tests passing: 3/3 PASS
 
 [REFACTOR PHASE]
 /refactor --pattern repository
 > AI refactors to repository pattern
 
 /test
-> Tests still passing: 3/3 ✅
+> Tests still passing: 3/3 PASS
 
 [NEXT CYCLE]
 /test-gen "remove item from cart"
@@ -174,12 +174,12 @@ claude-flow pair --start \
 # You refactor with AI guidance
 
 /test
-> All tests passing ✅
+> All tests passing PASS
 
 /review --compare
 > AI shows before/after comparison
 > Code complexity: 35 → 12
-> Truth score: 0.99 ✅
+> Truth score: 0.99 PASS
 
 /commit --message "refactor: modernize UserService with async/await"
 ```
@@ -266,14 +266,14 @@ claude-flow pair --start \
 # You implement with AI guidance
 
 /perf --profile
-> ProductList: 45ms render (90% improvement!) ✅
+> ProductList: 45ms render (90% improvement!) PASS
 
 /implement virtualization with react-window
 > AI implements virtual scrolling
 
 /perf --profile
-> ProductList: 12ms render (97% improvement!) ✅
-> FPS: 60 stable ✅
+> ProductList: 12ms render (97% improvement!) PASS
+> FPS: 60 stable PASS
 
 /commit --message "perf: optimize ProductList with memoization and virtualization"
 ```
@@ -321,7 +321,7 @@ claude-flow pair --start \
 > AI generates OpenAPI documentation
 
 /test --integration
-> All endpoints tested: 15/15 ✅
+> All endpoints tested: 15/15 PASS
 
 /deploy --staging
 > API deployed to staging environment
@@ -358,16 +358,16 @@ claude-flow pair --start \
 # You write migration with AI assistance
 
 /test --migration --sample-data
-> Migration successful for 10,000 records ✅
+> Migration successful for 10,000 records PASS
 
 /implement data access layer
 > AI creates repository pattern implementation
 
 /test --integration
-> All queries working correctly ✅
+> All queries working correctly PASS
 
 /verify data integrity
-> Truth score: 0.995 ✅
+> Truth score: 0.995 PASS
 > No data loss detected
 ```
 
@@ -396,7 +396,7 @@ claude-flow pair --start \
   - Deploy to staging
 
 /test --ci --dry-run
-> Pipeline simulation successful ✅
+> Pipeline simulation successful PASS
 
 /implement deployment to production
 > AI adds:
@@ -440,10 +440,10 @@ claude-flow pair --start \
   - Conflict resolution
 
 /test --device ios simulator
-> Feature working on iOS ✅
+> Feature working on iOS PASS
 
 /test --device android emulator
-> Feature working on Android ✅
+> Feature working on Android PASS
 
 /optimize --mobile
 > AI optimizes:

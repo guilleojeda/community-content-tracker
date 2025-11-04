@@ -300,7 +300,7 @@ aws cloudformation list-stacks --profile community-content-hub
 npx cdk bootstrap --profile community-content-hub
 
 # Should see output like:
-# ✅  Environment aws://123456789012/us-east-1 bootstrapped.
+# PASS  Environment aws://123456789012/us-east-1 bootstrapped.
 ```
 
 ### 3. Verify Permissions

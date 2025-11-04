@@ -121,8 +121,8 @@ npx claude-flow start --ui
 ## Features
 - 🧠 ruv-swarm integration
 - 🎯 SPARC development modes  
-- 🔧 GitHub workflow automation
-- 📊 Advanced coordination capabilities
+- TOOLS GitHub workflow automation
+- METRICS Advanced coordination capabilities
 
 ## Documentation
 See CLAUDE.md for complete integration instructions.`

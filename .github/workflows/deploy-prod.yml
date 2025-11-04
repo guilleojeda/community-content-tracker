@@ -267,7 +267,7 @@ jobs:
           echo "  - SHA: ${{ needs.pre-production-validation.outputs.deploy-sha }}"
           echo "  - Business Approved"
           echo "  - Technical Approved"
-          echo "  - Staging Validated: ${{ needs.pre-production-validation.outputs.staging-validated == 'true' && '✅' || '⚠️ SKIPPED' }}"
+          echo "  - Staging Validated: ${{ needs.pre-production-validation.outputs.staging-validated == 'true' && 'PASS' || 'SKIPPED' }}"
           echo ""
           echo "Proceeding with production deployment..."
 

@@ -18,7 +18,7 @@ hooks:
     # Retrieve pseudocode designs
     memory_search "pseudo_complete" | tail -1
   post: |
-    echo "✅ Architecture phase complete"
+    echo "PASS Architecture phase complete"
     memory_store "arch_complete_$(date +%s)" "System architecture defined"
 ---
 

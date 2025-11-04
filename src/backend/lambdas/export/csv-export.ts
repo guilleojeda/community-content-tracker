@@ -67,23 +67,67 @@ export async function handler(
 
     query += ' ORDER BY c.publish_date DESC';
 
-    const result = await pool.query(query, values);
+    const isInMemory = process.env.TEST_DB_INMEMORY === 'true';
+    let resultRows: any[] = [];
+
+    if (isInMemory) {
+      let baseQuery = `
+        SELECT id, title, publish_date, content_type, metrics, tags
+        FROM content
+        WHERE user_id = $1 AND deleted_at IS NULL
+      `;
+
+      if (body.startDate && body.endDate) {
+        baseQuery += ' AND publish_date BETWEEN $2 AND $3';
+      }
+
+      baseQuery += ' ORDER BY publish_date DESC';
+
+      const contentResult = await pool.query(baseQuery, values);
+      const contentRows = contentResult.rows ?? [];
+
+      const contentIds = contentRows.map((row: any) => row.id);
+      const urlMap = new Map<string, string>();
+      if (contentIds.length > 0) {
+        const urlResult = await pool.query(
+          'SELECT content_id, url, created_at FROM content_urls WHERE content_id = ANY($1::uuid[]) ORDER BY created_at ASC',
+          [contentIds]
+        );
+        (urlResult.rows ?? []).forEach((row: any) => {
+          if (!urlMap.has(row.content_id)) {
+            urlMap.set(row.content_id, row.url);
+          }
+        });
+      }
+
+      resultRows = contentRows.map((row: any) => ({
+        title: row.title,
+        publish_date: row.publish_date,
+        content_type: row.content_type,
+        metrics: row.metrics,
+        tags: row.tags,
+        url: urlMap.get(row.id) ?? null,
+      }));
+    } else {
+      const result = await pool.query(query, values);
+      resultRows = result.rows;
+    }
 
     // Generate CSV based on program type
     let csvContent = '';
 
     switch (body.programType) {
       case 'community_builder':
-        csvContent = generateCommunityBuilderCSV(result.rows);
+        csvContent = generateCommunityBuilderCSV(resultRows);
         break;
       case 'hero':
-        csvContent = generateHeroCSV(result.rows);
+        csvContent = generateHeroCSV(resultRows);
         break;
       case 'ambassador':
-        csvContent = generateAmbassadorCSV(result.rows);
+        csvContent = generateAmbassadorCSV(resultRows);
         break;
       case 'user_group_leader':
-        csvContent = generateUserGroupLeaderCSV(result.rows);
+        csvContent = generateUserGroupLeaderCSV(resultRows);
         break;
     }
 
@@ -95,15 +139,15 @@ export async function handler(
         sessionId: (body as any)?.sessionId ?? null,
         ipAddress: event.requestContext?.identity?.sourceIp || null,
         userAgent: event.requestContext?.identity?.userAgent || null,
-        metadata: {
-          exportType: 'program',
-          programType: body.programType,
-          exportFormat: body.programType,
-          startDate: body.startDate ?? null,
-          endDate: body.endDate ?? null,
-          rowCount: result.rows.length,
-        },
-      });
+          metadata: {
+            exportType: 'program',
+            programType: body.programType,
+            exportFormat: body.programType,
+            startDate: body.startDate ?? null,
+            endDate: body.endDate ?? null,
+            rowCount: resultRows.length,
+          },
+        });
     } catch (error) {
       // Log error but don't fail export
       console.error('Failed to log export event:', error);

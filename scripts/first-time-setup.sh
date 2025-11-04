@@ -402,7 +402,7 @@ show_next_steps() {
 
 # Main execution
 main() {
-    echo "🚀 AWS Community Content Hub - First Time Setup"
+    echo "AWS Community Content Hub - First Time Setup"
     echo "=============================================="
     echo ""
     

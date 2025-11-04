@@ -15,7 +15,7 @@ hooks:
     echo "💻 Coder agent implementing: $TASK"
     # Check for existing tests
     if grep -q "test\|spec" <<< "$TASK"; then
-      echo "⚠️  Remember: Write tests first (TDD)"
+      echo "WARN  Remember: Write tests first (TDD)"
     fi
   post: |
     echo "✨ Implementation complete"

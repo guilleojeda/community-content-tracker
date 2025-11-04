@@ -1,4 +1,4 @@
-# 📊 Truth Command
+# METRICS Truth Command
 
 View truth scores and reliability metrics for your codebase and agent tasks.
 
@@ -72,25 +72,25 @@ claude-flow truth --format json | jq '.overall_score'
 ## Dashboard View
 
 ```
-📊 Truth Metrics Dashboard
+METRICS Truth Metrics Dashboard
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Overall Truth Score: 0.947 ✅
+Overall Truth Score: 0.947 PASS
 Trend: ↗️ +2.3% (7d)
 
 Top Performers:
-  verification-agent   0.982 ⭐
-  code-analyzer       0.971 ⭐
-  test-generator      0.958 ✅
+  verification-agent   0.982 STAR
+  code-analyzer       0.971 STAR
+  test-generator      0.958 PASS
 
 Needs Attention:
-  refactor-agent      0.821 ⚠️
-  docs-generator      0.794 ⚠️
+  refactor-agent      0.821 WARN
+  docs-generator      0.794 WARN
 
 Recent Tasks:
-  task-456  0.991 ✅  "Implement auth"
-  task-455  0.967 ✅  "Add tests"
-  task-454  0.743 ❌  "Refactor API"
+  task-456  0.991 PASS  "Implement auth"
+  task-455  0.967 PASS  "Add tests"
+  task-454  0.743 FAIL  "Refactor API"
 ```
 
 ## Integration

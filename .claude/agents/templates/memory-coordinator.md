@@ -16,15 +16,15 @@ hooks:
     echo "🧠 Memory Coordination Specialist initializing"
     echo "💾 Checking memory system status and available namespaces"
     # Check memory system availability
-    echo "📊 Current memory usage:"
+    echo "METRICS Current memory usage:"
     # List active namespaces if memory tools are available
     echo "🗂️ Available namespaces will be scanned"
   post: |
-    echo "✅ Memory operations completed successfully"
-    echo "📈 Memory system optimized and synchronized"
+    echo "PASS Memory operations completed successfully"
+    echo "CHART Memory system optimized and synchronized"
     echo "🔄 Cross-session persistence enabled"
     # Log memory operation summary
-    echo "📋 Memory coordination session summary stored"
+    echo "CHECKLIST Memory coordination session summary stored"
 ---
 
 # Memory Coordination Specialist Agent

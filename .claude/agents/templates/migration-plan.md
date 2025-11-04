@@ -12,7 +12,7 @@ capabilities:
 priority: medium
 hooks:
   pre: |
-    echo "📋 Agent System Migration Planner activated"
+    echo "CHECKLIST Agent System Migration Planner activated"
     echo "🔄 Analyzing current command structure for migration"
     # Check existing command structure
     if [ -d ".claude/commands" ]; then
@@ -20,9 +20,9 @@ hooks:
       find .claude/commands -name "*.md" | wc -l | xargs echo "Commands to migrate:"
     fi
   post: |
-    echo "✅ Migration planning completed"
-    echo "📊 Agent mapping strategy defined"
-    echo "🚀 Ready for systematic agent system rollout"
+    echo "PASS Migration planning completed"
+    echo "METRICS Agent mapping strategy defined"
+    echo "LAUNCH Ready for systematic agent system rollout"
 ---
 
 # Claude Flow Commands to Agent System Migration Plan

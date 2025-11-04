@@ -20,7 +20,7 @@ hooks:
   post: |
     echo "⚖️  Quorum adjustment complete"
     # Validate new quorum configuration
-    echo "✅ Verifying fault tolerance and availability guarantees"
+    echo "PASS Verifying fault tolerance and availability guarantees"
 ---
 
 # Quorum Manager

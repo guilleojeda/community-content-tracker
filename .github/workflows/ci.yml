@@ -377,10 +377,10 @@ jobs:
           echo "Integration: ${{ needs.integration-tests.result }}"
           
           if [[ "${{ needs.setup.result }}" == "failure" || "${{ needs.lint.result }}" == "failure" || "${{ needs.test.result }}" == "failure" || "${{ needs.build.result }}" == "failure" || "${{ needs.integration-tests.result }}" == "failure" ]]; then
-            echo "❌ PR validation failed"
+            echo "PR validation failed"
             exit 1
           else
-            echo "✅ PR validation passed"
+            echo "PR validation passed"
           fi
 
       - name: Comment PR status
@@ -395,25 +395,25 @@ jobs:
             });
             
             const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && comment.body.includes('🤖 CI Pipeline Status')
+              comment.user.type === 'Bot' && comment.body.includes('CI Pipeline Status')
             );
             
             const status = '${{ needs.setup.result }}' === 'success' && 
                           '${{ needs.lint.result }}' === 'success' && 
                           '${{ needs.test.result }}' === 'success' && 
                           '${{ needs.build.result }}' === 'success' && 
-                          '${{ needs.integration-tests.result }}' === 'success' ? '✅ PASSED' : '❌ FAILED';
+                          '${{ needs.integration-tests.result }}' === 'success' ? 'PASSED' : 'FAILED';
             
-            const body = `🤖 CI Pipeline Status: ${status}
+            const body = `CI Pipeline Status: ${status}
             
             | Stage | Status |
             |-------|--------|
-            | Setup | ${{ needs.setup.result == 'success' && '✅' || '❌' }} ${{ needs.setup.result }} |
-            | Lint | ${{ needs.lint.result == 'success' && '✅' || '❌' }} ${{ needs.lint.result }} |
-            | Tests | ${{ needs.test.result == 'success' && '✅' || '❌' }} ${{ needs.test.result }} |
-            | Security | ${{ needs.security-scan.result == 'success' && '✅' || needs.security-scan.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.security-scan.result }} |
-            | Build | ${{ needs.build.result == 'success' && '✅' || '❌' }} ${{ needs.build.result }} |
-            | Integration | ${{ needs.integration-tests.result == 'success' && '✅' || '❌' }} ${{ needs.integration-tests.result }} |
+            | Setup | ${{ needs.setup.result == 'success' && 'PASS' || 'FAIL' }} ${{ needs.setup.result }} |
+            | Lint | ${{ needs.lint.result == 'success' && 'PASS' || 'FAIL' }} ${{ needs.lint.result }} |
+            | Tests | ${{ needs.test.result == 'success' && 'PASS' || 'FAIL' }} ${{ needs.test.result }} |
+            | Security | ${{ needs.security-scan.result == 'success' && 'PASS' || needs.security-scan.result == 'skipped' && 'SKIPPED' || 'FAIL' }} ${{ needs.security-scan.result }} |
+            | Build | ${{ needs.build.result == 'success' && 'PASS' || 'FAIL' }} ${{ needs.build.result }} |
+            | Integration | ${{ needs.integration-tests.result == 'success' && 'PASS' || 'FAIL' }} ${{ needs.integration-tests.result }} |
             
             Pipeline run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
             

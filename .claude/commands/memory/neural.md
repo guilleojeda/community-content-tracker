@@ -35,11 +35,11 @@ Training improves:
 4. Analyze patterns: Use tool `mcp__claude-flow__neural_patterns` with parameters `{"action": "analyze"}`
 
 ## Important Reminders
-- ✅ This tool provides coordination and structure
-- ✅ Claude Code performs all actual implementation
-- ❌ The tool does NOT write code
-- ❌ The tool does NOT access files directly
-- ❌ The tool does NOT execute commands
+- PASS This tool provides coordination and structure
+- PASS Claude Code performs all actual implementation
+- FAIL The tool does NOT write code
+- FAIL The tool does NOT access files directly
+- FAIL The tool does NOT execute commands
 
 ## See Also
 - Main documentation: /CLAUDE.md

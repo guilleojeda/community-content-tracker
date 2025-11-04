@@ -62,9 +62,9 @@ jobs:
           # Validate SHA exists
           if git cat-file -e "$SHA^{commit}"; then
             echo "sha=$SHA" >> $GITHUB_OUTPUT
-            echo "✅ Valid commit SHA: $SHA"
+            echo "[PASS] Valid commit SHA: $SHA"
           else
-            echo "❌ Invalid commit SHA: $SHA"
+            echo "[FAIL] Invalid commit SHA: $SHA"
             exit 1
           fi
 

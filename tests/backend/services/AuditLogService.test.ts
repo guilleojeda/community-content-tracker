@@ -18,20 +18,28 @@ describe('AuditLogService', () => {
     pool = setup.pool;
     service = new AuditLogService(pool);
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS audit_log (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID,
-        action TEXT NOT NULL,
-        resource_type TEXT NOT NULL,
-        resource_id TEXT,
-        old_values JSONB,
-        new_values JSONB,
-        ip_address TEXT,
-        user_agent TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS audit_log (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID,
+          action TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          resource_id TEXT,
+          old_values JSONB,
+          new_values JSONB,
+          ip_address TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+    } catch (error: any) {
+      if (process.env.TEST_DB_INMEMORY === 'true') {
+        console.warn('audit_log table creation skipped for in-memory tests:', error.message);
+      } else {
+        throw error;
+      }
+    }
   });
 
   afterAll(async () => {

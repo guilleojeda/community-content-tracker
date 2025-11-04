@@ -16,7 +16,7 @@ Fixed test issues for Sprint 6.5 badge administration and channel lambda tests.
 process.env.DATABASE_URL = 'postgresql://testuser:testpass@localhost:5432/test_db';
 ```
 
-**Status**: ✅ Tests now discovered (21 tests found)
+**Status**: PASS Tests now discovered (21 tests found)
 
 ---
 
@@ -32,7 +32,7 @@ process.env.DATABASE_URL = 'postgresql://testuser:testpass@localhost:5432/test_d
 **Files Modified**:
 - `/tests/backend/lambdas/admin/badges.test.ts`
 
-**Status**: ✅ All badge type references corrected
+**Status**: PASS All badge type references corrected
 
 ---
 
@@ -48,7 +48,7 @@ process.env.DATABASE_URL = 'postgresql://testuser:testpass@localhost:5432/test_d
 - `/tests/backend/repositories/ChannelRepository.test.ts`
 - `/tests/helpers/database-mocks.ts`
 
-**Status**: ✅ 14/15 tests passing
+**Status**: PASS 14/15 tests passing
 
 ---
 
@@ -60,7 +60,7 @@ process.env.DATABASE_URL = 'postgresql://testuser:testpass@localhost:5432/test_d
 **Files Modified**:
 - None yet - requires database service mock configuration
 
-**Status**: ⚠️ In Progress
+**Status**: WARN In Progress
 
 ---
 
@@ -94,7 +94,7 @@ process.env.DATABASE_URL = 'postgresql://testuser:testpass@localhost:5432/test_d
 **Remaining Issue**:
 - Duplicate URL test expects exception but mock returns existing channel
 
-**Status**: ✅ Essentially complete (behavior difference, not bug)
+**Status**: PASS Essentially complete (behavior difference, not bug)
 
 ---
 

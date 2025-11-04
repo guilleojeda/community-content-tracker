@@ -57,7 +57,7 @@ Parameters: {
 
 ## Benefits
 - 🧠 Learns your coding style
-- 📈 Improves with each use
+- CHART Improves with each use
 - 🎯 Better task predictions
 - ⚡ Faster coordination
 

@@ -144,15 +144,15 @@ Mode: Switch (10m intervals)
 Focus: Implementation
 Language: JavaScript
 
-Verification: ✅ Enabled (0.95 threshold)
-Testing: ✅ Auto-run on save
-Review: ✅ Continuous
+Verification: PASS Enabled (0.95 threshold)
+Testing: PASS Auto-run on save
+Review: PASS Continuous
 
 Current Role: DRIVER (you)
 Navigator: senior-dev is ready...
 
-📝 Workspace: /workspaces/my-project
-📊 Truth Score: 0.972 ✅
+NOTE Workspace: /workspaces/my-project
+METRICS Truth Score: 0.972 PASS
 🧪 Test Coverage: 84%
 
 Type /help for commands or start coding...

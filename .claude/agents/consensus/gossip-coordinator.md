@@ -20,7 +20,7 @@ hooks:
   post: |
     echo "🔄 Gossip protocol cycle complete"
     # Check convergence status
-    echo "📊 Monitoring eventual consistency convergence"
+    echo "METRICS Monitoring eventual consistency convergence"
 ---
 
 # Gossip Protocol Coordinator

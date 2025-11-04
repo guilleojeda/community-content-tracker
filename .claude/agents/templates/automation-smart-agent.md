@@ -13,12 +13,12 @@ capabilities:
 priority: high
 hooks:
   pre: |
-    echo "🤖 Smart Agent Coordinator initializing..."
-    echo "📊 Analyzing task requirements and resource availability"
+    echo "BOT Smart Agent Coordinator initializing..."
+    echo "METRICS Analyzing task requirements and resource availability"
     # Check current swarm status
     memory_retrieve "current_swarm_status" || echo "No active swarm detected"
   post: |
-    echo "✅ Smart coordination complete"
+    echo "PASS Smart coordination complete"
     memory_store "last_coordination_$(date +%s)" "Intelligent agent coordination executed"
     echo "💡 Agent spawning patterns learned and stored"
 ---

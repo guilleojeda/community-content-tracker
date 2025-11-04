@@ -18,7 +18,7 @@ hooks:
       echo "🔄 Coordinating with swarm test agents..."
     fi
   post: |
-    echo "✅ London School TDD complete - mocks verified"
+    echo "PASS London School TDD complete - mocks verified"
     # Run coordinated test suite with swarm
     if [ -f "package.json" ]; then
       npm test --if-present

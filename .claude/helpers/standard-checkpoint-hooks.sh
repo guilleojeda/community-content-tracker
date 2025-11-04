@@ -30,7 +30,7 @@ EOF
         # Restore working directory
         git stash pop --quiet >/dev/null 2>&1 || true
         
-        echo "✅ Created checkpoint: $checkpoint_branch for $file"
+        echo "PASS Created checkpoint: $checkpoint_branch for $file"
     fi
 }
 
@@ -48,7 +48,7 @@ post_edit_checkpoint() {
         
         # Now check if there are changes
         if git diff --cached --quiet "$file" 2>/dev/null && git diff --quiet "$file" 2>/dev/null; then
-            echo "ℹ️  No changes to checkpoint for $file"
+            echo "INFO  No changes to checkpoint for $file"
         else
             local tag_name="checkpoint-$(date +%Y%m%d-%H%M%S)"
             local current_branch=$(git branch --show-current)
@@ -80,9 +80,9 @@ Automatic checkpoint created by Claude
 }
 EOF
                 
-                echo "✅ Created checkpoint: $tag_name for $file"
+                echo "PASS Created checkpoint: $tag_name for $file"
             else
-                echo "ℹ️  No commit created (no changes or commit failed)"
+                echo "INFO  No commit created (no changes or commit failed)"
             fi
         fi
     fi
@@ -111,7 +111,7 @@ task_checkpoint() {
 }
 EOF
         
-        echo "✅ Created task checkpoint: $checkpoint_name"
+        echo "PASS Created task checkpoint: $checkpoint_name"
     fi
 }
 
@@ -154,7 +154,7 @@ EOF
     git commit -m "🏁 Session end checkpoint: $session_id" --quiet || true
     git tag -a "session-end-$session_id" -m "End of Claude session"
     
-    echo "✅ Session summary saved to: $summary_file"
+    echo "PASS Session summary saved to: $summary_file"
     echo "📌 Final checkpoint: session-end-$session_id"
 }
 

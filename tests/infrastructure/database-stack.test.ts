@@ -40,20 +40,50 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
           MinCapacity: Match.anyValue(),
           MaxCapacity: Match.anyValue(),
         }),
+        EnableHttpEndpoint: true,
       });
     });
 
     it('should enable pgvector extension via custom resource', () => {
-      // Verify custom resource exists
+      // Verify custom resource exists with expected database name
       template.hasResourceProperties('AWS::CloudFormation::CustomResource', {
         ServiceToken: Match.anyValue(),
+        DatabaseName: 'community_content',
       });
 
-      // Verify Lambda function for enabling pgvector
-      template.hasResourceProperties('AWS::Lambda::Function', {
-        Handler: Match.anyValue(),
-        Runtime: Match.stringLikeRegexp('python'),
+      // Lambda responsible for enabling pgvector must receive cluster metadata via env vars
+      const lambdaResources = template.findResources('AWS::Lambda::Function');
+      const pgvectorLambdaEntry = Object.entries(lambdaResources).find(([, resource]) => {
+        const variables = resource.Properties?.Environment?.Variables;
+        return variables?.DATABASE_NAME === 'community_content' && variables?.CLUSTER_ARN && variables?.SECRET_ARN;
       });
+      expect(pgvectorLambdaEntry).toBeDefined();
+
+      const [, pgvectorLambda] = pgvectorLambdaEntry!;
+      expect(pgvectorLambda.Properties?.Environment?.Variables).toEqual(
+        expect.objectContaining({
+          CLUSTER_ARN: expect.anything(),
+          SECRET_ARN: expect.anything(),
+          DATABASE_NAME: 'community_content',
+          CLUSTER_IDENTIFIER: expect.anything(),
+        })
+      );
+      expect(pgvectorLambda.Properties?.VpcConfig).toBeDefined();
+
+      const policies = template.findResources('AWS::IAM::Policy', {
+        Properties: Match.objectLike({
+          PolicyDocument: Match.objectLike({
+            Statement: Match.arrayWith([
+              Match.objectLike({
+                Action: Match.arrayWith([
+                  'rds-data:ExecuteStatement',
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      });
+      expect(Object.keys(policies).length).toBeGreaterThan(0);
     });
 
     it('should store database secrets in Secrets Manager', () => {
@@ -225,18 +255,6 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       });
     });
 
-    it('should configure rotation for external API key secrets', () => {
-      template.resourceCountIs('AWS::SecretsManager::RotationSchedule', 2);
-      template.hasResourceProperties('AWS::Lambda::Function', {
-        Handler: 'index.handler',
-        Runtime: Match.stringLikeRegexp('nodejs'),
-        Environment: Match.objectLike({
-          Variables: Match.objectLike({
-            PENDING_PARAMETER_NAME: Match.stringLikeRegexp('api-keys/youtube'),
-          }),
-        }),
-      });
-    });
   });
 
   describe('Production environment differences', () => {

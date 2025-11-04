@@ -1,6 +1,6 @@
 # Sprint 6.5 Migration Fix Summary
 
-## Completed Tasks ✅
+## Completed Tasks PASS
 
 ### 1. Migration Files Created
 All required migration files have been created with proper SQL:
@@ -32,11 +32,11 @@ All required migration files have been created with proper SQL:
 - Creates integration_test_user and integration_test_db
 - Installs required extensions (pgvector, uuid-ossp, pg_trgm)
 
-## Current Status 📊
+## Current Status METRICS
 
 ### Test Results
-- ✅ **33 test suites passing** (537 tests passed)
-- ❌ **12 test suites failing** (327 tests failed)
+- PASS **33 test suites passing** (537 tests passed)
+- FAIL **12 test suites failing** (327 tests failed)
 - Main failure cause: Missing `content_bookmarks` table
 
 ### Database Status
@@ -44,7 +44,7 @@ All required migration files have been created with proper SQL:
 - Container: community-content-tracker-db
 - Missing integration test user/database (needs manual setup)
 
-## Remaining Issues 🔧
+## Remaining Issues TOOLS
 
 ### 1. Missing Table: content_bookmarks
 Tests in test-setup.ts expect a content_bookmarks table that doesn't exist in migrations.
@@ -56,7 +56,7 @@ Setup script exists but requires:
 1. Docker container to be restarted (port conflict resolved)
 2. OR manual database setup using the provided script
 
-## Next Steps 📋
+## Next Steps CHECKLIST
 
 To achieve 100% Sprint 6.5 completion:
 

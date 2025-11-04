@@ -190,15 +190,15 @@ claude-flow pair --start --ci --non-interactive
 Partner: expert-coder
 Mode: Switch (10m intervals)
 Focus: Implementation
-Verification: ✅ Enabled (0.95)
-Testing: ✅ Auto-run
+Verification: PASS Enabled (0.95)
+Testing: PASS Auto-run
 
 Current Role: DRIVER (you)
 Navigator: expert-coder is reviewing...
 
-📝 Working on: src/auth/login.js
-Truth Score: 0.972 ✅
-Test Coverage: 84% 📈
+NOTE Working on: src/auth/login.js
+Truth Score: 0.972 PASS
+Test Coverage: 84% CHART
 
 💡 Suggestion: Consider adding input validation for email field
 🔍 Review: Line 23 - Potential SQL injection vulnerability

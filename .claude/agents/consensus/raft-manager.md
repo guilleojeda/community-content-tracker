@@ -18,7 +18,7 @@ hooks:
       echo "🎯 Preparing leader election process"
     fi
   post: |
-    echo "📝 Raft operation complete"
+    echo "NOTE Raft operation complete"
     # Verify log consistency
     echo "🔍 Validating log replication and consistency"
 ---

@@ -305,6 +305,7 @@ export class TestDatabase {
             tags TEXT[] DEFAULT '{}'::text[] NOT NULL,
             embedding JSONB,
             is_claimed BOOLEAN DEFAULT true NOT NULL,
+            claimed_at TIMESTAMPTZ,
             original_author TEXT,
             is_flagged BOOLEAN DEFAULT false NOT NULL,
             flagged_at TIMESTAMPTZ,
@@ -397,6 +398,18 @@ export class TestDatabase {
             target_content_id UUID,
             details JSONB DEFAULT '{}'::jsonb,
             ip_address TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+          )`,
+          `CREATE TABLE IF NOT EXISTS audit_log (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID,
+            action TEXT NOT NULL,
+            resource_type TEXT NOT NULL,
+            resource_id UUID,
+            old_values JSONB,
+            new_values JSONB,
+            ip_address TEXT,
+            user_agent TEXT,
             created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
           )`,
           `CREATE TABLE saved_searches (

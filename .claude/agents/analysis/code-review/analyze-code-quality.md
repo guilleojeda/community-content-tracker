@@ -108,14 +108,14 @@ hooks:
     # Count files to analyze
     find . -name "*.js" -o -name "*.ts" -o -name "*.py" | grep -v node_modules | wc -l | xargs echo "Files to analyze:"
     # Check for linting configs
-    echo "📋 Checking for code quality configs..."
+    echo "CHECKLIST Checking for code quality configs..."
     ls -la .eslintrc* .prettierrc* .pylintrc tslint.json 2>/dev/null || echo "No linting configs found"
   post_execution: |
-    echo "✅ Code quality analysis completed"
-    echo "📊 Analysis stored in memory for future reference"
+    echo "PASS Code quality analysis completed"
+    echo "METRICS Analysis stored in memory for future reference"
     echo "💡 Run 'analyze-refactoring' for detailed refactoring suggestions"
   on_error: |
-    echo "⚠️ Analysis warning: {{error_message}}"
+    echo "WARN Analysis warning: {{error_message}}"
     echo "🔄 Continuing with partial analysis..."
     
 examples:

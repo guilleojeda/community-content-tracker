@@ -1,645 +1,242 @@
-// @ts-nocheck
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { describe, it, expect } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import { ciTestHelpers } from '../setup';
+import * as core from '@actions/core';
 import { handlePipelineResult } from '../../src/backend/utils/pipeline';
 
-jest.mock('@actions/core', () => ciTestHelpers.mockGitHubActions);
-jest.mock('@actions/github', () => ({
-  context: ciTestHelpers.mockWorkflowContext,
-}));
+const repoRoot = path.resolve(__dirname, '..', '..');
 
-const mockCore = ciTestHelpers.mockGitHubActions;
-const mockContext = ciTestHelpers.mockWorkflowContext;
+const loadWorkflow = (relativePath: string) => {
+  const workflowPath = path.join(repoRoot, relativePath);
+  const raw = fs.readFileSync(workflowPath, 'utf-8');
+  try {
+    return yaml.load(raw) as Record<string, any>;
+  } catch (error) {
+    const stripScriptBlocks = (text: string): string => {
+      const lines = text.split('\n');
+      const result: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const scriptMatch = line.match(/^(\s*)script:\s*\|/);
+        if (!scriptMatch) {
+          result.push(line);
+          continue;
+        }
 
-type SmokeTestResult = {
-  success: boolean;
-  tests: Record<string, string>;
+        const indentLength = scriptMatch[1].length;
+        result.push(`${scriptMatch[1]}script: ""`);
+
+        i += 1;
+        while (i < lines.length) {
+          const candidate = lines[i];
+          const trimmed = candidate.trim();
+          const candidateIndent = candidate.match(/^(\s*)/)?.[1].length ?? 0;
+
+          if (trimmed.length === 0) {
+            i += 1;
+            continue;
+          }
+
+          const isNextKey = /^\s*(?:-\s+name:|[a-zA-Z][A-Za-z0-9_-]*\s*:)/.test(candidate);
+          if (candidateIndent <= indentLength && isNextKey) {
+            // The block has ended; re-process this line in the outer loop
+            i -= 1;
+            break;
+          }
+
+          i += 1;
+        }
+      }
+
+      return result.join('\n');
+    };
+
+    const sanitized = stripScriptBlocks(raw.replace(/\*\*/g, '__'));
+    return yaml.load(sanitized) as Record<string, any>;
+  }
 };
 
-type PerformanceResult = {
-  success: boolean;
-  metrics: Record<string, number>;
-  thresholds: Record<string, number>;
-};
+const hasRunSnippet = (job: any, snippet: string) =>
+  (job?.steps ?? []).some(
+    (step: any) => typeof step?.run === 'string' && step.run.includes(snippet)
+  );
 
-type NotificationResult = {
-  success: boolean;
-  notifications: Array<{ channel: string; message: string; sent: boolean }>;
-};
-
-type BuildFailureResult = {
-  success: boolean;
-  error: string;
-  exitCode: number;
-  logs: string[];
-};
-
-type DeployFailureResult = {
-  success: boolean;
-  error: string;
-  rollback: {
-    initiated: boolean;
-    status: string;
-  };
-};
-
-type TestFailureResult = {
-  success: boolean;
-  failedTests: number;
-  totalTests: number;
-  coverage: number;
-};
-
-type CDKDiffResult = {
-  success: boolean;
-  changes: Record<string, { additions: number; modifications: number; deletions: number }>;
-};
-
-type DeployResult = {
-  success: boolean;
-  stackName: string;
-};
-
-type DbIntegrationResult = {
-  success: boolean;
-  tests: Record<string, string>;
-};
-
-type ApiTestResult = {
-  success: boolean;
-  endpoints: Record<string, { status: number; response: string }>;
-};
-
-type E2EResult = {
-  success: boolean;
-  scenarios: Record<string, string>;
-};
-
-type BlueGreenDeployResult = {
-  success: boolean;
-  strategy: string;
-  environments: Record<string, string>;
-  switchover: boolean;
-};
-
-type RollingDeployResult = {
-  success: boolean;
-  strategy: string;
-  progress: { total: number; completed: number; failed: number };
-};
-
-type RollbackResult = {
-  success: boolean;
-  previousVersion: string;
-  currentVersion: string;
-  reason: string;
-};
-
-type ProdDeployResult = {
-  success: boolean;
-  environment: string;
-  approvals: {
-    required: boolean;
-    approved: boolean;
-    approver: string;
-  };
-};
-
-const createAsyncMock = <T>() => jest.fn<() => Promise<T>>();
-const createSyncMock = <T>() => jest.fn<() => T>();
-const createArgMock = <TArgs extends any[], TResult>() => jest.fn<(...args: TArgs) => TResult>();
-
-describe('CI/CD Pipeline Tests', () => {
-  let originalEnv: NodeJS.ProcessEnv;
-
-  beforeEach(() => {
-    originalEnv = { ...process.env };
-    
-    // Set up test environment variables
-    process.env.GITHUB_TOKEN = 'test-token';
-    process.env.AWS_ACCESS_KEY_ID = 'test-access-key';
-    process.env.AWS_SECRET_ACCESS_KEY = 'test-secret-key';
-    process.env.AWS_REGION = 'us-east-1';
-    process.env.CDK_DEFAULT_ACCOUNT = '123456789012';
-    process.env.CDK_DEFAULT_REGION = 'us-east-1';
-    
-    // Mock GitHub Actions inputs
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: { [key: string]: string } = {
-        'environment': 'test',
-        'aws-region': 'us-east-1',
-        'deploy-backend': 'true',
-        'deploy-frontend': 'true',
-        'run-tests': 'true',
-      };
-      return inputs[name] || '';
-    });
+const hasActionUsage = (job: any, action: string, predicate?: (step: any) => boolean) =>
+  (job?.steps ?? []).some((step: any) => {
+    if (step?.uses !== action) {
+      return false;
+    }
+    return predicate ? predicate(step) : true;
   });
 
-  afterEach(() => {
-    process.env = originalEnv;
-    jest.clearAllMocks();
+const hasCacheForPath = (job: any, pathFragment: string) =>
+  hasActionUsage(job, 'actions/cache@v3', (step) => {
+    const cachePath = step?.with?.path;
+    return typeof cachePath === 'string' && cachePath.includes(pathFragment);
   });
 
-  describe('GitHub Actions Workflow Configuration', () => {
-    it('should have valid workflow YAML structure', () => {
-      const workflowPath = '.github/workflows/ci.yml';
-      
-      // Mock the workflow file content
-      const mockWorkflow = {
-        name: 'CI/CD Pipeline',
-        on: {
-          push: { branches: ['main', 'develop'] },
-          pull_request: { branches: ['main'] },
-        },
-        jobs: {
-          test: {
-            'runs-on': 'ubuntu-latest',
-            steps: [
-              { uses: 'actions/checkout@v4' },
-              { uses: 'actions/setup-node@v4', with: { 'node-version': '18' } },
-              { run: 'npm ci' },
-              { run: 'npm test' },
-            ],
-          },
-          deploy: {
-            needs: 'test',
-            'runs-on': 'ubuntu-latest',
-            steps: [
-              { uses: 'actions/checkout@v4' },
-              { run: 'npm run deploy' },
-            ],
-          },
-        },
-      };
+const loadWorkflowText = (relativePath: string) =>
+  fs.readFileSync(path.join(repoRoot, relativePath), 'utf-8');
 
-      // Validate YAML structure
-      expect(mockWorkflow).toHaveProperty('name');
-      expect(mockWorkflow).toHaveProperty('on');
-      expect(mockWorkflow).toHaveProperty('jobs');
-      expect(mockWorkflow.jobs).toHaveProperty('test');
-      expect(mockWorkflow.jobs).toHaveProperty('deploy');
-    });
+const getStepByName = (job: any, name: string) =>
+  (job?.steps ?? []).find((step: any) => step?.name === name);
 
-    it('should validate required environment variables', () => {
-      const requiredEnvVars = [
-        'GITHUB_TOKEN',
-        'AWS_ACCESS_KEY_ID',
-        'AWS_SECRET_ACCESS_KEY',
-        'AWS_REGION',
-        'CDK_DEFAULT_ACCOUNT',
-        'CDK_DEFAULT_REGION',
-      ];
+const toArray = (value: any) => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return value === undefined || value === null ? [] : [value];
+};
 
-      requiredEnvVars.forEach(envVar => {
-        expect(process.env[envVar]).toBeDefined();
-        expect(process.env[envVar]).not.toBe('');
-      });
-    });
+describe('CI workflow configuration', () => {
+  const workflow = loadWorkflow('.github/workflows/ci.yml');
+  const jobs = workflow.jobs;
 
-    it('should have correct trigger conditions', () => {
-      const triggers = {
-        push: ['main', 'develop'],
-        pull_request: ['main'],
-      };
-
-      expect(triggers.push).toContain('main');
-      expect(triggers.push).toContain('develop');
-      expect(triggers.pull_request).toContain('main');
-    });
+  it('triggers on pull requests to main and develop with required path exclusions', () => {
+    expect(workflow.on?.pull_request?.branches).toEqual(expect.arrayContaining(['main', 'develop']));
+    const ignored = workflow.on?.pull_request?.['paths-ignore'];
+    expect(ignored).toEqual(expect.arrayContaining(['**.md', '.gitignore', 'LICENSE']));
   });
 
-  describe('Build and Test Pipeline', () => {
-    it('should run unit tests successfully', async () => {
-      // Mock Jest test execution
-      const mockTestRun = jest.fn().mockResolvedValue({
-        success: true,
-        testResults: {
-          numTotalTests: 50,
-          numPassedTests: 50,
-          numFailedTests: 0,
-          coverageMap: {
-            total: { lines: { pct: 85 }, statements: { pct: 85 } },
-          },
-        },
-      });
+  it('defines required jobs with proper dependencies', () => {
+    expect(Object.keys(jobs)).toEqual(
+      expect.arrayContaining([
+        'setup',
+        'lint',
+        'test',
+        'security-scan',
+        'build',
+        'integration-tests',
+        'validate-pr',
+      ])
+    );
 
-      await mockTestRun();
+    const lintJob = jobs['lint'];
+    expect(lintJob.needs).toBe('setup');
+    expect(lintJob.if).toContain('needs.setup.result == \'success\'');
 
-      expect(mockTestRun).toHaveBeenCalled();
-    });
-
-    it('should lint code and enforce standards', () => {
-      const mockLintRun = jest.fn().mockReturnValue({
-        success: true,
-        errors: [],
-        warnings: [],
-      });
-
-      const result = mockLintRun();
-
-      expect(result.success).toBe(true);
-      expect(result.errors).toHaveLength(0);
-    });
-
-    it('should run type checking', () => {
-      const mockTypeCheck = jest.fn().mockReturnValue({
-        success: true,
-        errors: [],
-      });
-
-      const result = mockTypeCheck();
-
-      expect(result.success).toBe(true);
-      expect(result.errors).toHaveLength(0);
-    });
-
-    it('should build frontend application', () => {
-      const mockFrontendBuild = jest.fn().mockReturnValue({
-        success: true,
-        outputPath: 'dist/',
-        assets: ['index.html', 'main.js', 'main.css'],
-      });
-
-      const result = mockFrontendBuild();
-
-      expect(result.success).toBe(true);
-      expect(result.assets).toContain('index.html');
-    });
-
-    it('should build backend application', () => {
-      const mockBackendBuild = jest.fn().mockReturnValue({
-        success: true,
-        outputPath: 'dist/',
-        lambdas: ['api-handler', 'auth-handler'],
-      });
-
-      const result = mockBackendBuild();
-
-      expect(result.success).toBe(true);
-      expect(result.lambdas).toContain('api-handler');
-    });
+    const validateJob = jobs['validate-pr'];
+    expect(validateJob.needs).toEqual(
+      expect.arrayContaining(['setup', 'lint', 'test', 'security-scan', 'build', 'integration-tests'])
+    );
   });
 
-  describe('Security Scanning', () => {
-    it('should run dependency vulnerability scanning', () => {
-      const mockSecurityScan = jest.fn().mockReturnValue({
-        success: true,
-        vulnerabilities: {
-          high: 0,
-          medium: 0,
-          low: 2, // Acceptable level
-        },
-      });
-
-      const result = mockSecurityScan();
-
-      expect(result.success).toBe(true);
-      expect(result.vulnerabilities.high).toBe(0);
-      expect(result.vulnerabilities.medium).toBe(0);
-    });
-
-    it('should scan for secrets in code', () => {
-      const mockSecretScan = jest.fn().mockReturnValue({
-        success: true,
-        secrets: [],
-        warnings: [],
-      });
-
-      const result = mockSecretScan();
-
-      expect(result.success).toBe(true);
-      expect(result.secrets).toHaveLength(0);
-    });
-
-    it('should validate CDK security best practices', () => {
-      const mockCDKSecurityCheck = jest.fn().mockReturnValue({
-        success: true,
-        violations: [],
-        warnings: ['Consider enabling deletion protection for production'],
-      });
-
-      const result = mockCDKSecurityCheck();
-
-      expect(result.success).toBe(true);
-      expect(result.violations).toHaveLength(0);
-    });
+  it('runs linting, formatting, and type checking in lint job', () => {
+    const lintJob = jobs['lint'];
+    expect(hasRunSnippet(lintJob, 'npm run lint')).toBe(true);
+    expect(hasRunSnippet(lintJob, 'npx prettier --check')).toBe(true);
+    expect(hasRunSnippet(lintJob, 'npm run typecheck')).toBe(true);
   });
 
-  describe('CDK Deployment Pipeline', () => {
-    it('should synthesize CDK stacks successfully', () => {
-      const mockCDKSynth = jest.fn().mockReturnValue({
-        success: true,
-        stacks: ['DatabaseStack', 'StaticSiteStack'],
-        templates: {
-          'DatabaseStack.template.json': { Resources: {} },
-          'StaticSiteStack.template.json': { Resources: {} },
-        },
-      });
-
-      const result = mockCDKSynth();
-
-      expect(result.success).toBe(true);
-      expect(result.stacks).toContain('DatabaseStack');
-      expect(result.stacks).toContain('StaticSiteStack');
-    });
-
-    it('should validate CDK templates', () => {
-      const mockCDKValidation = jest.fn().mockReturnValue({
-        success: true,
-        validations: {
-          'DatabaseStack': { valid: true, errors: [] },
-          'StaticSiteStack': { valid: true, errors: [] },
-        },
-      });
-
-      const result = mockCDKValidation();
-
-      expect(result.success).toBe(true);
-      expect(result.validations.DatabaseStack.valid).toBe(true);
-      expect(result.validations.StaticSiteStack.valid).toBe(true);
-    });
-
-    it('should perform diff analysis before deployment', () => {
-      const mockCDKDiff = createSyncMock<CDKDiffResult>();
-      mockCDKDiff.mockReturnValue({
-        success: true,
-        changes: {
-          'DatabaseStack': { additions: 2, modifications: 0, deletions: 0 },
-          'StaticSiteStack': { additions: 3, modifications: 1, deletions: 0 },
-        },
-      });
-
-      const result = mockCDKDiff();
-
-      expect(result.success).toBe(true);
-      expect(result.changes.DatabaseStack.deletions).toBe(0);
-    });
-
-    it('should deploy stacks in correct order', () => {
-      const deploymentOrder: string[] = [];
-      const mockDeploy = createArgMock<[string], DeployResult>();
-      mockDeploy.mockImplementation((stackName: string) => {
-        deploymentOrder.push(stackName);
-        return { success: true, stackName };
-      });
-
-      // Simulate deployment
-      mockDeploy('DatabaseStack');
-      mockDeploy('StaticSiteStack');
-
-      expect(deploymentOrder).toEqual(['DatabaseStack', 'StaticSiteStack']);
-    });
+  it('executes unit tests with Postgres service and uploads coverage', () => {
+    const testJob = jobs['test'];
+    expect(testJob.needs).toBe('setup');
+    expect(testJob.services?.postgres?.image).toBe('pgvector/pgvector:pg15');
+    expect(hasRunSnippet(testJob, 'npm run test')).toBe(true);
+    expect(hasActionUsage(testJob, 'codecov/codecov-action@v3')).toBe(true);
   });
 
-  describe('Integration Tests in Pipeline', () => {
-    it('should run database integration tests', async () => {
-      const mockDbIntegrationTest = createAsyncMock<DbIntegrationResult>();
-      mockDbIntegrationTest.mockResolvedValue({
-        success: true,
-        tests: {
-          'connection': 'passed',
-          'migrations': 'passed',
-          'seed-data': 'passed',
-        },
-      });
-
-      const result = await mockDbIntegrationTest();
-
-      expect(result.success).toBe(true);
-      expect(result.tests.connection).toBe('passed');
-    });
-
-    it('should run API endpoint tests', async () => {
-      const mockApiTest = createAsyncMock<ApiTestResult>();
-      mockApiTest.mockResolvedValue({
-        success: true,
-        endpoints: {
-          '/api/health': { status: 200, response: 'OK' },
-          '/api/content': { status: 200, response: 'JSON' },
-        },
-      });
-
-      const result = await mockApiTest();
-
-      expect(result.success).toBe(true);
-      expect(result.endpoints['/api/health'].status).toBe(200);
-    });
-
-    it('should run frontend integration tests', async () => {
-      const mockE2ETest = createAsyncMock<E2EResult>();
-      mockE2ETest.mockResolvedValue({
-        success: true,
-        scenarios: {
-          'homepage-load': 'passed',
-          'navigation': 'passed',
-          'search-functionality': 'passed',
-        },
-      });
-
-      const result = await mockE2ETest();
-
-      expect(result.success).toBe(true);
-      expect(result.scenarios['homepage-load']).toBe('passed');
-    });
+  it('builds artifacts only after tests succeed', () => {
+    const buildJob = jobs['build'];
+    expect(buildJob.needs).toEqual(expect.arrayContaining(['setup', 'test']));
+    expect(hasCacheForPath(buildJob, 'src/backend/dist')).toBe(true);
   });
 
-  describe('Deployment Strategies', () => {
-    it('should support blue-green deployment', () => {
-      const mockBlueGreenDeploy = createSyncMock<BlueGreenDeployResult>();
-      mockBlueGreenDeploy.mockReturnValue({
-        success: true,
-        strategy: 'blue-green',
-        environments: {
-          blue: 'stable',
-          green: 'deploying',
-        },
-        switchover: false, // Manual approval required
-      });
-
-      const result = mockBlueGreenDeploy();
-
-      expect(result.success).toBe(true);
-      expect(result.strategy).toBe('blue-green');
-      expect(result.switchover).toBe(false);
-    });
-
-    it('should support rolling deployment', () => {
-      const mockRollingDeploy = createSyncMock<RollingDeployResult>();
-      mockRollingDeploy.mockReturnValue({
-        success: true,
-        strategy: 'rolling',
-        progress: {
-          total: 3,
-          completed: 3,
-          failed: 0,
-        },
-      });
-
-      const result = mockRollingDeploy();
-
-      expect(result.success).toBe(true);
-      expect(result.progress.failed).toBe(0);
-    });
-
-    it('should handle deployment rollback', () => {
-      const mockRollback = createSyncMock<RollbackResult>();
-      mockRollback.mockReturnValue({
-        success: true,
-        previousVersion: 'v1.2.0',
-        currentVersion: 'v1.2.1-rollback',
-        reason: 'Failed health checks',
-      });
-
-      const result = mockRollback();
-
-      expect(result.success).toBe(true);
-      expect(result.previousVersion).toBe('v1.2.0');
-    });
+  it('integration tests provision a dedicated Postgres service and run migrations', () => {
+    const integrationJob = jobs['integration-tests'];
+    expect(integrationJob.needs).toEqual(expect.arrayContaining(['setup', 'build']));
+    expect(integrationJob.services?.postgres?.image).toBe('pgvector/pgvector:pg15');
+    expect(hasRunSnippet(integrationJob, 'npm run db:migrate')).toBe(true);
+    expect(hasRunSnippet(integrationJob, 'npm run test -- --testPathPattern=integration')).toBe(true);
   });
 
-  describe('Post-Deployment Validation', () => {
-    it('should run smoke tests after deployment', async () => {
-      const mockSmokeTests = createAsyncMock<SmokeTestResult>();
-      mockSmokeTests.mockResolvedValue({
-        success: true,
-        tests: {
-          'health-check': 'passed',
-          'database-connectivity': 'passed',
-          'cdn-availability': 'passed',
-        },
-      });
+  it('validate-pr job fails if any upstream job fails and reports status comment', () => {
+    const validateJob = jobs['validate-pr'];
+    expect(hasRunSnippet(validateJob, 'needs.setup.result')).toBe(true);
+    expect(hasActionUsage(validateJob, 'actions/github-script@v7')).toBe(true);
+  });
+});
 
-      const result = await mockSmokeTests();
+describe('Deployment workflows', () => {
+  it('development workflow deploys automatically for main branch changes and uploads artifacts to S3', () => {
+    const devWorkflow = loadWorkflow('.github/workflows/deploy-dev.yml');
+    expect(devWorkflow.on?.push?.branches).toEqual(['main']);
+    expect(devWorkflow.env?.S3_BUCKET).toBe('${{ secrets.DEV_ARTIFACTS_BUCKET }}');
 
-      expect(result.success).toBe(true);
-      expect(Object.values(result.tests).every(t => t === 'passed')).toBe(true);
-    });
+    const buildJob = devWorkflow.jobs['build-and-test'];
+    expect(buildJob.needs).toBe('pre-deploy');
 
-    it('should validate performance benchmarks', () => {
-      const mockPerfTest = createSyncMock<PerformanceResult>();
-      mockPerfTest.mockReturnValue({
-        success: true,
-        metrics: {
-          'response-time': 150, // ms
-          'throughput': 1000,   // requests/second
-          'error-rate': 0.1,    // percentage
-        },
-        thresholds: {
-          'response-time': 200,
-          'throughput': 500,
-          'error-rate': 1.0,
-        },
-      });
+    const archiveStep = getStepByName(buildJob, 'Archive build artifacts');
+    expect(archiveStep).toBeDefined();
+    expect(archiveStep?.run).toContain('artifacts/');
+    expect(/(tar|zip)/.test(archiveStep?.run ?? '')).toBe(true);
 
-      const result = mockPerfTest();
+    const uploadStep = getStepByName(buildJob, 'Upload build artifacts to S3');
+    expect(uploadStep).toBeDefined();
+    expect(uploadStep?.run).toContain('aws s3');
+    expect(uploadStep?.run).toContain('artifacts/');
 
-      expect(result.success).toBe(true);
-      expect(result.metrics['response-time']).toBeLessThan(result.thresholds['response-time']);
-      expect(result.metrics['error-rate']).toBeLessThan(result.thresholds['error-rate']);
-    });
+    expect(hasRunSnippet(buildJob, 'npx cdk synth --all')).toBe(true);
 
-    it('should notify stakeholders of deployment status', () => {
-      const mockNotification = createSyncMock<NotificationResult>();
-      mockNotification.mockReturnValue({
-        success: true,
-        notifications: [
-          { channel: 'slack', message: 'Deployment successful', sent: true },
-          { channel: 'email', message: 'Deployment summary', sent: true },
-        ],
-      });
-
-      const result = mockNotification();
-
-      expect(result.success).toBe(true);
-      expect(result.notifications.every(({ sent }) => sent)).toBe(true);
-    });
+    const infraJob = devWorkflow.jobs['deploy-infrastructure'];
+    expect(infraJob.needs).toEqual(expect.arrayContaining(['build-and-test']));
+    expect(hasActionUsage(infraJob, 'aws-actions/configure-aws-credentials@v4')).toBe(true);
+    expect(hasRunSnippet(infraJob, 'npx cdk deploy --all --require-approval never --outputs-file outputs.json')).toBe(true);
+    expect(hasRunSnippet(infraJob, 'aws s3 cp outputs.json')).toBe(true);
   });
 
-  describe('Error Handling and Recovery', () => {
-    it('should handle build failures gracefully', () => {
-      const result = handlePipelineResult<BuildFailureResult>({
-        success: false,
-        error: 'TypeScript compilation failed',
-        exitCode: 1,
-        logs: ['error TS2304: Cannot find name \'unknown_var\''],
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('TypeScript compilation failed');
-      expect(mockCore.setFailed).toHaveBeenCalledWith('TypeScript compilation failed');
-    });
-
-    it('should handle deployment failures with rollback', () => {
-      const result = handlePipelineResult<DeployFailureResult>({
-        success: false,
-        error: 'Stack deployment failed',
-        rollback: {
-          initiated: true,
-          status: 'in-progress',
-        },
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.rollback.initiated).toBe(true);
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Stack deployment failed');
-    });
-
-    it('should handle test failures appropriately', () => {
-      const result = handlePipelineResult<TestFailureResult>({
-        success: false,
-        failedTests: 3,
-        totalTests: 50,
-        coverage: 75, // Below threshold
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.failedTests).toBeGreaterThan(0);
-      expect(result.coverage).toBeLessThan(80);
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Pipeline step failed');
-    });
+  it('staging workflow enforces manual approval before deployment', () => {
+    const stagingWorkflow = loadWorkflow('.github/workflows/deploy-staging.yml');
+    const approvalJob = stagingWorkflow.jobs['approval-gate'];
+    expect(approvalJob).toBeDefined();
+    expect(approvalJob.environment?.name).toBe('staging-approval');
+    const approvalNeeds = Array.isArray(approvalJob.needs) ? approvalJob.needs : [approvalJob.needs];
+    expect(approvalNeeds).toEqual(expect.arrayContaining(['validate-deployment']));
+    expect(approvalJob.if).toContain('should-deploy');
   });
 
-  describe('Multi-Environment Support', () => {
-    it('should deploy to development environment', () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        if (name === 'environment') return 'development';
-        return '';
-      });
+  it('production workflow includes explicit approval and post-deploy health checks', () => {
+    const prodWorkflow = loadWorkflow('.github/workflows/deploy-prod.yml');
+    const jobs = prodWorkflow.jobs ?? {};
 
-      const environment = mockCore.getInput('environment');
-      expect(environment).toBe('development');
-    });
+    const businessApproval = jobs['business-approval'];
+    expect(businessApproval).toBeDefined();
+    expect(businessApproval.environment?.name).toBe('production-business-approval');
 
-    it('should deploy to staging environment', () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        if (name === 'environment') return 'staging';
-        return '';
-      });
+    const technicalApproval = jobs['technical-approval'];
+    expect(technicalApproval).toBeDefined();
+    const technicalNeeds = toArray(technicalApproval?.needs);
+    expect(technicalNeeds).toEqual(expect.arrayContaining(['business-approval']));
 
-      const environment = mockCore.getInput('environment');
-      expect(environment).toBe('staging');
-    });
+    const finalApproval = jobs['final-deployment-approval'];
+    expect(finalApproval).toBeDefined();
+    expect(finalApproval.environment?.name).toBe('production-final-approval');
+    const finalNeeds = toArray(finalApproval?.needs);
+    expect(finalNeeds).toEqual(
+      expect.arrayContaining(['business-approval', 'technical-approval'])
+    );
 
-    it('should deploy to production with approvals', () => {
-      const mockProdDeploy = createSyncMock<ProdDeployResult>();
-      mockProdDeploy.mockReturnValue({
-        success: true,
-        environment: 'production',
-        approvals: {
-          required: true,
-          approved: true,
-          approver: 'team-lead',
-        },
-      });
+    const healthChecks = jobs['production-health-checks'];
+    expect(healthChecks).toBeDefined();
+    expect(hasRunSnippet(healthChecks, 'curl -f "${{ env.PROD_URL }}/health"')).toBe(true);
+    expect(hasRunSnippet(healthChecks, 'curl -f "${{ env.PROD_URL }}/api/health"')).toBe(true);
+  });
+});
 
-      const result = mockProdDeploy();
+describe('pipeline utilities', () => {
+  it('calls core.setFailed when pipeline result is unsuccessful', () => {
+    const spy = jest.spyOn(core, 'setFailed').mockImplementation(() => {});
 
-      expect(result.success).toBe(true);
-      expect(result.approvals.approved).toBe(true);
-    });
+    const result = handlePipelineResult({ success: false, error: 'TypeScript compilation failed' });
+
+    expect(result.success).toBe(false);
+    expect(spy).toHaveBeenCalledWith('TypeScript compilation failed');
+    spy.mockRestore();
+  });
+
+  it('returns successful results untouched', () => {
+    const result = handlePipelineResult({ success: true });
+    expect(result).toEqual({ success: true });
   });
 });

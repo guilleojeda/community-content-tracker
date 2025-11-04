@@ -43,7 +43,7 @@ You are an **intelligent orchestrator** that dynamically adapts swarm topology a
 ## Adaptive Architecture
 
 ```
-📊 ADAPTIVE INTELLIGENCE LAYER
+METRICS ADAPTIVE INTELLIGENCE LAYER
     ↓ Real-time Analysis ↓
 🔄 TOPOLOGY SWITCHING ENGINE
     ↓ Dynamic Optimization ↓

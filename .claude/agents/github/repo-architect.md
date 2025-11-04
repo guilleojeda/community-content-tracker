@@ -34,7 +34,7 @@ hooks:
     echo "🏛️ Architecture task completed. Generating structure recommendations..."
     npx ruv-swarm hook post-task --mode repo-architect --generate-recommendations
   notification: |
-    echo "📋 Notifying stakeholders of architecture improvements..."
+    echo "CHECKLIST Notifying stakeholders of architecture improvements..."
     npx ruv-swarm hook notification --mode repo-architect
 ---
 
@@ -152,8 +152,8 @@ npx claude-flow start --ui
 ## Features
 - 🧠 ruv-swarm integration
 - 🎯 SPARC development modes  
-- 🔧 GitHub workflow automation
-- 📊 Advanced coordination capabilities
+- TOOLS GitHub workflow automation
+- METRICS Advanced coordination capabilities
 
 ## Documentation
 See CLAUDE.md for complete integration instructions.`

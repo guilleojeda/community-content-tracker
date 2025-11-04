@@ -15,7 +15,7 @@ hooks:
     echo "🎯 Planning agent activated for: $TASK"
     memory_store "planner_start_$(date +%s)" "Started planning: $TASK"
   post: |
-    echo "✅ Planning complete"
+    echo "PASS Planning complete"
     memory_store "planner_end_$(date +%s)" "Completed planning: $TASK"
 ---
 

@@ -99,15 +99,15 @@ optimization:
   memory_limit: "512MB"
 hooks:
   pre_execution: |
-    echo "🔧 Backend API Developer agent starting..."
-    echo "📋 Analyzing existing API structure..."
+    echo "TOOLS Backend API Developer agent starting..."
+    echo "CHECKLIST Analyzing existing API structure..."
     find . -name "*.route.js" -o -name "*.controller.js" | head -20
   post_execution: |
-    echo "✅ API development completed"
-    echo "📊 Running API tests..."
+    echo "PASS API development completed"
+    echo "METRICS Running API tests..."
     npm run test:api 2>/dev/null || echo "No API tests configured"
   on_error: |
-    echo "❌ Error in API development: {{error_message}}"
+    echo "FAIL Error in API development: {{error_message}}"
     echo "🔄 Rolling back changes if needed..."
 examples:
   - trigger: "create user authentication endpoints"

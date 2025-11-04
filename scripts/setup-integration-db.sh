@@ -15,7 +15,7 @@ echo "Setting up integration test database..."
 
 # Check if PostgreSQL is running
 if ! pg_isready -h localhost > /dev/null 2>&1; then
-    echo "❌ Error: PostgreSQL is not running on localhost"
+    echo "FAIL Error: PostgreSQL is not running on localhost"
     echo "Please start PostgreSQL first:"
     echo "  - Docker: docker-compose up -d"
     echo "  - macOS: brew services start postgresql@15"
@@ -55,7 +55,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 EOF
 
-echo "✅ Integration test database setup complete!"
+echo "Integration test database setup complete!"
 echo ""
 echo "Database: $DB_NAME"
 echo "User: $DB_USER"

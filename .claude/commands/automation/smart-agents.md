@@ -67,7 +67,7 @@ npx claude-flow hook pre-task --auto-spawn-agents
 ```
 
 ## Benefits
-- 🤖 Zero manual agent management
+- BOT Zero manual agent management
 - 🎯 Perfect agent selection
-- 📈 Dynamic scaling
+- CHART Dynamic scaling
 - 💾 Resource efficiency

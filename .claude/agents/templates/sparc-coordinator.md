@@ -18,9 +18,9 @@ hooks:
     # Check for existing SPARC phase data
     memory_search "sparc_phase" | tail -1
   post: |
-    echo "✅ SPARC coordination phase complete"
+    echo "PASS SPARC coordination phase complete"
     memory_store "sparc_coord_complete_$(date +%s)" "SPARC methodology phases coordinated"
-    echo "📊 Phase progress tracked in memory"
+    echo "METRICS Phase progress tracked in memory"
 ---
 
 # SPARC Methodology Orchestrator Agent

@@ -4,7 +4,6 @@ import dynamic from 'next/dynamic';
 import { isBetaModeActive } from '@/lib/featureFlags';
 
 const CookieConsentBoundary = dynamic(() => import('./CookieConsentBoundary'), {
-  ssr: false,
   loading: () => null,
 });
 

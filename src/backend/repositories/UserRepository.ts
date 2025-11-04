@@ -417,41 +417,65 @@ export class UserRepository extends BaseRepository {
         return null;
       }
 
-      const [
-        contentResult,
-        badgeResult,
-        bookmarkResult,
-        followingResult,
-        followersResult,
-        channelResult,
-        consentResult
-      ] = await Promise.all([
-        this.executeQuery(
-          `SELECT c.*,
-            COALESCE(
-              (
-                SELECT json_agg(json_build_object('id', cu.id, 'url', cu.url))
-                FROM content_urls cu
-                WHERE cu.content_id = c.id
-              ),
-              '[]'::json
-            ) AS urls
-          FROM content c
-          WHERE c.user_id = $1
-          ORDER BY c.created_at DESC`,
-          [userId]
-        ),
-        this.executeQuery('SELECT * FROM user_badges WHERE user_id = $1 AND is_active = true', [userId]),
-        this.executeQuery('SELECT * FROM content_bookmarks WHERE user_id = $1', [userId]),
-        this.executeQuery('SELECT * FROM user_follows WHERE follower_id = $1', [userId]),
-        this.executeQuery('SELECT * FROM user_follows WHERE following_id = $1', [userId]),
-        this.executeQuery('SELECT * FROM channels WHERE user_id = $1 ORDER BY created_at DESC', [userId]),
-        this.executeQuery('SELECT * FROM user_consent WHERE user_id = $1', [userId]),
-      ]);
+      const contentResult = await this.executeQuery(
+        'SELECT * FROM content WHERE user_id = $1 ORDER BY created_at DESC',
+        [userId]
+      );
+      const badgeResult = await this.executeQuery(
+        'SELECT * FROM user_badges WHERE user_id = $1 AND is_active = true',
+        [userId]
+      );
+      const bookmarkResult = await this.executeQuery(
+        'SELECT * FROM content_bookmarks WHERE user_id = $1',
+        [userId]
+      );
+      const followingResult = await this.executeQuery(
+        'SELECT * FROM user_follows WHERE follower_id = $1',
+        [userId]
+      );
+      const followersResult = await this.executeQuery(
+        'SELECT * FROM user_follows WHERE following_id = $1',
+        [userId]
+      );
+      const channelResult = await this.executeQuery(
+        'SELECT * FROM channels WHERE user_id = $1 ORDER BY created_at DESC',
+        [userId]
+      );
+      const consentResult = await this.executeQuery(
+        'SELECT * FROM user_consent WHERE user_id = $1',
+        [userId]
+      );
+
+      const contentRows = contentResult.rows ?? [];
+      let urlsByContent: Record<string, Array<{ id: string; url: string }>> = {};
+
+      if (contentRows.length > 0) {
+        const contentIds = contentRows.map((row: any) => row.id);
+        const urlsResult = await this.executeQuery(
+          'SELECT id, content_id, url FROM content_urls WHERE content_id = ANY($1::uuid[])',
+          [contentIds]
+        );
+
+        urlsByContent = (urlsResult.rows ?? []).reduce<Record<string, Array<{ id: string; url: string }>>>(
+          (acc, row) => {
+            if (!acc[row.content_id]) {
+              acc[row.content_id] = [];
+            }
+            acc[row.content_id].push({ id: row.id, url: row.url });
+            return acc;
+          },
+          {}
+        );
+      }
+
+      const contentWithUrls = contentRows.map((row: any) => ({
+        ...row,
+        urls: urlsByContent[row.id] ?? [],
+      }));
 
       return {
         user: userResult.rows[0],
-        content: contentResult.rows,
+        content: contentWithUrls,
         badges: badgeResult.rows,
         channels: channelResult.rows,
         bookmarks: bookmarkResult.rows,

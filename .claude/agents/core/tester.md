@@ -18,7 +18,7 @@ hooks:
       echo "✓ Test framework detected"
     fi
   post: |
-    echo "📋 Test results summary:"
+    echo "CHECKLIST Test results summary:"
     npm test -- --reporter=json 2>/dev/null | jq '.numPassedTests, .numFailedTests' 2>/dev/null || echo "Tests completed"
 ---
 

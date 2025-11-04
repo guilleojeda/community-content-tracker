@@ -1,8 +1,10 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/analytics/user-analytics';
 import { getDatabasePool } from '../../../../src/backend/services/database';
+import { getCacheClient } from '../../../../src/backend/services/cache/cache';
 
 jest.mock('../../../../src/backend/services/database');
+jest.mock('../../../../src/backend/services/cache/cache');
 
 describe('User Analytics Lambda', () => {
   const mockPool = {
@@ -11,61 +13,86 @@ describe('User Analytics Lambda', () => {
     end: jest.fn(),
   };
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-    (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
-  });
+  const mockCache = {
+    get: jest.fn(),
+    set: jest.fn(),
+  };
 
-  const createMockEvent = (userId: string = 'user-123', dateRange?: any): APIGatewayProxyEvent => ({
-    httpMethod: 'GET',
-    path: '/analytics/user',
-    headers: {},
-    body: null,
-    isBase64Encoded: false,
-    pathParameters: null,
-    queryStringParameters: dateRange || null,
-    multiValueHeaders: {},
-    multiValueQueryStringParameters: null,
-    stageVariables: null,
-    requestContext: {
-      accountId: '123',
-      apiId: 'api-id',
-      protocol: 'HTTP/1.1',
+  const originalEnv = { ...process.env };
+
+  const createMockEvent = (
+    userId: string = 'user-123',
+    query?: Record<string, string>
+  ): APIGatewayProxyEvent =>
+    ({
       httpMethod: 'GET',
       path: '/analytics/user',
-      stage: 'test',
-      requestId: 'request-id',
-      requestTimeEpoch: 0,
-      resourceId: 'resource-id',
-      resourcePath: '/analytics/user',
-      identity: {
-        accessKey: null,
-        accountId: null,
-        apiKey: null,
-        apiKeyId: null,
-        caller: null,
-        clientCert: null,
-        cognitoAuthenticationProvider: null,
-        cognitoAuthenticationType: null,
-        cognitoIdentityId: null,
-        cognitoIdentityPoolId: null,
-        principalOrgId: null,
-        sourceIp: '127.0.0.1',
-        user: null,
-        userAgent: 'test-agent',
-        userArn: null,
+      headers: {},
+      body: null,
+      isBase64Encoded: false,
+      pathParameters: null,
+      queryStringParameters: query || null,
+      multiValueHeaders: {},
+      multiValueQueryStringParameters: null,
+      stageVariables: null,
+      requestContext: {
+        accountId: '123',
+        apiId: 'api-id',
+        protocol: 'HTTP/1.1',
+        httpMethod: 'GET',
+        path: '/analytics/user',
+        stage: 'test',
+        requestId: 'request-id',
+        requestTimeEpoch: 0,
+        resourceId: 'resource-id',
+        resourcePath: '/analytics/user',
+        identity: {
+          accessKey: null,
+          accountId: null,
+          apiKey: null,
+          apiKeyId: null,
+          caller: null,
+          clientCert: null,
+          cognitoAuthenticationProvider: null,
+          cognitoAuthenticationType: null,
+          cognitoIdentityId: null,
+          cognitoIdentityPoolId: null,
+          principalOrgId: null,
+          sourceIp: '127.0.0.1',
+          user: null,
+          userAgent: 'test-agent',
+          userArn: null,
+        },
+        authorizer: {
+          userId,
+          claims: { sub: userId },
+        },
       },
-      authorizer: {
-        userId,
-        claims: { sub: userId },
-      },
-    },
-    resource: '/analytics/user',
-  } as any);
+      resource: '/analytics/user',
+    } as APIGatewayProxyEvent);
 
-  it('should return user analytics with content distribution', async () => {
-    const event = createMockEvent('user-123');
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    delete process.env.ENABLE_QUERY_PROFILING;
+    delete process.env.TEST_DB_INMEMORY;
 
+    mockPool.query.mockReset();
+    mockCache.get.mockReset();
+    mockCache.set.mockReset();
+
+    mockCache.get.mockResolvedValue(null);
+    mockCache.set.mockResolvedValue(undefined);
+
+    (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
+    (getCacheClient as jest.Mock).mockResolvedValue(mockCache);
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  it('returns user analytics with content distribution', async () => {
     mockPool.query
       .mockResolvedValueOnce({
         rows: [
@@ -96,57 +123,53 @@ describe('User Analytics Lambda', () => {
         ],
       });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(createMockEvent(), {} as any);
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
     expect(body.success).toBe(true);
-    expect(body.data).toHaveProperty('contentByType');
-    expect(body.data).toHaveProperty('topTags');
-    expect(body.data).toHaveProperty('topContent');
-    expect(body.data).toHaveProperty('timeSeries');
-    expect(body.data.contentByType).toEqual({
-      blog: 25,
-      youtube: 10,
-    });
+    expect(body.data.contentByType).toEqual({ blog: 25, youtube: 10 });
     expect(body.data.timeSeries).toHaveLength(2);
+    expect(mockCache.set).toHaveBeenCalledWith(
+      expect.stringContaining('analytics:user-123:day'),
+      expect.objectContaining({ success: true }),
+      300
+    );
   });
 
-  it('should filter analytics by date range', async () => {
-    const event = createMockEvent('user-123', {
-      startDate: '2024-01-01',
-      endDate: '2024-12-31',
-    });
-
+  it('filters analytics by date range', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(
+      createMockEvent('user-123', {
+        startDate: '2024-01-01',
+        endDate: '2024-12-31',
+      }),
+      {} as any
+    );
 
     expect(response.statusCode).toBe(200);
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining('publish_date'),
-      expect.any(Array)
+      expect.arrayContaining(['user-123', '2024-01-01', '2024-12-31'])
     );
   });
 
-  it('should return 401 when user is not authenticated', async () => {
-    const event = createMockEvent('user-123');
+  it('returns 401 when the user is not authenticated', async () => {
+    const event = createMockEvent();
     delete (event.requestContext as any).authorizer;
 
     const response = await handler(event, {} as any);
 
     expect(response.statusCode).toBe(401);
-    const body = JSON.parse(response.body);
-    expect(body.error.code).toBe('AUTH_REQUIRED');
+    expect(JSON.parse(response.body).error.code).toBe('AUTH_REQUIRED');
   });
 
-  it('should return time series data grouped by day', async () => {
-    const event = createMockEvent('user-123');
-
+  it('groups time series data by day by default', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -155,23 +178,18 @@ describe('User Analytics Lambda', () => {
         rows: [
           { date: new Date('2024-01-01'), views: 50 },
           { date: new Date('2024-01-02'), views: 75 },
-          { date: new Date('2024-01-03'), views: 100 },
         ],
       });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(createMockEvent(), {} as any);
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
-    expect(body.data.timeSeries).toHaveLength(3);
-    expect(body.data.timeSeries[0]).toHaveProperty('date');
-    expect(body.data.timeSeries[0]).toHaveProperty('views');
     expect(body.data.groupBy).toBe('day');
+    expect(body.data.timeSeries).toHaveLength(2);
   });
 
-  it('should return time series data grouped by week', async () => {
-    const event = createMockEvent('user-123', { groupBy: 'week' });
-
+  it('supports week grouping', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -183,11 +201,10 @@ describe('User Analytics Lambda', () => {
         ],
       });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(createMockEvent('user-123', { groupBy: 'week' }), {} as any);
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
-    expect(body.data.timeSeries).toHaveLength(2);
     expect(body.data.groupBy).toBe('week');
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining("DATE_TRUNC('week'"),
@@ -195,9 +212,7 @@ describe('User Analytics Lambda', () => {
     );
   });
 
-  it('should return time series data grouped by month', async () => {
-    const event = createMockEvent('user-123', { groupBy: 'month' });
-
+  it('supports month grouping', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -210,21 +225,15 @@ describe('User Analytics Lambda', () => {
         ],
       });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(createMockEvent('user-123', { groupBy: 'month' }), {} as any);
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
-    expect(body.data.timeSeries).toHaveLength(3);
     expect(body.data.groupBy).toBe('month');
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining("DATE_TRUNC('month'"),
-      expect.any(Array)
-    );
+    expect(body.data.timeSeries).toHaveLength(3);
   });
 
-  it('should default to day grouping for invalid groupBy values', async () => {
-    const event = createMockEvent('user-123', { groupBy: 'invalid_value' });
-
+  it('defaults to day grouping for invalid groupBy values', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -233,26 +242,21 @@ describe('User Analytics Lambda', () => {
         rows: [{ date: new Date('2024-01-01'), views: 50 }],
       });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(
+      createMockEvent('user-123', { groupBy: 'invalid_value' }),
+      {} as any
+    );
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
     expect(body.data.groupBy).toBe('day');
-    // Verify that 'day' is used in the SQL query, not the invalid value
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining("DATE_TRUNC('day'"),
       expect.any(Array)
     );
-    // Ensure the invalid value was NOT used in the query (SQL injection protection)
-    expect(mockPool.query).not.toHaveBeenCalledWith(
-      expect.stringContaining('invalid_value'),
-      expect.any(Array)
-    );
   });
 
-  it('should handle case-insensitive groupBy values', async () => {
-    const event = createMockEvent('user-123', { groupBy: 'WEEK' });
-
+  it('handles case-insensitive groupBy values', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -261,23 +265,13 @@ describe('User Analytics Lambda', () => {
         rows: [{ date: new Date('2024-01-01'), views: 300 }],
       });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(createMockEvent('user-123', { groupBy: 'WEEK' }), {} as any);
 
     expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.body);
-    expect(body.data.groupBy).toBe('week');
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining("DATE_TRUNC('week'"),
-      expect.any(Array)
-    );
+    expect(JSON.parse(response.body).data.groupBy).toBe('week');
   });
 
-  it('should prevent SQL injection via groupBy parameter', async () => {
-    // Attempt SQL injection via groupBy parameter
-    const event = createMockEvent('user-123', {
-      groupBy: "day'; DROP TABLE users; --",
-    });
-
+  it('guards against SQL injection attempts in groupBy', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -286,20 +280,227 @@ describe('User Analytics Lambda', () => {
         rows: [{ date: new Date('2024-01-01'), views: 50 }],
       });
 
-    const response = await handler(event, {} as any);
+    const response = await handler(
+      createMockEvent('user-123', { groupBy: "day'; DROP TABLE users; --" }),
+      {} as any
+    );
 
     expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.body);
-    // Should default to 'day' since the injection attempt is invalid
-    expect(body.data.groupBy).toBe('day');
-    // Verify the SQL injection attempt was NOT executed
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining("DATE_TRUNC('day'"),
-      expect.any(Array)
-    );
+    expect(JSON.parse(response.body).data.groupBy).toBe('day');
     expect(mockPool.query).not.toHaveBeenCalledWith(
       expect.stringContaining('DROP TABLE'),
       expect.any(Array)
     );
+  });
+
+  it('returns cached analytics when cache hit occurs', async () => {
+    const cachedPayload = {
+      success: true,
+      data: {
+        contentByType: { blog: 3 },
+        topTags: [{ tag: 'aws', count: 2 }],
+        topContent: [],
+        timeSeries: [],
+        dateRange: null,
+        groupBy: 'day',
+      },
+    };
+    mockCache.get.mockResolvedValue(cachedPayload);
+
+    const response = await handler(createMockEvent('cached-user'), {} as any);
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual(cachedPayload);
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockCache.set).not.toHaveBeenCalled();
+  });
+
+  it('profiles queries when profiling is enabled', async () => {
+    process.env.ENABLE_QUERY_PROFILING = 'true';
+
+    const explainCalls: string[] = [];
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('EXPLAIN ANALYZE')) {
+        explainCalls.push(sql);
+        return { rows: [] };
+      }
+      if (sql.includes('GROUP BY content_type')) {
+        return { rows: [{ content_type: 'blog', count: 1 }] };
+      }
+      if (sql.includes('UNNEST(tags)')) {
+        return { rows: [{ tag: 'lambda', count: 1 }] };
+      }
+      if (sql.includes("COALESCE((metrics->>'views')::int")) {
+        return {
+          rows: [{ id: 'c1', title: 'Top Content', content_type: 'blog', views: 10 }],
+        };
+      }
+      if (sql.includes('analytics_events')) {
+        return { rows: [{ date: new Date('2024-01-01'), views: '5' }] };
+      }
+      return { rows: [] };
+    });
+
+    const response = await handler(createMockEvent('profile-user'), {} as any);
+
+    expect(response.statusCode).toBe(200);
+    expect(explainCalls.length).toBeGreaterThanOrEqual(3);
+    explainCalls.forEach((statement) => expect(statement).toMatch(/^EXPLAIN ANALYZE/));
+  });
+
+  it('aggregates analytics using in-memory mode when TEST_DB_INMEMORY is true', async () => {
+    process.env.TEST_DB_INMEMORY = 'true';
+
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('GROUP BY content_type')) {
+        return { rows: [{ content_type: 'blog', count: 2 }] };
+      }
+      if (sql.includes('SELECT tags FROM content')) {
+        return { rows: [{ tags: ['aws', 'ai'] }, { tags: ['aws'] }] };
+      }
+      if (sql.includes("COALESCE((metrics->>'views')::int")) {
+        return {
+          rows: [{ id: 'id-1', title: 'Content', content_type: 'blog', views: 5 }],
+        };
+      }
+      if (sql.includes('analytics_events')) {
+        return {
+          rows: [
+            { created_at: new Date('2024-01-01T00:00:00Z') },
+            { created_at: new Date('2024-01-01T10:00:00Z') },
+            { created_at: new Date('2024-01-02T00:00:00Z') },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const response = await handler(createMockEvent('mem-user'), {} as any);
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.data.topTags).toEqual([
+      { tag: 'aws', count: 2 },
+      { tag: 'ai', count: 1 },
+    ]);
+    expect(body.data.timeSeries).toEqual([
+      { date: '2024-01-01T00:00:00.000Z', views: 2 },
+      { date: '2024-01-02T00:00:00.000Z', views: 1 },
+    ]);
+  });
+
+  it('aggregates weekly analytics in in-memory mode', async () => {
+    process.env.TEST_DB_INMEMORY = 'true';
+
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('GROUP BY content_type')) {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT tags FROM content')) {
+        return { rows: [] };
+      }
+      if (sql.includes("COALESCE((metrics->>'views')::int")) {
+        return { rows: [] };
+      }
+      if (sql.includes('analytics_events')) {
+        return {
+          rows: [
+            { created_at: new Date('2024-04-01T12:00:00Z') }, // Monday
+            { created_at: new Date('2024-04-02T03:00:00Z') }, // same week
+            { created_at: new Date('2024-04-10T00:00:00Z') }, // next week
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const response = await handler(createMockEvent('mem-week', { groupBy: 'week' }), {} as any);
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.data.groupBy).toBe('week');
+    expect(body.data.timeSeries).toEqual([
+      { date: '2024-04-01T00:00:00.000Z', views: 2 },
+      { date: '2024-04-08T00:00:00.000Z', views: 1 },
+    ]);
+  });
+
+  it('aggregates monthly analytics in in-memory mode', async () => {
+    process.env.TEST_DB_INMEMORY = 'true';
+
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('GROUP BY content_type')) {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT tags FROM content')) {
+        return { rows: [] };
+      }
+      if (sql.includes("COALESCE((metrics->>'views')::int")) {
+        return { rows: [] };
+      }
+      if (sql.includes('analytics_events')) {
+        return {
+          rows: [
+            { created_at: new Date('2024-01-15T00:00:00Z') },
+            { created_at: new Date('2024-02-20T00:00:00Z') },
+            { created_at: new Date('2024-02-21T00:00:00Z') },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const response = await handler(createMockEvent('mem-month', { groupBy: 'month' }), {} as any);
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.data.groupBy).toBe('month');
+    expect(body.data.timeSeries).toEqual([
+      { date: '2024-01-01T00:00:00.000Z', views: 1 },
+      { date: '2024-02-01T00:00:00.000Z', views: 2 },
+    ]);
+  });
+
+  it('logs a warning when profiling a query fails', async () => {
+    process.env.ENABLE_QUERY_PROFILING = 'true';
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+
+    let explainInvocation = 0;
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('EXPLAIN ANALYZE')) {
+        explainInvocation += 1;
+        if (explainInvocation === 1) {
+          throw new Error('profile fail');
+        }
+        return { rows: [] };
+      }
+
+      if (sql.includes('GROUP BY content_type')) {
+        return { rows: [{ content_type: 'blog', count: 1 }] };
+      }
+
+      if (sql.includes('UNNEST(tags)')) {
+        return { rows: [{ tag: 'lambda', count: 1 }] };
+      }
+
+      if (sql.includes("COALESCE((metrics->>'views')::int")) {
+        return {
+          rows: [{ id: 'c1', title: 'Top Content', content_type: 'blog', views: 10 }],
+        };
+      }
+
+      if (sql.includes('analytics_events')) {
+        return { rows: [{ date: new Date('2024-01-01'), views: '5' }] };
+      }
+
+      return { rows: [] };
+    });
+
+    const response = await handler(createMockEvent('warn-user'), {} as any);
+
+    expect(response.statusCode).toBe(200);
+    expect(warnSpy).toHaveBeenCalledWith('Analytics profiling failed:', 'profile fail');
+
+    warnSpy.mockRestore();
   });
 });

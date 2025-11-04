@@ -11,10 +11,17 @@ describe('CSV Export Lambda', () => {
     connect: jest.fn(),
     end: jest.fn(),
   };
+  const originalEnv = { ...process.env };
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    delete process.env.TEST_DB_INMEMORY;
     (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   const createMockEvent = (
@@ -374,5 +381,61 @@ describe('CSV Export Lambda', () => {
       expect(metadata.startDate).toBe('2024-01-01');
       expect(metadata.endDate).toBe('2024-12-31');
     });
+  });
+
+  it('should process exports using in-memory database mode', async () => {
+    process.env.TEST_DB_INMEMORY = 'true';
+
+    const contentRows = [
+      {
+        id: 'content-1',
+        title: 'Primary Content',
+        publish_date: new Date('2024-05-01'),
+        content_type: 'blog',
+        metrics: { views: 100 },
+        tags: ['aws'],
+      },
+    ];
+
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM content') && !sql.includes('content_urls')) {
+        return { rows: contentRows };
+      }
+
+      if (sql.includes('SELECT content_id, url')) {
+        return {
+          rows: [
+            {
+              content_id: 'content-1',
+              url: 'https://example.com/primary',
+              created_at: new Date('2024-05-02'),
+            },
+          ],
+        };
+      }
+
+      if (sql.includes('INSERT INTO analytics_events')) {
+        return { rows: [{ id: 'event-1' }] };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+
+    const response = await handler(createMockEvent('community_builder'), {} as any);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('https://example.com/primary');
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns 500 when request body is invalid JSON', async () => {
+    const event = createMockEvent('community_builder');
+    event.body = '{invalid-json';
+
+    const response = await handler(event, {} as any);
+
+    expect(response.statusCode).toBe(500);
+    const body = JSON.parse(response.body);
+    expect(body.error.code).toBe('INTERNAL_ERROR');
   });
 });

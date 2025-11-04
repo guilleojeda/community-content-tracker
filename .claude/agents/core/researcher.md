@@ -15,7 +15,7 @@ hooks:
     echo "🔍 Research agent investigating: $TASK"
     memory_store "research_context_$(date +%s)" "$TASK"
   post: |
-    echo "📊 Research findings documented"
+    echo "METRICS Research findings documented"
     memory_search "research_*" | head -5
 ---
 

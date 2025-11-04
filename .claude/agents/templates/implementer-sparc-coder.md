@@ -28,7 +28,7 @@ hooks:
     elif [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
       python -m pytest --version > /dev/null 2>&1 && python -m pytest -v || echo "pytest not available"
     fi
-    echo "📊 Implementation metrics stored in memory"
+    echo "METRICS Implementation metrics stored in memory"
 ---
 
 # SPARC Implementation Specialist Agent

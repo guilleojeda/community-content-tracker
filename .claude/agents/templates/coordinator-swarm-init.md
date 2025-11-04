@@ -12,14 +12,14 @@ capabilities:
 priority: high
 hooks:
   pre: |
-    echo "🚀 Swarm Initializer starting..."
+    echo "LAUNCH Swarm Initializer starting..."
     echo "📡 Preparing distributed coordination systems"
     # Write initial status to memory
     npx claude-flow@alpha memory store "swarm/init/status" "{\"status\":\"initializing\",\"timestamp\":$(date +%s)}" --namespace coordination
     # Check for existing swarms
     npx claude-flow@alpha memory search "swarm/*" --namespace coordination || echo "No existing swarms found"
   post: |
-    echo "✅ Swarm initialization complete"
+    echo "PASS Swarm initialization complete"
     # Write completion status with topology details
     npx claude-flow@alpha memory store "swarm/init/complete" "{\"status\":\"ready\",\"topology\":\"$TOPOLOGY\",\"agents\":$AGENT_COUNT}" --namespace coordination
     echo "🌐 Inter-agent communication channels established"

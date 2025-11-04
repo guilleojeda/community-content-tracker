@@ -85,6 +85,6 @@ export CLAUDE_FLOW_MEMORY_PERSIST=false
 
 ## Benefits
 - 🧠 Contextual awareness
-- 📈 Cumulative learning
+- CHART Cumulative learning
 - ⚡ Faster task completion
 - 🎯 Personalized optimization

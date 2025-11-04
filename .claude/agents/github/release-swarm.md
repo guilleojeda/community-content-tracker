@@ -120,7 +120,7 @@ release:
     
   changelog:
     sections:
-      - title: "🚀 Features"
+      - title: "LAUNCH Features"
         labels: ["feature", "enhancement"]
       - title: "🐛 Bug Fixes"
         labels: ["bug", "fix"]
@@ -366,7 +366,7 @@ jobs:
           
           # Create announcement issue
           gh issue create \
-            --title "🚀 Released ${{ github.ref_name }}" \
+            --title "LAUNCH Released ${{ github.ref_name }}" \
             --body "See [release notes](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" \
             --label "announcement"
 ```
@@ -475,7 +475,7 @@ npx ruv-swarm github release-docs \
 - New API endpoints for feature Y
 - Enhanced security with feature Z
 
-## 🚀 Features
+## LAUNCH Features
 ### Feature Name (#PR)
 Detailed description of the feature...
 
@@ -489,11 +489,11 @@ Description of the fix...
 - After: `/api/new-endpoint`
 - Migration: Update all client calls...
 
-## 📈 Performance Improvements
+## CHART Performance Improvements
 - Reduced memory usage by 30%
 - API response time improved by 200ms
 
-## 🔒 Security Updates
+## LOCKED Security Updates
 - Updated dependencies to patch CVE-XXXX
 - Enhanced authentication mechanism
 

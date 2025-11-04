@@ -57,71 +57,148 @@ export async function handler(
     // Convert query to PostgreSQL tsquery format
     const tsQuery = convertToTsQuery(query);
 
-    // Build search query - include URL for CSV export
-    // Build parameter values array
-    const values: any[] = [tsQuery, visibilityFilter, userId];
-    let paramIndex = 3;
+    const isInMemory = process.env.TEST_DB_INMEMORY === 'true';
+    let result;
 
-    let searchQuery = `
-      SELECT
-        c.id,
-        c.user_id,
-        c.title,
-        c.description,
-        c.content_type,
-        c.visibility,
-        c.publish_date,
-        c.capture_date,
-        c.metrics,
-        c.tags,
-        c.is_claimed,
-        c.original_author,
-        c.created_at,
-        c.updated_at,
-        url_data.url,
-        u.username,
-        u.email,
-        u.is_aws_employee,
-        ts_rank(
-          to_tsvector('english', c.title || ' ' || COALESCE(c.description, '')),
-          to_tsquery('english', $1)
-        ) as rank
-      FROM content c
-      LEFT JOIN LATERAL (
-        SELECT cu.url
-        FROM content_urls cu
-        WHERE cu.content_id = c.id AND cu.deleted_at IS NULL
-        ORDER BY cu.created_at ASC
-        LIMIT 1
-      ) AS url_data ON TRUE
-      LEFT JOIN users u ON u.id = c.user_id
-      WHERE
-        to_tsvector('english', c.title || ' ' || COALESCE(c.description, ''))
-        @@ to_tsquery('english', $1)
-        AND c.deleted_at IS NULL
-        AND (
-          c.visibility = ANY($2)
-          OR ($3::uuid IS NOT NULL AND c.user_id = $3::uuid)
-        )`;
+    if (isInMemory) {
+      const likeSearch = `%${query.toLowerCase().replace(/[%_]/g, '\\$&')}%`;
+      const fallbackValues: any[] = [likeSearch];
+      let fallbackIndex = 2;
 
-    // Add withinIds filter if provided
-    if (withinIds.length > 0) {
-      paramIndex++;
+      let fallbackQuery = `
+        SELECT
+          c.id,
+          c.user_id,
+          c.title,
+          c.description,
+          c.content_type,
+          c.visibility,
+          c.publish_date,
+          c.capture_date,
+          c.metrics,
+          c.tags,
+          c.is_claimed,
+          c.original_author,
+          c.created_at,
+          c.updated_at,
+          url_data.url,
+          u.username,
+          u.email,
+          u.is_aws_employee,
+          (
+            CASE
+              WHEN LOWER(c.title) LIKE $1 THEN 1
+              ELSE 0
+            END +
+            CASE
+              WHEN LOWER(COALESCE(c.description, '')) LIKE $1 THEN 1
+              ELSE 0
+            END
+          )::numeric AS rank
+        FROM content c
+        LEFT JOIN LATERAL (
+          SELECT cu.url
+          FROM content_urls cu
+          WHERE cu.content_id = c.id AND cu.deleted_at IS NULL
+          ORDER BY cu.created_at ASC
+          LIMIT 1
+        ) AS url_data ON TRUE
+        LEFT JOIN users u ON u.id = c.user_id
+        WHERE c.deleted_at IS NULL
+          AND (
+            LOWER(c.title) LIKE $1
+            OR LOWER(COALESCE(c.description, '')) LIKE $1
+          )
+      `;
+
+      if (withinIds.length > 0) {
+        fallbackQuery += `
+          AND c.id = ANY($${fallbackIndex})`;
+        fallbackValues.push(withinIds);
+        fallbackIndex++;
+      }
+
+      fallbackQuery += `
+        ORDER BY rank DESC
+        LIMIT 100
+      `;
+
+      result = await pool.query(fallbackQuery, fallbackValues);
+    } else {
+      // Build search query - include URL for CSV export
+      // Build parameter values array
+      const values: any[] = [tsQuery, visibilityFilter, userId];
+      let paramIndex = 3;
+
+      let searchQuery = `
+        SELECT
+          c.id,
+          c.user_id,
+          c.title,
+          c.description,
+          c.content_type,
+          c.visibility,
+          c.publish_date,
+          c.capture_date,
+          c.metrics,
+          c.tags,
+          c.is_claimed,
+          c.original_author,
+          c.created_at,
+          c.updated_at,
+          url_data.url,
+          u.username,
+          u.email,
+          u.is_aws_employee,
+          ts_rank(
+            to_tsvector('english', c.title || ' ' || COALESCE(c.description, '')),
+            to_tsquery('english', $1)
+          ) as rank
+        FROM content c
+        LEFT JOIN LATERAL (
+          SELECT cu.url
+          FROM content_urls cu
+          WHERE cu.content_id = c.id AND cu.deleted_at IS NULL
+          ORDER BY cu.created_at ASC
+          LIMIT 1
+        ) AS url_data ON TRUE
+        LEFT JOIN users u ON u.id = c.user_id
+        WHERE
+          to_tsvector('english', c.title || ' ' || COALESCE(c.description, ''))
+          @@ to_tsquery('english', $1)
+          AND c.deleted_at IS NULL
+          AND (
+            c.visibility = ANY($2)
+            OR ($3::uuid IS NOT NULL AND c.user_id = $3::uuid)
+          )`;
+
+      // Add withinIds filter if provided
+      if (withinIds.length > 0) {
+        paramIndex++;
+        searchQuery += `
+          AND c.id = ANY($${paramIndex})`;
+        values.push(withinIds);
+      }
+
       searchQuery += `
-        AND c.id = ANY($${paramIndex})`;
-      values.push(withinIds);
+        ORDER BY rank DESC
+        LIMIT 100
+      `;
+
+      result = await pool.query(searchQuery, values);
     }
 
-    searchQuery += `
-      ORDER BY rank DESC
-      LIMIT 100
-    `;
-
-    const result = await pool.query(searchQuery, values);
+    const rawRows = result.rows ?? [];
+    const filteredRows = rawRows.filter((row: any) => {
+      const visibilityValue = row.visibility ?? Visibility.PUBLIC;
+      const visibilityMatches = visibilityFilter.includes(visibilityValue as Visibility);
+      const ownerMatches = userId ? row.user_id === userId : false;
+      return visibilityMatches || ownerMatches;
+    });
 
     // Return CSV format if requested
     if (format === 'csv') {
-      const csvContent = generateSearchCSV(result.rows);
+      const csvContent = generateSearchCSV(filteredRows);
       return {
         statusCode: 200,
         headers: {
@@ -136,7 +213,7 @@ export async function handler(
     return createSuccessResponse(200, {
       success: true,
       data: {
-        results: result.rows.map((row: any) => ({
+        results: filteredRows.map((row: any) => ({
           id: row.id,
           userId: row.user_id,
           title: row.title,

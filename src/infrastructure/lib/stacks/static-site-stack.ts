@@ -31,6 +31,11 @@ export interface StaticSiteStackProps extends cdk.StackProps {
    * Whether to enable WAF protection
    */
   enableWaf?: boolean;
+
+  /**
+   * Optional hosted zone to use when managing Route53 records (primarily for testing)
+   */
+  hostedZone?: route53.IHostedZone;
 }
 
 /**
@@ -280,34 +285,34 @@ export class StaticSiteStack extends cdk.Stack {
     // Create CloudFront distribution
     this.distribution = new cloudfront.Distribution(this, 'Distribution', distributionConfig);
 
-    // Create Route53 records if domain name is provided and we have account/region
-    if (props?.domainName && this.account !== cdk.Aws.ACCOUNT_ID && this.region !== cdk.Aws.REGION) {
-      try {
-        const hostedZone = route53.HostedZone.fromLookup(this, 'Zone', {
-          domainName: props.domainName.split('.').slice(-2).join('.'),
-        });
+    // Create Route53 records if domain name is provided and hosted zone is supplied or resolvable
+    let hostedZone: route53.IHostedZone | undefined = props?.hostedZone;
+    if (!hostedZone && props?.domainName) {
+      const domainParts = props.domainName.split('.');
+      const zoneName = domainParts.length > 2
+        ? domainParts.slice(1).join('.')
+        : props.domainName;
+      hostedZone = new route53.PublicHostedZone(this, 'HostedZone', {
+        zoneName,
+      });
+    }
 
-        // Create A record
-        new route53.ARecord(this, 'SiteARecord', {
-          zone: hostedZone,
-          recordName: props.domainName,
-          target: route53.RecordTarget.fromAlias(
-            new route53targets.CloudFrontTarget(this.distribution)
-          ),
-        });
+    if (props?.domainName && hostedZone) {
+      new route53.ARecord(this, 'SiteARecord', {
+        zone: hostedZone,
+        recordName: props.domainName,
+        target: route53.RecordTarget.fromAlias(
+          new route53targets.CloudFrontTarget(this.distribution)
+        ),
+      });
 
-        // Create AAAA record for IPv6
-        new route53.AaaaRecord(this, 'SiteAAAARecord', {
-          zone: hostedZone,
-          recordName: props.domainName,
-          target: route53.RecordTarget.fromAlias(
-            new route53targets.CloudFrontTarget(this.distribution)
-          ),
-        });
-      } catch (error) {
-        // Skip Route53 records if hosted zone cannot be looked up (e.g., in unit tests)
-        console.log('Skipping Route53 records creation - hosted zone lookup requires account/region');
-      }
+      new route53.AaaaRecord(this, 'SiteAAAARecord', {
+        zone: hostedZone,
+        recordName: props.domainName,
+        target: route53.RecordTarget.fromAlias(
+          new route53targets.CloudFrontTarget(this.distribution)
+        ),
+      });
     }
 
     // Set website URL

@@ -18,7 +18,7 @@ export default function Error({
     <div className="container mx-auto px-4 py-16">
       <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-8">
         <div className="text-center">
-          <div className="text-6xl mb-4">⚠️</div>
+          <div className="text-6xl mb-4">WARN</div>
           <h2 className="text-3xl font-bold text-aws-blue mb-4">
             Something went wrong!
           </h2>

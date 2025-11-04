@@ -37,9 +37,9 @@ Result: Automatically uses hierarchical topology with architect, coder, and test
 
 ## Benefits
 - 🎯 Optimal performance for each task type
-- 🤖 Automatic agent assignment
+- BOT Automatic agent assignment
 - ⚡ Reduced setup time
-- 📊 Better resource utilization
+- METRICS Better resource utilization
 
 ## Hook Configuration
 The pre-task hook automatically handles topology selection:

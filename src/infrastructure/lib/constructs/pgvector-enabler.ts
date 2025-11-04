@@ -67,6 +67,18 @@ export class PgVectorEnabler extends Construct {
       ],
     }));
 
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'rds-data:ExecuteStatement',
+        'rds-data:BatchExecuteStatement',
+        'rds-data:BeginTransaction',
+        'rds-data:CommitTransaction',
+        'rds-data:RollbackTransaction',
+      ],
+      resources: [props.cluster.clusterArn],
+    }));
+
     // Create Lambda function that will enable pgvector
     this.lambdaFunction = new lambda.Function(this, 'PgVectorEnablerFunction', {
       runtime: lambda.Runtime.PYTHON_3_11,
@@ -91,6 +103,8 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+rds_data = boto3.client('rds-data')
+
 def handler(event, context):
     """
     Lambda function to enable pgvector extension in Aurora PostgreSQL
@@ -102,7 +116,7 @@ def handler(event, context):
     try:
         if request_type in ['Create', 'Update']:
             enable_pgvector()
-            response_data = {'Status': 'SUCCESS', 'Message': 'pgvector extension enabled'}
+            response_data = {'Status': 'SUCCESS', 'Message': 'pgvector extension ensured'}
         elif request_type == 'Delete':
             # Don't disable pgvector on delete to avoid breaking existing data
             response_data = {'Status': 'SUCCESS', 'Message': 'Delete operation - no action taken'}
@@ -116,19 +130,23 @@ def handler(event, context):
         send_response(event, context, 'FAILED', {'Message': str(e)})
 
 def enable_pgvector():
-    """Verify pgvector extension availability"""
-    # Aurora Serverless v2 PostgreSQL 15+ has pgvector pre-installed
-    # We just need to log that it's available
-
-    logger.info("Aurora Serverless v2 PostgreSQL includes pgvector extension")
-    logger.info("The extension will be created when first used with: CREATE EXTENSION IF NOT EXISTS vector;")
-    logger.info("This will be done automatically by the application on first connection")
-
-    # Note: We're not actually connecting to the database here because:
-    # 1. Aurora Serverless v2 with PostgreSQL 15+ has pgvector available
-    # 2. The Data API may not be enabled for the cluster
-    # 3. Direct connection would require psycopg2 which adds complexity
-    # 4. The application will create the extension on first use
+    """Ensure the pgvector extension exists by executing CREATE EXTENSION."""
+    try:
+        sql = 'CREATE EXTENSION IF NOT EXISTS vector;'
+        logger.info('Executing statement to enable pgvector extension')
+        response = rds_data.execute_statement(
+            resourceArn=os.environ['CLUSTER_ARN'],
+            secretArn=os.environ['SECRET_ARN'],
+            database=os.environ['DATABASE_NAME'],
+            sql=sql
+        )
+        logger.info('pgvector extension command executed: %s', response)
+    except ClientError as error:
+        if error.response['Error']['Code'] == 'BadRequestException' and 'vector' in error.response['Error'].get('Message', '').lower():
+            logger.info('pgvector extension already available: %s', error.response['Error']['Message'])
+        else:
+            logger.error('Failed to create pgvector extension: %s', error)
+            raise
 
 def send_response(event, context, response_status, response_data):
     """Send response back to CloudFormation"""

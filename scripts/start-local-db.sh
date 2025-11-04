@@ -21,4 +21,4 @@ sleep 5
 echo "Enabling pgvector extension..."
 docker exec postgres-pgvector psql -U postgres -d content_hub_dev -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
-echo "✅ Local database ready at postgresql://postgres:localpassword@localhost:5432/content_hub_dev"
+echo "Local database ready at postgresql://postgres:localpassword@localhost:5432/content_hub_dev"

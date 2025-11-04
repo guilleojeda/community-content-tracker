@@ -187,13 +187,13 @@ gh issue edit 456 --body "$UPDATED_BODY"
 
 # Post progress summary as comment
 SUMMARY=$(echo "$PROGRESS" | jq -r '
-"## 📊 Progress Update
+"## METRICS Progress Update
 
 **Completion**: \(.completion)%
 **ETA**: \(.eta)
 
 ### Completed Tasks
-\(.completed | map("- ✅ " + .) | join("\n"))
+\(.completed | map("- PASS " + .) | join("\n"))
 
 ### In Progress
 \(.in_progress | map("- 🔄 " + .) | join("\n"))
@@ -202,7 +202,7 @@ SUMMARY=$(echo "$PROGRESS" | jq -r '
 \(.remaining | map("- ⏳ " + .) | join("\n"))
 
 ---
-🤖 Automated update by swarm agent"')
+BOT Automated update by swarm agent"')
 
 gh issue comment 456 --body "$SUMMARY"
 

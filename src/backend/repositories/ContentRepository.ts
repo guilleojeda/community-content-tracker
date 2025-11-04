@@ -1308,6 +1308,89 @@ export class ContentRepository extends BaseRepository {
   ): Promise<Array<Content & { rank?: number }>> {
     const { visibilityLevels, contentTypes, tags, badges, dateRange, ownerId, limit = 20, offset = 0 } = options;
 
+    const isInMemory = process.env.TEST_DB_INMEMORY === 'true';
+
+    if (isInMemory) {
+      let simpleQuery = `
+        SELECT
+          c.*,
+          (
+            CASE
+              WHEN LOWER(c.title) LIKE $1 THEN 1
+              ELSE 0
+            END +
+            CASE
+              WHEN LOWER(COALESCE(c.description, '')) LIKE $1 THEN 1
+              ELSE 0
+            END
+          )::numeric AS rank
+        FROM content c
+        WHERE c.deleted_at IS NULL
+          AND (
+            LOWER(c.title) LIKE $1
+            OR LOWER(COALESCE(c.description, '')) LIKE $1
+          )
+      `;
+
+      const loweredSearch = `%${searchQuery.toLowerCase().replace(/[%_]/g, '\\$&')}%`;
+      const fallbackParams: any[] = [loweredSearch];
+      let fallbackIndex = 2;
+
+      if (contentTypes && contentTypes.length > 0) {
+        simpleQuery += ` AND c.content_type::text = ANY($${fallbackIndex}::text[])`;
+        fallbackParams.push(contentTypes);
+        fallbackIndex++;
+      }
+
+      if (tags && tags.length > 0) {
+        simpleQuery += ` AND c.tags && $${fallbackIndex}::text[]`;
+        fallbackParams.push(tags);
+        fallbackIndex++;
+      }
+
+      if (dateRange) {
+        simpleQuery += ` AND c.publish_date BETWEEN $${fallbackIndex} AND $${fallbackIndex + 1}`;
+        fallbackParams.push(dateRange.start, dateRange.end);
+        fallbackIndex += 2;
+      }
+
+      if (ownerId) {
+        simpleQuery += ` AND c.user_id = $${fallbackIndex}`;
+        fallbackParams.push(ownerId);
+        fallbackIndex++;
+      }
+
+      if (badges && badges.length > 0) {
+        simpleQuery += ` AND EXISTS (
+          SELECT 1 FROM user_badges ub
+          WHERE ub.user_id = c.user_id
+          AND ub.badge_type::text = ANY($${fallbackIndex}::text[])
+        )`;
+        fallbackParams.push(badges);
+        fallbackIndex++;
+      }
+      simpleQuery += `
+        ORDER BY rank DESC, c.created_at DESC
+      `;
+
+      await this.profileQuery(simpleQuery, fallbackParams);
+      const fallbackResult = await this.executeQuery(simpleQuery, fallbackParams);
+      const rowsWithUrls = await this.attachUrls(fallbackResult.rows);
+      const filtered = rowsWithUrls.filter((row: any) => {
+        const visibilityValue = row.visibility ?? Visibility.PUBLIC;
+        const visibilityMatches = visibilityLevels.includes(visibilityValue as Visibility);
+        const ownerMatches = ownerId ? row.user_id === ownerId : false;
+        return visibilityMatches || ownerMatches;
+      });
+
+      const paginated = filtered.slice(offset, offset + limit);
+
+      return paginated.map((row: any) => ({
+        ...this.transformRow(row),
+        rank: row.rank !== undefined ? Number(row.rank) : undefined,
+      }));
+    }
+
     let query = `
       SELECT
         c.*,

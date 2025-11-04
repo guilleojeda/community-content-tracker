@@ -45,17 +45,17 @@ This directory contains specialized swarm coordination agents designed to work w
 ### Performance Characteristics
 
 ```
-Hierarchical: ⭐⭐⭐⭐⭐ Coordination Efficiency
-              ⭐⭐⭐⭐   Fault Tolerance  
-              ⭐⭐⭐⭐⭐ Scalability
+Hierarchical: STARSTARSTARSTARSTAR Coordination Efficiency
+              STARSTARSTARSTAR   Fault Tolerance  
+              STARSTARSTARSTARSTAR Scalability
 
-Mesh:         ⭐⭐⭐     Coordination Efficiency
-              ⭐⭐⭐⭐⭐ Fault Tolerance
-              ⭐⭐⭐     Scalability
+Mesh:         STARSTARSTAR     Coordination Efficiency
+              STARSTARSTARSTARSTAR Fault Tolerance
+              STARSTARSTAR     Scalability
 
-Adaptive:     ⭐⭐⭐⭐⭐ Coordination Efficiency  
-              ⭐⭐⭐⭐⭐ Fault Tolerance
-              ⭐⭐⭐⭐⭐ Scalability
+Adaptive:     STARSTARSTARSTARSTAR Coordination Efficiency  
+              STARSTARSTARSTARSTAR Fault Tolerance
+              STARSTARSTARSTARSTAR Scalability
 ```
 
 ## MCP Tool Integration
@@ -115,28 +115,28 @@ claude-flow agent spawn adaptive-coordinator "Optimize system performance"
 ## Architecture Decision Framework
 
 ### When to Use Hierarchical
-- ✅ Well-defined project structure
-- ✅ Clear resource hierarchy 
-- ✅ Need for centralized decision making
-- ✅ Large team coordination required
-- ❌ High fault tolerance critical
-- ❌ Network partitioning likely
+- PASS Well-defined project structure
+- PASS Clear resource hierarchy 
+- PASS Need for centralized decision making
+- PASS Large team coordination required
+- FAIL High fault tolerance critical
+- FAIL Network partitioning likely
 
 ### When to Use Mesh
-- ✅ High availability requirements
-- ✅ Distributed processing needs
-- ✅ Network reliability concerns
-- ✅ Peer collaboration model
-- ❌ Simple coordination sufficient
-- ❌ Resource constraints exist
+- PASS High availability requirements
+- PASS Distributed processing needs
+- PASS Network reliability concerns
+- PASS Peer collaboration model
+- FAIL Simple coordination sufficient
+- FAIL Resource constraints exist
 
 ### When to Use Adaptive
-- ✅ Variable workload patterns
-- ✅ Long-running production systems
-- ✅ Performance optimization critical
-- ✅ Machine learning acceptable
-- ❌ Predictable, stable workloads
-- ❌ Simple requirements
+- PASS Variable workload patterns
+- PASS Long-running production systems
+- PASS Performance optimization critical
+- PASS Machine learning acceptable
+- FAIL Predictable, stable workloads
+- FAIL Simple requirements
 
 ## Performance Monitoring
 

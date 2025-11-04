@@ -78,20 +78,20 @@ npx claude-flow bottleneck detect --fix --threshold 15
 🔍 Bottleneck Analysis Report
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📊 Summary
+METRICS Summary
 ├── Time Range: Last 1 hour
 ├── Agents Analyzed: 6
 ├── Tasks Processed: 42
 └── Critical Issues: 2
 
-🚨 Critical Bottlenecks
+ALERT Critical Bottlenecks
 1. Agent Communication (35% impact)
    └── coordinator → coder-1 messages delayed by 2.3s avg
 
 2. Memory Access (28% impact)
    └── Neural pattern loading taking 1.8s per access
 
-⚠️ Warning Bottlenecks
+WARN Warning Bottlenecks
 1. Task Queue (18% impact)
    └── 5 tasks waiting > 10s for assignment
 
@@ -100,7 +100,7 @@ npx claude-flow bottleneck detect --fix --threshold 15
 2. Enable memory caching (est. 25% improvement)
 3. Increase agent concurrency to 8 (est. 20% improvement)
 
-✅ Quick Fixes Available
+PASS Quick Fixes Available
 Run with --fix to apply:
 - Enable smart caching
 - Optimize message routing

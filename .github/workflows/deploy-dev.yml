@@ -43,10 +43,10 @@ jobs:
           # Skip deployment if only docs/config changes
           if echo "$changed_files" | grep -E '\.(js|ts|tsx|json|yml|yaml)$|src/|package\.json|package-lock\.json' > /dev/null; then
             echo "should-deploy=true" >> $GITHUB_OUTPUT
-            echo "✅ Deployable changes detected"
+            echo "Deployable changes detected"
           else
             echo "should-deploy=false" >> $GITHUB_OUTPUT
-            echo "⏭️ No deployable changes, skipping deployment"
+            echo "No deployable changes, skipping deployment"
           fi
 
       - name: Create GitHub deployment
@@ -278,7 +278,7 @@ jobs:
           
           # Basic health check
           curl -f "$APP_URL/health" || exit 1
-          echo "✅ Deployment health check passed"
+          echo "Deployment health check passed"
 
   notify-deployment:
     name: Deployment Notifications
@@ -291,10 +291,10 @@ jobs:
         run: |
           if [[ "${{ needs.deploy-applications.result }}" == "success" ]]; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "message=✅ Deployment to dev environment successful" >> $GITHUB_OUTPUT
+            echo "message=Deployment to dev environment successful" >> $GITHUB_OUTPUT
           else
             echo "status=failure" >> $GITHUB_OUTPUT
-            echo "message=❌ Deployment to dev environment failed" >> $GITHUB_OUTPUT
+            echo "message=Deployment to dev environment failed" >> $GITHUB_OUTPUT
           fi
 
       - name: Update GitHub deployment status
@@ -343,7 +343,7 @@ jobs:
               repo: context.repo.repo,
               tag_name: `dev-${new Date().toISOString().split('T')[0]}-${{ needs.pre-deploy.outputs.commit-sha }}`.substring(0, 50),
               name: `Dev Release - ${new Date().toISOString().split('T')[0]}`,
-              body: `🚀 **Deployed to Development Environment**\n\n**Changes:**\n${releaseNotes}\n\n**Environment:** https://dev.aws-community-hub.com\n**Commit:** ${{ needs.pre-deploy.outputs.commit-sha }}`,
+              body: `Deployed to Development Environment\n\n**Changes:**\n${releaseNotes}\n\n**Environment:** https://dev.aws-community-hub.com\n**Commit:** ${{ needs.pre-deploy.outputs.commit-sha }}`,
               draft: false,
               prerelease: true
             });

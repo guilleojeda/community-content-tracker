@@ -1,192 +1,105 @@
-import { App, Stack } from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { App } from 'aws-cdk-lib';
+import { Match, Template } from 'aws-cdk-lib/assertions';
+import { CommunityContentApp } from '../../src/infrastructure/lib/community-content-app';
 
-// Mock the actual stack files since they may not exist yet
-jest.mock('../../src/infrastructure/lib/stacks/database-stack', () => {
-  const { Stack } = require('aws-cdk-lib');
-  return {
-    DatabaseStack: class extends Stack {
-      constructor(scope: any, id: string, props: any) {
-        super(scope, id, props);
-        // Mock some basic resources
-      }
-    },
-  };
-});
-
-jest.mock('../../src/infrastructure/lib/stacks/static-site-stack', () => {
-  const { Stack } = require('aws-cdk-lib');
-  return {
-    StaticSiteStack: class extends Stack {
-      constructor(scope: any, id: string, props: any) {
-        super(scope, id, props);
-        // Mock some basic resources
-      }
-    },
-  };
-});
-
-describe('CDK App Integration Tests', () => {
+describe('CommunityContentApp', () => {
   let app: App;
 
   beforeEach(() => {
-    app = new App({
-      context: {
-        '@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId': true,
-        'aws-cdk:enableDiffNoFail': true,
-      },
-    });
+    app = new App();
   });
 
-  describe('App Initialization', () => {
-    it('should create app successfully', () => {
-      expect(app).toBeInstanceOf(App);
-      expect(app.node).toBeDefined();
-    });
-
-    it('should have correct context configuration', () => {
-      const context = app.node.tryGetContext('@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId');
-      expect(context).toBe(true);
-    });
-
-    it('should synthesize without errors', () => {
-      expect(() => {
-        app.synth();
-      }).not.toThrow();
-    });
-  });
-
-  describe('Stack Creation', () => {
-    it('should create database stack', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      const stack = new DatabaseStack(app, 'TestDatabaseStack', {
-        environment: 'test',
-        deletionProtection: false,
-      });
-
-      expect(stack).toBeDefined();
-      expect(stack.stackName).toBe('TestDatabaseStack');
-    });
-
-    it('should create static site stack', () => {
-      const { StaticSiteStack } = require('../../src/infrastructure/lib/stacks/static-site-stack');
-      const stack = new StaticSiteStack(app, 'TestStaticSiteStack', {
-        environment: 'test',
-      });
-
-      expect(stack).toBeDefined();
-      expect(stack.stackName).toBe('TestStaticSiteStack');
-    });
-  });
-
-  describe('Multi-Stack Application', () => {
-    it('should create complete application with all stacks', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      const { StaticSiteStack } = require('../../src/infrastructure/lib/stacks/static-site-stack');
-
-      const dbStack = new DatabaseStack(app, 'ContentHub-Database', {
-        environment: 'dev',
-        deletionProtection: false,
-      });
-
-      const webStack = new StaticSiteStack(app, 'ContentHub-Web', {
+  describe('environment-specific configuration', () => {
+    it('configures development infrastructure with cost-optimised defaults', () => {
+      const communityApp = new CommunityContentApp(app, 'CommunityContentDev', {
         environment: 'dev',
       });
 
-      expect(dbStack).toBeDefined();
-      expect(webStack).toBeDefined();
-
-      // Should synthesize without errors
-      expect(() => {
-        app.synth();
-      }).not.toThrow();
-    });
-  });
-
-  describe('Environment Configuration', () => {
-    it('should configure development environment correctly', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      const stack = new DatabaseStack(app, 'Dev-Database', {
-        environment: 'dev',
-        deletionProtection: false,
-        backupRetentionDays: 1,
-        minCapacity: 0.5,
-        maxCapacity: 1,
+      const dbTemplate = Template.fromStack(communityApp.databaseStack);
+      dbTemplate.hasResourceProperties('AWS::RDS::DBCluster', {
+        ServerlessV2ScalingConfiguration: {
+          MinCapacity: 0.5,
+          MaxCapacity: 1,
+        },
+        DeletionProtection: false,
+        BackupRetentionPeriod: 7,
       });
 
-      expect(stack).toBeDefined();
+      const siteTemplate = Template.fromStack(communityApp.staticSiteStack);
+      siteTemplate.hasResourceProperties('AWS::CloudFront::Distribution', {
+        DistributionConfig: Match.objectLike({
+          PriceClass: 'PriceClass_100',
+        }),
+      });
+      siteTemplate.resourceCountIs('AWS::WAFv2::WebACL', 0);
     });
 
-    it('should configure production environment correctly', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      const stack = new DatabaseStack(app, 'Prod-Database', {
+    it('enables production safeguards and WAF for production deployments', () => {
+      const communityApp = new CommunityContentApp(app, 'CommunityContentProd', {
         environment: 'prod',
-        deletionProtection: true,
-        backupRetentionDays: 30,
-        minCapacity: 2,
-        maxCapacity: 16,
+        domainName: 'community-content.example.com',
+        certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/prod-cert',
+        enableWaf: true,
       });
 
-      expect(stack).toBeDefined();
+      const dbTemplate = Template.fromStack(communityApp.databaseStack);
+      dbTemplate.hasResourceProperties('AWS::RDS::DBCluster', {
+        ServerlessV2ScalingConfiguration: {
+          MinCapacity: 1,
+          MaxCapacity: 4,
+        },
+        DeletionProtection: true,
+        BackupRetentionPeriod: 30,
+      });
+
+      const siteTemplate = Template.fromStack(communityApp.staticSiteStack);
+      siteTemplate.hasResourceProperties('AWS::CloudFront::Distribution', {
+        DistributionConfig: Match.objectLike({
+          PriceClass: 'PriceClass_All',
+          Aliases: ['community-content.example.com'],
+          WebACLId: Match.anyValue(),
+        }),
+      });
+      siteTemplate.resourceCountIs('AWS::WAFv2::WebACL', 1);
     });
   });
 
-  describe('Cross-Stack References', () => {
-    it('should handle cross-stack dependencies', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      const { StaticSiteStack } = require('../../src/infrastructure/lib/stacks/static-site-stack');
-
-      const dbStack = new DatabaseStack(app, 'DB-Stack', {
-        environment: 'test',
+  describe('stack outputs and environment wiring', () => {
+    it('exports stack names for downstream stacks', () => {
+      const communityApp = new CommunityContentApp(app, 'CommunityContentDev', {
+        environment: 'dev',
       });
 
-      const webStack = new StaticSiteStack(app, 'Web-Stack', {
-        environment: 'test',
+      const dbTemplate = Template.fromStack(communityApp.databaseStack);
+      dbTemplate.hasOutput('DatabaseStackName', {
+        Value: 'CommunityContentHub-Database-Dev',
+        Export: {
+          Name: 'CommunityContentHub-Database-Dev-StackName',
+        },
       });
 
-      // Add dependency
-      webStack.addDependency(dbStack);
-
-      expect(webStack.dependencies.length).toBeGreaterThan(0);
-    });
-  });
-
-  describe('Stack Synthesis', () => {
-    it('should generate CloudFormation template for database stack', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      const stack = new DatabaseStack(app, 'Synth-DB-Stack', {
-        environment: 'test',
+      const siteTemplate = Template.fromStack(communityApp.staticSiteStack);
+      siteTemplate.hasOutput('StaticSiteStackName', {
+        Value: 'CommunityContentHub-StaticSite-Dev',
+        Export: {
+          Name: 'CommunityContentHub-StaticSite-Dev-StackName',
+        },
       });
-
-      const template = Template.fromStack(stack as any);
-      expect(template).toBeDefined();
     });
 
-    it('should generate CloudFormation template for static site stack', () => {
-      const { StaticSiteStack } = require('../../src/infrastructure/lib/stacks/static-site-stack');
-      const stack = new StaticSiteStack(app, 'Synth-Web-Stack', {
-        environment: 'test',
+    it('derives account and region from environment variables when omitted', () => {
+      const originalEnv = { ...process.env };
+      process.env.CDK_DEFAULT_ACCOUNT = '123456789012';
+      process.env.CDK_DEFAULT_REGION = 'us-east-1';
+
+      const communityApp = new CommunityContentApp(app, 'CommunityContentEnv', {
+        environment: 'dev',
       });
 
-      const template = Template.fromStack(stack as any);
-      expect(template).toBeDefined();
-    });
-  });
+      expect(communityApp.databaseStack.account).toBe('123456789012');
+      expect(communityApp.databaseStack.region).toBe('us-east-1');
 
-  describe('Error Handling', () => {
-    it('should handle missing required props gracefully', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      expect(() => {
-        new DatabaseStack(app, 'Error-Stack', {});
-      }).not.toThrow();
-    });
-
-    it('should validate stack names', () => {
-      const { DatabaseStack } = require('../../src/infrastructure/lib/stacks/database-stack');
-      const stack = new DatabaseStack(app, 'Valid-Stack-Name', {
-        environment: 'test',
-      });
-      expect(stack.stackName).toMatch(/^[A-Za-z][A-Za-z0-9-]*$/);
+      process.env = originalEnv;
     });
   });
 });

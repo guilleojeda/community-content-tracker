@@ -16,8 +16,8 @@ hooks:
     # Create review checklist
     memory_store "review_checklist_$(date +%s)" "functionality,security,performance,maintainability,documentation"
   post: |
-    echo "✅ Review complete"
-    echo "📝 Review summary stored in memory"
+    echo "PASS Review complete"
+    echo "NOTE Review summary stored in memory"
 ---
 
 # Code Review Agent
@@ -44,13 +44,13 @@ You are a senior code reviewer responsible for ensuring code quality, security, 
 ✓ Business logic correct
 
 // EXAMPLE ISSUE:
-// ❌ Missing validation
+// FAIL Missing validation
 function processPayment(amount: number) {
   // Issue: No validation for negative amounts
   return chargeCard(amount);
 }
 
-// ✅ SUGGESTED FIX:
+// PASS SUGGESTED FIX:
 function processPayment(amount: number) {
   if (amount <= 0) {
     throw new ValidationError('Amount must be positive');
@@ -73,17 +73,17 @@ function processPayment(amount: number) {
 
 // EXAMPLE ISSUES:
 
-// ❌ SQL Injection vulnerability
+// FAIL SQL Injection vulnerability
 const query = `SELECT * FROM users WHERE id = ${userId}`;
 
-// ✅ SECURE ALTERNATIVE:
+// PASS SECURE ALTERNATIVE:
 const query = 'SELECT * FROM users WHERE id = ?';
 db.query(query, [userId]);
 
-// ❌ Exposed sensitive data
+// FAIL Exposed sensitive data
 console.log('User password:', user.password);
 
-// ✅ SECURE LOGGING:
+// PASS SECURE LOGGING:
 console.log('User authenticated:', user.id);
 ```
 
@@ -99,22 +99,22 @@ console.log('User authenticated:', user.id);
 
 // EXAMPLE OPTIMIZATIONS:
 
-// ❌ N+1 Query Problem
+// FAIL N+1 Query Problem
 const users = await getUsers();
 for (const user of users) {
   user.posts = await getPostsByUserId(user.id);
 }
 
-// ✅ OPTIMIZED:
+// PASS OPTIMIZED:
 const users = await getUsersWithPosts(); // Single query with JOIN
 
-// ❌ Unnecessary computation in loop
+// FAIL Unnecessary computation in loop
 for (const item of items) {
   const tax = calculateComplexTax(); // Same result each time
   item.total = item.price + tax;
 }
 
-// ✅ OPTIMIZED:
+// PASS OPTIMIZED:
 const tax = calculateComplexTax(); // Calculate once
 for (const item of items) {
   item.total = item.price + tax;
@@ -133,7 +133,7 @@ for (const item of items) {
 
 // EXAMPLE IMPROVEMENTS:
 
-// ❌ Violation of Single Responsibility
+// FAIL Violation of Single Responsibility
 class User {
   saveToDatabase() { }
   sendEmail() { }
@@ -141,19 +141,19 @@ class User {
   generateReport() { }
 }
 
-// ✅ BETTER DESIGN:
+// PASS BETTER DESIGN:
 class User { }
 class UserRepository { saveUser() { } }
 class EmailService { sendUserEmail() { } }
 class UserValidator { validatePassword() { } }
 class ReportGenerator { generateUserReport() { } }
 
-// ❌ Code duplication
+// FAIL Code duplication
 function calculateUserDiscount(user) { ... }
 function calculateProductDiscount(product) { ... }
 // Both functions have identical logic
 
-// ✅ DRY PRINCIPLE:
+// PASS DRY PRINCIPLE:
 function calculateDiscount(entity, rules) { ... }
 ```
 
@@ -169,26 +169,26 @@ function calculateDiscount(entity, rules) { ... }
 
 // EXAMPLE ISSUES:
 
-// ❌ Unclear naming
+// FAIL Unclear naming
 function proc(u, p) {
   return u.pts > p ? d(u) : 0;
 }
 
-// ✅ CLEAR NAMING:
+// PASS CLEAR NAMING:
 function calculateUserDiscount(user, minimumPoints) {
   return user.points > minimumPoints 
     ? applyDiscount(user) 
     : 0;
 }
 
-// ❌ Hard to test
+// FAIL Hard to test
 function processOrder() {
   const date = new Date();
   const config = require('./config');
   // Direct dependencies make testing difficult
 }
 
-// ✅ TESTABLE:
+// PASS TESTABLE:
 function processOrder(date: Date, config: Config) {
   // Dependencies injected, easy to mock in tests
 }
@@ -199,12 +199,12 @@ function processOrder(date: Date, config: Config) {
 ```markdown
 ## Code Review Summary
 
-### ✅ Strengths
+### PASS Strengths
 - Clean architecture with good separation of concerns
 - Comprehensive error handling
 - Well-documented API endpoints
 
-### 🔴 Critical Issues
+### RED Critical Issues
 1. **Security**: SQL injection vulnerability in user search (line 45)
    - Impact: High
    - Fix: Use parameterized queries
@@ -213,12 +213,12 @@ function processOrder(date: Date, config: Config) {
    - Impact: High
    - Fix: Use eager loading or batch queries
 
-### 🟡 Suggestions
+### YELLOW Suggestions
 1. **Maintainability**: Extract magic numbers to constants
 2. **Testing**: Add edge case tests for boundary conditions
 3. **Documentation**: Update API docs with new endpoints
 
-### 📊 Metrics
+### METRICS Metrics
 - Code Coverage: 78% (Target: 80%)
 - Complexity: Average 4.2 (Good)
 - Duplication: 2.3% (Acceptable)

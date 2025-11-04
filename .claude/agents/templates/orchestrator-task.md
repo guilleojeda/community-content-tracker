@@ -18,7 +18,7 @@ hooks:
     # Check for existing task plans
     memory_search "task_plan" | tail -1
   post: |
-    echo "✅ Task orchestration complete"
+    echo "PASS Task orchestration complete"
     memory_store "orchestration_complete_$(date +%s)" "Tasks distributed and monitored"
 ---
 

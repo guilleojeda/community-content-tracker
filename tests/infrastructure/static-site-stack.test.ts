@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { StaticSiteStack } from '../../src/infrastructure/lib/stacks/static-site-stack';
 
@@ -23,10 +24,15 @@ describe('StaticSiteStack - Sprint 1 Requirements', () => {
   describe('Task 1.5: Static Site Infrastructure Setup', () => {
     beforeEach(() => {
       app = new cdk.App();
+      const zoneStack = new cdk.Stack(app, 'HostedZoneStack');
+      const hostedZone = new route53.PublicHostedZone(zoneStack, 'HostedZone', {
+        zoneName: 'community-content.example.com',
+      });
       stack = new StaticSiteStack(app, 'TestStaticSiteStack', {
         environment: 'dev',
         domainName: 'dev.community-content.example.com',
         certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/test-cert-id',
+        hostedZone,
       });
       template = Template.fromStack(stack);
     });
@@ -56,18 +62,29 @@ describe('StaticSiteStack - Sprint 1 Requirements', () => {
     });
 
     it('should setup Route53 hosted zone', () => {
-      // Note: Route53 records creation requires actual AWS account/region context
-      // In unit tests without env configuration, Route53 records may not be created
-      // This test checks if the stack is configured to create records when proper context is available
-      
-      // The stack should have CloudFront distribution configured with custom domain
-      template.hasResourceProperties('AWS::CloudFront::Distribution', {
-        DistributionConfig: Match.objectLike({
-          Aliases: ['dev.community-content.example.com'],
-        }),
+      template.hasResourceProperties('AWS::Route53::RecordSet', {
+        Name: 'dev.community-content.example.com.',
+        Type: 'A',
       });
-      
-      // This confirms Route53 capability is set up via domain configuration
+
+      template.hasResourceProperties('AWS::Route53::RecordSet', {
+        Name: 'dev.community-content.example.com.',
+        Type: 'AAAA',
+      });
+    });
+
+    it('should create hosted zone when none is provided', () => {
+      const localApp = new cdk.App();
+      const localStack = new StaticSiteStack(localApp, 'StackWithHostedZone', {
+        environment: 'dev',
+        domainName: 'dev.community-content.example.com',
+        certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/test-cert',
+      });
+      const localTemplate = Template.fromStack(localStack);
+
+      localTemplate.hasResourceProperties('AWS::Route53::HostedZone', {
+        Name: 'community-content.example.com.',
+      });
     });
 
     it('should configure SSL certificate via ACM', () => {
@@ -286,6 +303,30 @@ describe('StaticSiteStack - Sprint 1 Requirements', () => {
       template.hasOutput('DistributionDomainName', {
         Description: Match.anyValue(),
         Value: Match.anyValue(),
+      });
+    });
+  });
+
+  describe('WAF configuration', () => {
+    it('attaches a WAF Web ACL when enableWaf is true', () => {
+      const wafApp = new cdk.App();
+      const wafStack = new StaticSiteStack(wafApp, 'ProdSiteWithWaf', {
+        environment: 'prod',
+        domainName: 'community-content.example.com',
+        certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/prod-cert',
+        enableWaf: true,
+      });
+      const wafTemplate = Template.fromStack(wafStack);
+
+      wafTemplate.hasResourceProperties('AWS::WAFv2::WebACL', {
+        Scope: 'CLOUDFRONT',
+        DefaultAction: { Allow: {} },
+      });
+
+      wafTemplate.hasResourceProperties('AWS::CloudFront::Distribution', {
+        DistributionConfig: Match.objectLike({
+          WebACLId: Match.anyValue(),
+        }),
       });
     });
   });

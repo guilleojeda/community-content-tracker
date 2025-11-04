@@ -18,7 +18,7 @@ hooks:
     # Retrieve specification from memory
     memory_search "spec_complete" | tail -1
   post: |
-    echo "✅ Pseudocode phase complete"
+    echo "PASS Pseudocode phase complete"
     memory_store "pseudo_complete_$(date +%s)" "Algorithms designed"
 ---
 

@@ -359,9 +359,9 @@ done
 ### Comment Templates
 ```markdown
 <!-- Security Issue Template -->
-🔒 **Security Issue: [Type]**
+LOCKED **Security Issue: [Type]**
 
-**Severity**: 🔴 Critical / 🟡 High / 🟢 Low
+**Severity**: RED Critical / YELLOW High / GREEN Low
 
 **Description**: 
 [Clear explanation of the security issue]

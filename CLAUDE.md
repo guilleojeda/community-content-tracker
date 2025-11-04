@@ -1,6 +1,6 @@
 # Claude Code Configuration - SPARC Development Environment
 
-## 🚨 CRITICAL: CONCURRENT EXECUTION & FILE MANAGEMENT
+## [ALERT] CRITICAL: CONCURRENT EXECUTION & FILE MANAGEMENT
 
 **ABSOLUTE RULES**:
 1. ALL operations MUST be concurrent/parallel in a single message
@@ -8,7 +8,7 @@
 3. ALWAYS organize files in appropriate subdirectories
 4. **USE CLAUDE CODE'S TASK TOOL** for spawning agents concurrently, not just MCP
 
-### ⚡ GOLDEN RULE: "1 MESSAGE = ALL RELATED OPERATIONS"
+### [LIGHTNING] GOLDEN RULE: "1 MESSAGE = ALL RELATED OPERATIONS"
 
 **MANDATORY PATTERNS:**
 - **TodoWrite**: ALWAYS batch ALL todos in ONE call (5-10+ todos minimum)
@@ -17,11 +17,11 @@
 - **Bash commands**: ALWAYS batch ALL terminal operations in ONE message
 - **Memory operations**: ALWAYS batch ALL memory store/retrieve in ONE message
 
-### 🎯 CRITICAL: Claude Code Task Tool for Agent Execution
+### [TARGET] CRITICAL: Claude Code Task Tool for Agent Execution
 
 **Claude Code's Task tool is the PRIMARY way to spawn agents:**
 ```javascript
-// ✅ CORRECT: Use Claude Code's Task tool for parallel agent execution
+// [PASS] CORRECT: Use Claude Code's Task tool for parallel agent execution
 [Single Message]:
   Task("Research agent", "Analyze requirements and patterns...", "researcher")
   Task("Coder agent", "Implement core features...", "coder")
@@ -35,7 +35,7 @@
 - `mcp__claude-flow__agent_spawn` - Define agent types for coordination
 - `mcp__claude-flow__task_orchestrate` - Orchestrate high-level workflows
 
-### 📁 File Organization Rules
+### [FOLDER] File Organization Rules
 
 **NEVER save to root folder. Use these directories:**
 - `/src` - Source code files
@@ -84,7 +84,7 @@ This project uses SPARC (Specification, Pseudocode, Architecture, Refinement, Co
 - **Clean Architecture**: Separate concerns
 - **Documentation**: Keep updated
 
-## 🚀 Available Agents (54 Total)
+## [LAUNCH] Available Agents (54 Total)
 
 ### Core Development
 `coder`, `reviewer`, `tester`, `planner`, `researcher`
@@ -113,7 +113,7 @@ This project uses SPARC (Specification, Pseudocode, Architecture, Refinement, Co
 ### Migration & Planning
 `migration-planner`, `swarm-init`
 
-## 🎯 Claude Code vs MCP Tools
+## [TARGET] Claude Code vs MCP Tools
 
 ### Claude Code Handles ALL EXECUTION:
 - **Task tool**: Spawn and run agents concurrently for actual work
@@ -138,7 +138,7 @@ This project uses SPARC (Specification, Pseudocode, Architecture, Refinement, Co
 
 **KEY**: MCP coordinates the strategy, Claude Code's Task tool executes with real agents.
 
-## 🚀 Quick Setup
+## [LAUNCH] Quick Setup
 
 ```bash
 # Add MCP servers (Claude Flow required, others optional)
@@ -181,7 +181,7 @@ Flow-Nexus extends MCP capabilities with 70+ cloud-based orchestration tools:
 - Login: `mcp__flow-nexus__user_login` or `npx flow-nexus@latest login`
 - Access 70+ specialized MCP tools for advanced orchestration
 
-## 🚀 Agent Execution Flow with Claude Code
+## [LAUNCH] Agent Execution Flow with Claude Code
 
 ### The Correct Pattern:
 
@@ -211,7 +211,7 @@ Flow-Nexus extends MCP capabilities with 70+ cloud-based orchestration tools:
   Write "database/schema.sql"
 ```
 
-## 📋 Agent Coordination Protocol
+## [CLIPBOARD] Agent Coordination Protocol
 
 ### Every Agent Spawned via Task Tool MUST:
 
@@ -233,9 +233,9 @@ npx claude-flow@alpha hooks post-task --task-id "[task]"
 npx claude-flow@alpha hooks session-end --export-metrics true
 ```
 
-## 🎯 Concurrent Execution Examples
+## [TARGET] Concurrent Execution Examples
 
-### ✅ CORRECT WORKFLOW: MCP Coordinates, Claude Code Executes
+### [PASS] CORRECT WORKFLOW: MCP Coordinates, Claude Code Executes
 
 ```javascript
 // Step 1: MCP tools set up coordination (optional, for complex tasks)
@@ -274,7 +274,7 @@ npx claude-flow@alpha hooks session-end --export-metrics true
   Write "app/docs/API.md"
 ```
 
-### ❌ WRONG (Multiple Messages):
+### [FAIL] WRONG (Multiple Messages):
 ```javascript
 Message 1: mcp__claude-flow__swarm_init
 Message 2: Task("agent 1")
@@ -315,14 +315,14 @@ Message 4: Write "file.js"
 
 ## Advanced Features (v2.0.0)
 
-- 🚀 Automatic Topology Selection
-- ⚡ Parallel Execution (2.8-4.4x speed)
-- 🧠 Neural Training
-- 📊 Bottleneck Analysis
-- 🤖 Smart Auto-Spawning
-- 🛡️ Self-Healing Workflows
-- 💾 Cross-Session Memory
-- 🔗 GitHub Integration
+- [LAUNCH] Automatic Topology Selection
+- [LIGHTNING] Parallel Execution (2.8-4.4x speed)
+- [BRAIN] Neural Training
+- [CHART] Bottleneck Analysis
+- [ROBOT] Smart Auto-Spawning
+- [SHIELD]️ Self-Healing Workflows
+- [DISK] Cross-Session Memory
+- [LINK] GitHub Integration
 
 ## Integration Tips
 

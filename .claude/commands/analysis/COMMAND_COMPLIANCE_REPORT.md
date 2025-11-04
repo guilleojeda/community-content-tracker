@@ -9,7 +9,7 @@ Reviewed all command files in `.claude/commands/analysis/` directory to ensure p
 ## Files Reviewed
 
 ### 1. token-efficiency.md
-**Status**: ✅ Updated
+**Status**: PASS Updated
 **Changes Made**:
 - Replaced `npx ruv-swarm hook session-end --export-metrics` with proper MCP tool call
 - Updated to: `Tool: mcp__claude-flow__token_usage` with appropriate parameters
@@ -27,7 +27,7 @@ Parameters: {"operation": "session", "timeframe": "24h"}
 ```
 
 ### 2. performance-bottlenecks.md
-**Status**: ✅ Compliant (No changes needed)
+**Status**: PASS Compliant (No changes needed)
 **Reason**: Already uses proper `mcp__claude-flow__task_results` tool format
 
 ## Summary

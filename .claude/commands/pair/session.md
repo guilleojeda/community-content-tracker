@@ -110,8 +110,8 @@ Current Role: DRIVER (you)
 Mode: Switch (10m intervals)
 Next Switch: in 3 minutes
 
-📊 Metrics:
-├── Truth Score: 0.982 ✅
+METRICS Metrics:
+├── Truth Score: 0.982 PASS
 ├── Lines Changed: 234
 ├── Files Modified: 5
 ├── Tests Added: 12
@@ -119,7 +119,7 @@ Next Switch: in 3 minutes
 └── Commits: 3
 
 🎯 Focus: Implementation
-📝 Current File: src/auth/login.js
+NOTE Current File: src/auth/login.js
 ```
 
 ## Session History
@@ -160,7 +160,7 @@ Real-time metrics during session:
 
 ### Truth Score
 ```
-Current: 0.982 ✅
+Current: 0.982 PASS
 Average: 0.975
 Minimum: 0.951
 Threshold: 0.950
@@ -179,7 +179,7 @@ Functions Refactored: 3
 Test Coverage: 87% ↑3%
 Lint Issues: 0
 Security Issues: 0
-Performance Issues: 1 ⚠️
+Performance Issues: 1 WARN
 ```
 
 ### Collaboration
