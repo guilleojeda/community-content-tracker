@@ -118,6 +118,7 @@ src/*/node_modules/
 src/*/dist/
 src/*/build/
 src/*/.next/
+.tools/
 
 
 # Removed Windows wrapper files per user request
