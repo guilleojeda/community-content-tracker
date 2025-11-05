@@ -23,9 +23,9 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { testDb, TestDatabaseSetup } from '../backend/repositories/test-setup';
 
-const shouldRunRealDbTests = process.env.RUN_REAL_DB_TESTS === 'true';
+const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
 
-(shouldRunRealDbTests ? describe : describe.skip)('Real Database Integration Tests', () => {
+(shouldSkipRealDbTests ? describe.skip : describe)('Real Database Integration Tests', () => {
   let pool: Pool;
   let setup: TestDatabaseSetup;
 
@@ -79,23 +79,7 @@ const shouldRunRealDbTests = process.env.RUN_REAL_DB_TESTS === 'true';
    * Clean up test data created during tests
    */
   async function cleanupTestData(): Promise<void> {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Delete test data (in reverse foreign key order)
-      await client.query("DELETE FROM user_badges WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@test.example.com')");
-      await client.query("DELETE FROM content WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@test.example.com')");
-      await client.query("DELETE FROM channels WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@test.example.com')");
-      await client.query("DELETE FROM users WHERE email LIKE '%@test.example.com'");
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Cleanup failed:', error);
-    } finally {
-      client.release();
-    }
+    await testDb.clearData();
   }
 
   describe('Migration Validation', () => {
@@ -151,6 +135,74 @@ const shouldRunRealDbTests = process.env.RUN_REAL_DB_TESTS === 'true';
       expect(contentTypes).toContain('workshop');
       expect(contentTypes).toContain('book');
     });
+
+    it('should include all visibility levels in enum', async () => {
+      const result = await pool.query(`
+        SELECT e.enumlabel as value
+        FROM pg_type t
+        JOIN pg_enum e ON t.oid = e.enumtypid
+        WHERE t.typname = 'visibility_enum'
+        ORDER BY e.enumsortorder
+      `);
+
+      const visibilityValues = result.rows.map(r => r.value);
+
+      expect(visibilityValues).toContain('private');
+      expect(visibilityValues).toContain('aws_only');
+      expect(visibilityValues).toContain('aws_community');
+      expect(visibilityValues).toContain('public');
+      expect(visibilityValues).toHaveLength(4);
+    });
+
+    it('should include all badge types in enum', async () => {
+      const result = await pool.query(`
+        SELECT e.enumlabel as value
+        FROM pg_type t
+        JOIN pg_enum e ON t.oid = e.enumtypid
+        WHERE t.typname = 'badge_enum'
+        ORDER BY e.enumsortorder
+      `);
+
+      const badgeValues = result.rows.map(r => r.value);
+
+      expect(badgeValues).toContain('community_builder');
+      expect(badgeValues).toContain('hero');
+      expect(badgeValues).toContain('ambassador');
+      expect(badgeValues).toContain('user_group_leader');
+      expect(badgeValues).toHaveLength(4);
+    });
+
+    it('should create required indexes for core tables', async () => {
+      const { rows: userIndexes } = await pool.query(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'users'
+      `);
+
+      const userIndexNames = userIndexes.map((row) => row.indexname);
+      expect(userIndexNames).toEqual(expect.arrayContaining([
+        'idx_users_email',
+        'idx_users_username',
+        'idx_users_profile_slug',
+        'idx_users_cognito_sub',
+      ]));
+
+      const { rows: contentIndexes } = await pool.query(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'content'
+      `);
+
+      const contentIndexNames = contentIndexes.map((row) => row.indexname);
+      expect(contentIndexNames).toEqual(expect.arrayContaining([
+        'idx_content_user_id',
+        'idx_content_visibility',
+        'idx_content_content_type',
+        'idx_content_embedding',
+      ]));
+    });
   });
 
   describe('User Operations', () => {
@@ -183,6 +235,40 @@ const shouldRunRealDbTests = process.env.RUN_REAL_DB_TESTS === 'true';
           VALUES ($1, $2, $3, $4, $5, $6, $7)
         `, [`cognito-${uuidv4()}`, 'user@test.example.com', 'testuser2', 'testuser2', 'private', false, false])
       ).rejects.toThrow();
+    });
+  });
+
+  describe('Seed Script Validation', () => {
+    const originalEnv = { ...process.env };
+
+    afterEach(async () => {
+      process.env = { ...originalEnv };
+      await testDb.clearData();
+    });
+
+    it('should populate development seed data without errors', async () => {
+      process.env.DATABASE_URL = setup.connectionString;
+      process.env.DATABASE_POOL_MIN = '1';
+      process.env.DATABASE_POOL_MAX = '5';
+
+      jest.resetModules();
+      const { seedDatabase } = await import('../../src/backend/src/database/seeds/seed');
+      await seedDatabase();
+
+      const adminResult = await pool.query(
+        `SELECT username, is_admin FROM users WHERE email = 'admin@aws-community.dev'`
+      );
+      expect(adminResult.rowCount).toBe(1);
+      expect(adminResult.rows[0].is_admin).toBe(true);
+
+      const { rows: contentCountRows } = await pool.query(`SELECT COUNT(*)::int AS count FROM content`);
+      expect(contentCountRows[0].count).toBeGreaterThanOrEqual(5);
+
+      const { rows: badgeRows } = await pool.query(`SELECT COUNT(*)::int AS count FROM user_badges`);
+      expect(badgeRows[0].count).toBeGreaterThan(0);
+
+      const databaseModule = await import('../../src/backend/src/database/config/database');
+      await databaseModule.db.end?.();
     });
   });
 

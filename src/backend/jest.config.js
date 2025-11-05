@@ -27,12 +27,11 @@ module.exports = {
     ],
   },
   collectCoverageFrom: [
-    'lambdas/admin/**/*.{ts,tsx}',
-    'lambdas/analytics/**/*.{ts,tsx}',
-    'lambdas/content/detect-duplicates.ts',
-    'lambdas/export/**/*.{ts,tsx}',
-    'lambdas/search/advanced-search.ts',
-    'lambdas/search/saved-searches.ts'
+    'lambdas/auth/login.ts',
+    'lambdas/auth/register.ts',
+    'lambdas/auth/refresh.ts',
+    'lambdas/auth/verify-email.ts',
+    'scripts/bootstrap-admin.ts'
   ],
   coverageDirectory: 'coverage',
   coverageReporters: [

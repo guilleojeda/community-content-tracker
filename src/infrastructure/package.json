@@ -8,7 +8,7 @@
     "build": "tsc",
     "build:frontend": "cd ../frontend && npm run build",
     "watch": "tsc -w",
-    "test": "jest",
+    "test": "jest --detectOpenHandles",
     "test:all": "cd ../.. && npm run typecheck",
     "cdk": "cdk",
     "synth": "npm run build:frontend && cdk synth",

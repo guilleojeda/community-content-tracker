@@ -6,6 +6,9 @@ import {
   TokenVerificationError,
   CognitoTokenClaims,
   verifyJwtToken,
+  verifyJwtTokenWithCache,
+  clearTokenCache,
+  handleTokenRefresh,
   TokenVerifierConfig
 } from '../../../../src/backend/lambdas/auth/tokenVerifier';
 import { UserRepository } from '../../../../src/backend/repositories/UserRepository';
@@ -14,11 +17,15 @@ import { BadgeType, User, Visibility } from '../../../../src/shared/types';
 // Mock dependencies
 jest.mock('jsonwebtoken');
 jest.mock('../../../../src/backend/repositories/UserRepository');
-jest.mock('aws-sdk', () => ({
-  CognitoIdentityServiceProvider: jest.fn(() => ({
-    getUser: jest.fn(),
-  })),
-}));
+jest.mock('aws-sdk', () => {
+  const initiateAuth = jest.fn().mockReturnValue({ promise: jest.fn() });
+  return {
+    CognitoIdentityServiceProvider: jest.fn(() => ({
+      getUser: jest.fn(),
+      initiateAuth,
+    })),
+  };
+});
 
 const mockJwt = jwt as jest.Mocked<typeof jwt>;
 const MockUserRepository = UserRepository as jest.MockedClass<typeof UserRepository>;
@@ -242,6 +249,7 @@ describe('TokenVerifier Lambda', () => {
       expect(result.isValid).toBe(false);
       expect(result.error?.code).toBe('INVALID_TOKEN');
     });
+
 
     test('should handle missing token', async () => {
       // Act
@@ -539,6 +547,113 @@ describe('TokenVerifier Lambda', () => {
       // Assert
       expect(result.isValid).toBe(false);
       expect(result.error?.code).toBe('INVALID_TOKEN');
+    });
+  });
+
+  describe('Token cache utilities', () => {
+    afterEach(() => {
+      clearTokenCache();
+      mockJwt.verify.mockReset();
+      mockUserRepository.findByCognitoSub.mockReset();
+    });
+
+    test('should cache successful verification results', async () => {
+      mockJwt.verify.mockImplementation((token, secretOrPublicKey, options, callback) => {
+        if (typeof callback === 'function') {
+          callback(null, validClaims);
+        }
+      });
+      mockUserRepository.findByCognitoSub.mockResolvedValue(validUser);
+
+      await verifyJwtTokenWithCache('cache-token', config, mockUserRepository);
+      await verifyJwtTokenWithCache('cache-token', config, mockUserRepository);
+
+      expect(mockJwt.verify).toHaveBeenCalledTimes(1);
+      expect(mockUserRepository.findByCognitoSub).toHaveBeenCalledTimes(1);
+    });
+
+    test('should not cache invalid verification responses', async () => {
+      mockJwt.verify.mockImplementation((token, secretOrPublicKey, options, callback) => {
+        if (typeof callback === 'function') {
+          const error = new Error('invalid token') as any;
+          error.name = 'JsonWebTokenError';
+          callback(error, null);
+        }
+      });
+
+      await verifyJwtTokenWithCache('bad-token', config, mockUserRepository);
+      await verifyJwtTokenWithCache('bad-token', config, mockUserRepository);
+
+      expect(mockJwt.verify).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('handleTokenRefresh', () => {
+    const awsSdk = require('aws-sdk');
+
+    test('should return refreshed tokens from Cognito', async () => {
+      const initiateAuth = jest.fn().mockReturnValue({
+        promise: jest.fn().mockResolvedValue({
+          AuthenticationResult: {
+            AccessToken: 'access-token',
+            IdToken: 'id-token',
+            ExpiresIn: 3600,
+          },
+        }),
+      });
+
+      awsSdk.CognitoIdentityServiceProvider.mockImplementation(() => ({
+        getUser: jest.fn(),
+        initiateAuth,
+      }));
+
+      const result = await handleTokenRefresh({
+        clientId: 'client-id',
+        refreshToken: 'refresh-token',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.accessToken).toBe('access-token');
+      expect(initiateAuth).toHaveBeenCalled();
+    });
+
+    test('should handle missing authentication result', async () => {
+      const initiateAuth = jest.fn().mockReturnValue({
+        promise: jest.fn().mockResolvedValue({}),
+      });
+
+      awsSdk.CognitoIdentityServiceProvider.mockImplementation(() => ({
+        getUser: jest.fn(),
+        initiateAuth,
+      }));
+
+      const result = await handleTokenRefresh({
+        clientId: 'client-id',
+        refreshToken: 'refresh-token',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('REFRESH_FAILED');
+    });
+
+    test('should map Cognito errors to REFRESH_ERROR', async () => {
+      const initiateAuth = jest.fn().mockReturnValue({
+        promise: jest.fn().mockRejectedValue(new Error('Cognito unavailable')),
+      });
+
+      awsSdk.CognitoIdentityServiceProvider.mockImplementation(() => ({
+        getUser: jest.fn(),
+        initiateAuth,
+      }));
+
+      const result = await handleTokenRefresh({
+        clientId: 'client-id',
+        refreshToken: 'refresh-token',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('REFRESH_ERROR');
+      expect(result.error?.details).toBe('Cognito unavailable');
     });
   });
 });

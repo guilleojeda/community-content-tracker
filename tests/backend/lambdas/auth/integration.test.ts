@@ -15,6 +15,110 @@ import {
   createSuccessResponse,
   mapCognitoError
 } from '../../../../src/backend/lambdas/auth/utils';
+import { CognitoIdentityProviderClient, ConfirmSignUpCommand, InitiateAuthCommand, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { mockClient } from 'aws-sdk-client-mock';
+import {
+  setupTestDatabase,
+  teardownTestDatabase,
+  resetTestData
+} from '../../repositories/test-setup';
+import { handler as registerHandler } from '../../../../src/backend/lambdas/auth/register';
+import { handler as loginHandler } from '../../../../src/backend/lambdas/auth/login';
+import { handler as refreshHandler } from '../../../../src/backend/lambdas/auth/refresh';
+import { handler as verifyEmailHandler } from '../../../../src/backend/lambdas/auth/verify-email';
+import { verifyJwtToken } from '../../../../src/backend/lambdas/auth/tokenVerifier';
+import { resetAuthEnvironmentCache } from '../../../../src/backend/lambdas/auth/config';
+import { Context, APIGatewayProxyEvent } from 'aws-lambda';
+import { Pool } from 'pg';
+import { User } from '../../../../src/shared/types';
+
+jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier', () => ({
+  verifyJwtToken: jest.fn(),
+}));
+
+const cognitoMock = mockClient(CognitoIdentityProviderClient);
+const mockedVerifyJwtToken = verifyJwtToken as jest.MockedFunction<typeof verifyJwtToken>;
+
+const baseRequestContext = (path: string, method: string) => ({
+  requestId: 'test-request',
+  stage: 'test',
+  resourceId: 'test',
+  resourcePath: path,
+  httpMethod: method,
+  requestTime: new Date().toISOString(),
+  requestTimeEpoch: Date.now(),
+  identity: {
+    cognitoIdentityPoolId: null,
+    accountId: null,
+    cognitoIdentityId: null,
+    caller: null,
+    sourceIp: '127.0.0.1',
+    principalOrgId: null,
+    accessKey: null,
+    cognitoAuthenticationType: null,
+    cognitoAuthenticationProvider: null,
+    userAgent: 'test-agent',
+    userArn: null,
+    user: null,
+  },
+  path,
+  accountId: 'test-account',
+  apiId: 'test-api',
+  protocol: 'HTTP/1.1',
+  authorizer: null,
+});
+
+const createContext = (functionName: string): Context => ({
+  callbackWaitsForEmptyEventLoop: false,
+  functionName,
+  functionVersion: '1',
+  invokedFunctionArn: `arn:aws:lambda:us-east-1:123456789012:function:${functionName}`,
+  memoryLimitInMB: '256',
+  awsRequestId: `${functionName}-request-id`,
+  logGroupName: `/aws/lambda/${functionName}`,
+  logStreamName: 'test-stream',
+  getRemainingTimeInMillis: () => 30000,
+  done: () => undefined,
+  fail: () => undefined,
+  succeed: () => undefined,
+});
+
+const createJsonEvent = (path: string, method: string, payload: any): APIGatewayProxyEvent =>
+  ({
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    multiValueHeaders: {},
+    httpMethod: method,
+    isBase64Encoded: false,
+    path,
+    pathParameters: null,
+    queryStringParameters: null,
+    multiValueQueryStringParameters: null,
+    stageVariables: null,
+    resource: path,
+    requestContext: baseRequestContext(path, method),
+  } as unknown as APIGatewayProxyEvent);
+
+const createVerifyEvent = (email: string, code: string): APIGatewayProxyEvent =>
+  ({
+    body: null,
+    headers: {},
+    multiValueHeaders: {},
+    httpMethod: 'GET',
+    isBase64Encoded: false,
+    path: '/auth/verify-email',
+    pathParameters: null,
+    queryStringParameters: {
+      email: encodeURIComponent(email),
+      code: encodeURIComponent(code),
+    },
+    multiValueQueryStringParameters: null,
+    stageVariables: null,
+    resource: '/auth/verify-email',
+    requestContext: baseRequestContext('/auth/verify-email', 'GET'),
+  } as unknown as APIGatewayProxyEvent);
 
 describe('Auth Integration Tests', () => {
   describe('Input Validation', () => {
@@ -284,5 +388,116 @@ describe('Auth Integration Tests', () => {
       expect(typeof body.verified).toBe('boolean');
       expect(typeof body.message).toBe('string');
     });
+  });
+});
+
+describe('Authentication End-to-End Flow', () => {
+  let pool: Pool;
+
+  beforeAll(async () => {
+    const setup = await setupTestDatabase();
+    pool = setup.pool;
+  });
+
+  afterAll(async () => {
+    await teardownTestDatabase();
+  });
+
+  beforeEach(async () => {
+    cognitoMock.reset();
+    mockedVerifyJwtToken.mockReset();
+    await resetTestData();
+    resetAuthEnvironmentCache();
+  });
+
+  it('registers, logs in, refreshes tokens, and verifies email', async () => {
+    cognitoMock.on(SignUpCommand).resolves({
+      UserSub: 'cognito-user-sub-001',
+      CodeDeliveryDetails: {
+        Destination: 'flow@example.com',
+        DeliveryMedium: 'EMAIL',
+      },
+    });
+
+    const registerEvent = createJsonEvent('/auth/register', 'POST', {
+      email: 'flow@example.com',
+      password: 'StrongPassword123!',
+      username: 'flowuser',
+    });
+    const registerContext = createContext('register');
+
+    const registerResult = await registerHandler(registerEvent, registerContext);
+    expect(registerResult.statusCode).toBe(201);
+
+    const { rows: userRows } = await pool.query('SELECT * FROM users WHERE email = $1', [
+      'flow@example.com',
+    ]);
+    expect(userRows).toHaveLength(1);
+    const dbUser = userRows[0];
+
+    cognitoMock.on(InitiateAuthCommand, {
+      AuthFlow: 'USER_PASSWORD_AUTH',
+    }).resolves({
+      AuthenticationResult: {
+        AccessToken: 'access-token-1',
+        IdToken: 'id-token-1',
+        RefreshToken: 'refresh-token-1',
+        ExpiresIn: 3600,
+      },
+    });
+
+    cognitoMock.on(InitiateAuthCommand, {
+      AuthFlow: 'REFRESH_TOKEN_AUTH',
+    }).resolves({
+      AuthenticationResult: {
+        AccessToken: 'access-token-2',
+        IdToken: 'id-token-2',
+        ExpiresIn: 3600,
+      },
+    });
+
+    mockedVerifyJwtToken.mockResolvedValueOnce({
+      isValid: true,
+      user: {
+        id: dbUser.id,
+        cognitoSub: dbUser.cognito_sub,
+        email: dbUser.email,
+        username: dbUser.username,
+        profileSlug: dbUser.profile_slug,
+        defaultVisibility: dbUser.default_visibility,
+        isAdmin: dbUser.is_admin,
+        isAwsEmployee: dbUser.is_aws_employee,
+        createdAt: dbUser.created_at,
+        updatedAt: dbUser.updated_at,
+      } as User,
+    });
+
+    const loginEvent = createJsonEvent('/auth/login', 'POST', {
+      email: 'flow@example.com',
+      password: 'StrongPassword123!',
+    });
+    const loginContext = createContext('login');
+    const loginResult = await loginHandler(loginEvent, loginContext);
+    expect(loginResult.statusCode).toBe(200);
+    const loginBody = JSON.parse(loginResult.body);
+    expect(loginBody.accessToken).toBe('access-token-1');
+    expect(loginBody.user.username).toBe('flowuser');
+
+    const refreshEvent = createJsonEvent('/auth/refresh', 'POST', {
+      refreshToken: 'refresh-token-1',
+    });
+    const refreshContext = createContext('refresh');
+    const refreshResult = await refreshHandler(refreshEvent, refreshContext);
+    expect(refreshResult.statusCode).toBe(200);
+    const refreshBody = JSON.parse(refreshResult.body);
+    expect(refreshBody.accessToken).toBe('access-token-2');
+
+    cognitoMock.on(ConfirmSignUpCommand).resolves({});
+    const verifyEvent = createVerifyEvent('flow@example.com', '123456');
+    const verifyContext = createContext('verify-email');
+    const verifyResult = await verifyEmailHandler(verifyEvent, verifyContext);
+    expect(verifyResult.statusCode).toBe(200);
+    const verifyBody = JSON.parse(verifyResult.body);
+    expect(verifyBody.verified).toBe(true);
   });
 });

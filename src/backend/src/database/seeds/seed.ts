@@ -278,7 +278,7 @@ async function seedBadgesData(userIdMap: Map<string, string>): Promise<void> {
 
     for (const badgeData of badgesList) {
       await db.query(`
-        INSERT INTO user_badges (user_id, badge_type, awarded_date, awarded_by, metadata)
+        INSERT INTO user_badges (user_id, badge_type, awarded_at, awarded_by, metadata)
         VALUES ($1, $2, $3, $4, $5)
       `, [
         userId,

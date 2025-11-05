@@ -6,7 +6,7 @@
         "build": "next build && node scripts/export-static.js",
         "start": "next start",
         "lint": "next lint",
-        "test": "jest",
+        "test": "jest --detectOpenHandles",
         "test:watch": "jest --watch",
         "typecheck": "tsc --noEmit",
         "generate:api": "./generate-api-client.sh",

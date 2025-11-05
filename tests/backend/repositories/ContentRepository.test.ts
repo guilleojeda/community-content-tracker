@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { ContentRepository } from '../../../src/backend/repositories/ContentRepository';
-import { Content, ContentType, Visibility } from '@aws-community-hub/shared';
+import { BadgeType, Content, ContentType, Visibility } from '@aws-community-hub/shared';
 import { setupTestDatabase, teardownTestDatabase, resetTestData, createTestUser, createTestContent } from './test-setup';
 
 describe('ContentRepository', () => {
@@ -801,7 +801,20 @@ describe('ContentRepository', () => {
       const adminResults = await contentRepository.findByUserId(testUserId, { viewerId: adminUserId });
       expect(adminResults).toHaveLength(1);
 
-      // TODO: Add test for community members when badge system is implemented
+      // Community badge holder can see it
+      const communityMember = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      await pool.query(
+        `INSERT INTO user_badges (user_id, badge_type, is_active)
+         VALUES ($1, $2, true)`,
+        [communityMember.id, BadgeType.COMMUNITY_BUILDER]
+      );
+      const communityResults = await contentRepository.findByUserId(testUserId, { viewerId: communityMember.id });
+      expect(communityResults).toHaveLength(1);
+
+      // Regular user without badge cannot see it
+      const regularUser = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const restrictedResults = await contentRepository.findByUserId(testUserId, { viewerId: regularUser.id });
+      expect(restrictedResults).toHaveLength(0);
     });
 
     it('should show public content to everyone', async () => {

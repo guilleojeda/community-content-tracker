@@ -1,6 +1,16 @@
 import { normalizeUrl, urlsAreEqual, normalizeUrls } from '../../../src/backend/utils/url-normalization';
 
 describe('URL Normalization Utility', () => {
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
   describe('normalizeUrl', () => {
     it('should normalize HTTP to HTTPS', () => {
       expect(normalizeUrl('http://example.com')).toBe('https://example.com/');
@@ -59,6 +69,7 @@ describe('URL Normalization Utility', () => {
       expect(normalizeUrl('   ')).toBeNull();
       expect(normalizeUrl(null)).toBeNull();
       expect(normalizeUrl(undefined)).toBeNull();
+      expect(warnSpy).toHaveBeenCalled();
     });
 
     it('should handle URLs with special characters', () => {
@@ -96,6 +107,7 @@ describe('URL Normalization Utility', () => {
       expect(urlsAreEqual('invalid', 'https://example.com')).toBe(false);
       expect(urlsAreEqual(null, 'https://example.com')).toBe(false);
       expect(urlsAreEqual(undefined, undefined)).toBe(false);
+      expect(warnSpy).toHaveBeenCalled();
     });
 
     it('should ignore tracking parameters when comparing', () => {
@@ -129,6 +141,11 @@ describe('URL Normalization Utility', () => {
       expect(normalized.get('https://valid.com')).toBe('https://valid.com/');
       expect(normalized.get('invalid-url')).toBeNull();
       expect(normalized.get('https://another.com')).toBe('https://another.com/');
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to normalize URL:',
+        'invalid-url',
+        expect.anything()
+      );
     });
   });
 

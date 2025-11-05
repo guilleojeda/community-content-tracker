@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { handler } from '../../../../src/backend/lambdas/auth/register';
+import { UserRepository } from '../../../../src/backend/repositories/UserRepository';
 import { setupTestDatabase, teardownTestDatabase, resetTestData, createTestUser } from '../../repositories/test-setup';
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 
@@ -462,6 +463,123 @@ describe('Register Lambda Handler', () => {
       expect(result.headers).toHaveProperty('Access-Control-Allow-Origin');
       expect(result.headers).toHaveProperty('Access-Control-Allow-Headers');
       expect(result.headers).toHaveProperty('Access-Control-Allow-Methods');
+    });
+  });
+
+  describe('resilience to infrastructure failures', () => {
+    it('should return 500 when uniqueness validation query fails unexpectedly', async () => {
+      const validationSpy = jest
+        .spyOn(UserRepository.prototype, 'validateUniqueFields')
+        .mockRejectedValueOnce(new Error('database timeout'));
+
+      const event = createEvent({
+        email: 'unique-check@example.com',
+        password: 'SecurePassword123!',
+        username: 'uniquecheck',
+      });
+
+      const result = await handler(event, createContext());
+      const body = JSON.parse((result as APIGatewayProxyResult).body);
+
+      expect(result.statusCode).toBe(500);
+      expect(body.error.code).toBe('INTERNAL_ERROR');
+      expect(body.error.message).toBe('Failed to validate user uniqueness');
+
+      validationSpy.mockRestore();
+    });
+
+    it('should fall back to timestamp-based slug when slug query fails', async () => {
+      const originalQuery = pool.query.bind(pool);
+      const querySpy = jest
+        .spyOn(pool, 'query')
+        .mockImplementation(async (text: any, params: any) => {
+          if (typeof text === 'string' && text.includes('profile_slug LIKE')) {
+            throw new Error('slug lookup failed');
+          }
+          return originalQuery(text, params);
+        });
+
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1728000000000);
+
+      mockCognitoClient.send.mockResolvedValue({ UserSub: 'cognito-user-id-999' });
+
+      const event = createEvent({
+        email: 'slug-fallback@example.com',
+        password: 'SecurePassword123!',
+        username: 'sluguser',
+      });
+
+      const result = await handler(event, createContext());
+      expect(result.statusCode).toBe(201);
+
+      const userRecord = await pool.query('SELECT profile_slug FROM users WHERE email = $1', [
+        'slug-fallback@example.com',
+      ]);
+      expect(userRecord.rows[0].profile_slug).toBe('sluguser-1728000000000');
+
+      querySpy.mockRestore();
+      nowSpy.mockRestore();
+    });
+
+    it('should report failure when user creation fails after Cognito registration', async () => {
+      const createSpy = jest
+        .spyOn(UserRepository.prototype, 'createUser')
+        .mockRejectedValueOnce(new Error('insert failure'));
+
+      mockCognitoClient.send.mockResolvedValue({ UserSub: 'cognito-user-id-321' });
+
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const event = createEvent({
+        email: 'db-failure@example.com',
+        password: 'SecurePassword123!',
+        username: 'dbfailure',
+      });
+
+      const result = await handler(event, createContext());
+      const body = JSON.parse((result as APIGatewayProxyResult).body);
+
+      expect(result.statusCode).toBe(500);
+      expect(body.error.message).toBe('Failed to create user account');
+      expect(warnSpy).toHaveBeenCalledWith('Orphaned Cognito user created:', 'cognito-user-id-321');
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Database user creation error:',
+        expect.any(Error)
+      );
+
+      createSpy.mockRestore();
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    it('should surface unexpected errors through standard error response', async () => {
+      const utils = require('../../../../src/backend/lambdas/auth/utils');
+      const parseSpy = jest.spyOn(utils, 'parseRequestBody').mockImplementation(() => {
+        throw new Error('boom');
+      });
+
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const event = createEvent({
+        email: 'unexpected@example.com',
+        password: 'SecurePassword123!',
+        username: 'unexpected',
+      });
+
+      const result = await handler(event, createContext());
+      const body = JSON.parse((result as APIGatewayProxyResult).body);
+
+      expect(result.statusCode).toBe(500);
+      expect(body.error.code).toBe('INTERNAL_ERROR');
+      expect(body.error.message).toBe('An unexpected error occurred during registration');
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Unexpected registration error:',
+        expect.any(Error)
+      );
+
+      parseSpy.mockRestore();
+      errorSpy.mockRestore();
     });
   });
 });
