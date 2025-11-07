@@ -13,6 +13,26 @@ interface UnclaimedQueryParams {
   contentType?: string;
 }
 
+const normalizeContentUrls = (contentId: string, rawUrls: any[]): Array<{ id: string; url: string }> => {
+  return (rawUrls || [])
+    .filter(url => url !== null && url !== undefined)
+    .map((entry: any, index: number) => {
+      if (typeof entry === 'string') {
+        return { id: `url-${contentId}-${index}`, url: entry };
+      }
+
+      if (entry && typeof entry === 'object' && typeof entry.url === 'string') {
+        return {
+          id: entry.id ?? `url-${contentId}-${index}`,
+          url: entry.url,
+        };
+      }
+
+      return null;
+    })
+    .filter((entry): entry is { id: string; url: string } => Boolean(entry?.url));
+};
+
 export const handler = async (
   event: APIGatewayProxyEvent,
   context: Context
@@ -171,12 +191,7 @@ export const handler = async (
     // Transform the results
     const transformedItems = result.rows.map(row => {
       // Transform URLs array to proper format
-      const urls = (row.urls || [])
-        .filter((url: string | null) => url !== null)
-        .map((url: string, index: number) => ({
-          id: `url-${row.id}-${index}`,
-          url: url,
-        }));
+      const urls = normalizeContentUrls(row.id, row.urls as any);
 
       return {
         id: row.id,
@@ -193,6 +208,7 @@ export const handler = async (
         urls,
         createdAt: new Date(row.created_at).toISOString(),
         updatedAt: new Date(row.updated_at).toISOString(),
+        version: row.version ?? 1,
       };
     });
 

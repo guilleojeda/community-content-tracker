@@ -216,7 +216,11 @@ describe('Content Merge Handler', () => {
       expect(body.merged.primaryId).toBe(contentId1);
       expect(body.merged.mergedIds).toEqual([contentId2]);
       expect(mockLogContentMerge).toHaveBeenCalled();
-      expect(mockNotifyContentMerged).toHaveBeenCalled();
+      expect(mockNotifyContentMerged).toHaveBeenCalledWith(
+        adminUserId,
+        contentId1,
+        1
+      );
     });
 
     it('should merge multiple content items (>2)', async () => {
@@ -291,13 +295,18 @@ describe('Content Merge Handler', () => {
         undoDeadline: new Date()
       }]);
 
-      const response = await handler(event as APIGatewayProxyEvent, mockContext);
+    const response = await handler(event as APIGatewayProxyEvent, mockContext);
 
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.body);
-      expect(body.content.urls).toHaveLength(4);
-      expect(body.merged.mergedIds).toHaveLength(3);
-    });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.content.urls).toHaveLength(4);
+    expect(body.merged.mergedIds).toHaveLength(3);
+    expect(mockNotifyContentMerged).toHaveBeenCalledWith(
+      adminUserId,
+      contentId1,
+      3
+    );
+  });
   });
 
   describe('POST /content/merge - Validation', () => {

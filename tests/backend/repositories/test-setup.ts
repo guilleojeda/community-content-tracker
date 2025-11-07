@@ -315,6 +315,7 @@ export class TestDatabase {
             moderated_at TIMESTAMPTZ,
             moderated_by UUID,
             deleted_at TIMESTAMPTZ,
+            version INTEGER NOT NULL DEFAULT 1,
             created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
             updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
           )`,

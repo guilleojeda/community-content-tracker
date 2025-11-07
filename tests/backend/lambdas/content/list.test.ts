@@ -2,12 +2,9 @@ import { Pool } from 'pg';
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { setupTestDatabase, teardownTestDatabase, resetTestData, createTestUser, createTestContent } from '../../repositories/test-setup';
 import { ContentType, Visibility } from '@aws-community-hub/shared';
-
-// Mock handler will be imported when implemented
-const mockHandler = jest.fn();
-jest.mock('../../../../src/backend/lambdas/content/list', () => ({
-  handler: (...args: any[]) => mockHandler(...args)
-}));
+import { handler } from '../../../../src/backend/lambdas/content/list';
+import * as database from '../../../../src/backend/services/database';
+import { ContentRepository } from '../../../../src/backend/repositories/ContentRepository';
 
 describe('List Content Lambda Handler', () => {
   let pool: Pool;
@@ -21,6 +18,8 @@ describe('List Content Lambda Handler', () => {
 
     // Set required environment variables
     process.env.DATABASE_URL = setup.connectionString;
+    database.resetDatabaseCache();
+    database.setTestDatabasePool(pool);
   });
 
   afterAll(async () => {
@@ -29,7 +28,6 @@ describe('List Content Lambda Handler', () => {
 
   beforeEach(async () => {
     await resetTestData();
-    jest.clearAllMocks();
 
     // Create test users
     const testUser = await createTestUser(pool, {
@@ -135,7 +133,7 @@ describe('List Content Lambda Handler', () => {
         title: 'Content 2',
         visibility: Visibility.PRIVATE,
       });
-      await createTestContent(pool, otherUserId, {
+      const otherContent = await createTestContent(pool, otherUserId, {
         title: 'Other User Content',
         visibility: Visibility.PUBLIC,
       });
@@ -150,52 +148,27 @@ describe('List Content Lambda Handler', () => {
         [content2.id, 'https://example.com/2']
       );
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            {
-              id: content1.id,
-              userId: testUserId,
-              title: 'Content 1',
-              visibility: Visibility.PUBLIC,
-              urls: [
-                { id: expect.any(String), url: 'https://example.com/1' },
-                { id: expect.any(String), url: 'https://example.com/1-alt' },
-              ],
-            },
-            {
-              id: content2.id,
-              userId: testUserId,
-              title: 'Content 2',
-              visibility: Visibility.PRIVATE,
-              urls: [
-                { id: expect.any(String), url: 'https://example.com/2' },
-              ],
-            },
-          ],
-          total: 2,
-          limit: 20,
-          offset: 0,
-        }),
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': 'http://localhost:3000',
-        },
-      });
-
       const event = createEvent(testUserId);
       const context = createContext();
 
-      const result = await mockHandler(event, context) as APIGatewayProxyResult;
+      const result = await handler(event, context) as APIGatewayProxyResult;
 
       expect(result.statusCode).toBe(200);
 
       const body = JSON.parse(result.body);
-      expect(body.items).toHaveLength(2);
       expect(body.total).toBe(2);
-      expect(body.items[0].urls).toHaveLength(2);
-      expect(body.items[1].urls).toHaveLength(1);
+      expect(body.items).toHaveLength(2);
+
+      const itemById = new Map(body.items.map((item: any) => [item.id, item]));
+      expect(itemById.get(content1.id)?.userId).toBe(testUserId);
+      expect(itemById.get(content2.id)?.userId).toBe(testUserId);
+      expect(itemById.has(otherContent.id)).toBe(false);
+
+      const content1Urls = (itemById.get(content1.id)?.urls || []).map((url: any) => url.url);
+      const content2Urls = (itemById.get(content2.id)?.urls || []).map((url: any) => url.url);
+
+      expect(content1Urls).toEqual(expect.arrayContaining(['https://example.com/1', 'https://example.com/1-alt']));
+      expect(content2Urls).toEqual(['https://example.com/2']);
     });
 
     it('should include all URLs for each content item', async () => {
@@ -213,28 +186,18 @@ describe('List Content Lambda Handler', () => {
         [content.id]
       );
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            {
-              id: content.id,
-              urls: [
-                { id: expect.any(String), url: 'https://blog.example.com/post' },
-                { id: expect.any(String), url: 'https://medium.com/@user/post' },
-                { id: expect.any(String), url: 'https://dev.to/user/post' },
-              ],
-            },
-          ],
-          total: 1,
-        }),
-      });
-
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
-      expect(body.items[0].urls).toHaveLength(3);
+      expect(body.items).toHaveLength(1);
+      const urls = body.items[0].urls.map((url: any) => url.url);
+      expect(urls).toEqual(expect.arrayContaining([
+        'https://blog.example.com/post',
+        'https://medium.com/@user/post',
+        'https://dev.to/user/post',
+      ]));
     });
   });
 
@@ -250,22 +213,10 @@ describe('List Content Lambda Handler', () => {
     });
 
     it('should paginate results with default limit', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: Array(20).fill(null).map((_, i) => ({
-            id: expect.any(String),
-            title: `Content ${i + 1}`,
-          })),
-          total: 25,
-          limit: 20,
-          offset: 0,
-        }),
-      });
-
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(20);
       expect(body.total).toBe(25);
@@ -274,85 +225,49 @@ describe('List Content Lambda Handler', () => {
     });
 
     it('should handle custom limit parameter', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: Array(10).fill(null).map(() => ({ id: expect.any(String) })),
-          total: 25,
-          limit: 10,
-          offset: 0,
-        }),
-      });
-
       const event = createEvent(testUserId, { limit: '10' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(10);
+      expect(body.total).toBe(25);
       expect(body.limit).toBe(10);
+      expect(body.offset).toBe(0);
     });
 
     it('should handle offset parameter', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: Array(5).fill(null).map((_, i) => ({
-            id: expect.any(String),
-            title: `Content ${i + 21}`,
-          })),
-          total: 25,
-          limit: 20,
-          offset: 20,
-        }),
-      });
-
       const event = createEvent(testUserId, { offset: '20' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(5);
+      expect(body.total).toBe(25);
+      expect(body.limit).toBe(20);
       expect(body.offset).toBe(20);
     });
 
     it('should handle combined limit and offset', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: Array(5).fill(null).map((_, i) => ({
-            id: expect.any(String),
-            title: `Content ${i + 11}`,
-          })),
-          total: 25,
-          limit: 5,
-          offset: 10,
-        }),
-      });
-
       const event = createEvent(testUserId, { limit: '5', offset: '10' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(5);
+      expect(body.total).toBe(25);
       expect(body.limit).toBe(5);
       expect(body.offset).toBe(10);
     });
 
     it('should return empty array when offset exceeds total', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [],
-          total: 25,
-          limit: 20,
-          offset: 100,
-        }),
-      });
-
       const event = createEvent(testUserId, { offset: '100' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(0);
+      expect(body.total).toBe(25);
     });
   });
 
@@ -377,87 +292,43 @@ describe('List Content Lambda Handler', () => {
     });
 
     it('should sort by date descending by default', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Alpha Post', publishDate: '2024-03-20' },
-            { title: 'Beta Post', publishDate: '2024-02-10' },
-            { title: 'Zebra Post', publishDate: '2024-01-15' },
-          ],
-          total: 3,
-        }),
-      });
-
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
-      expect(body.items[0].title).toBe('Alpha Post');
-      expect(body.items[2].title).toBe('Zebra Post');
+      const titles = body.items.map((item: any) => item.title);
+      expect(titles).toEqual(['Alpha Post', 'Beta Post', 'Zebra Post']);
     });
 
     it('should sort by date ascending', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Zebra Post', publishDate: '2024-01-15' },
-            { title: 'Beta Post', publishDate: '2024-02-10' },
-            { title: 'Alpha Post', publishDate: '2024-03-20' },
-          ],
-          total: 3,
-        }),
-      });
-
       const event = createEvent(testUserId, { sortBy: 'date', sortOrder: 'asc' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
-      expect(body.items[0].title).toBe('Zebra Post');
-      expect(body.items[2].title).toBe('Alpha Post');
+      const titles = body.items.map((item: any) => item.title);
+      expect(titles).toEqual(['Zebra Post', 'Beta Post', 'Alpha Post']);
     });
 
     it('should sort by title ascending', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Alpha Post' },
-            { title: 'Beta Post' },
-            { title: 'Zebra Post' },
-          ],
-          total: 3,
-        }),
-      });
-
       const event = createEvent(testUserId, { sortBy: 'title', sortOrder: 'asc' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
-      expect(body.items[0].title).toBe('Alpha Post');
-      expect(body.items[2].title).toBe('Zebra Post');
+      const titles = body.items.map((item: any) => item.title);
+      expect(titles).toEqual(['Alpha Post', 'Beta Post', 'Zebra Post']);
     });
 
     it('should sort by title descending', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Zebra Post' },
-            { title: 'Beta Post' },
-            { title: 'Alpha Post' },
-          ],
-          total: 3,
-        }),
-      });
-
       const event = createEvent(testUserId, { sortBy: 'title', sortOrder: 'desc' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
-      expect(body.items[0].title).toBe('Zebra Post');
-      expect(body.items[2].title).toBe('Alpha Post');
+      const titles = body.items.map((item: any) => item.title);
+      expect(titles).toEqual(['Zebra Post', 'Beta Post', 'Alpha Post']);
     });
   });
 
@@ -482,64 +353,42 @@ describe('List Content Lambda Handler', () => {
     });
 
     it('should show all content to the owner', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Public Content' },
-            { title: 'Private Content' },
-            { title: 'AWS Only Content' },
-            { title: 'AWS Community Content' },
-          ],
-          total: 4,
-        }),
-      });
-
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
+      const titles = body.items.map((item: any) => item.title);
       expect(body.items).toHaveLength(4);
+      expect(titles).toEqual(expect.arrayContaining([
+        'Public Content',
+        'Private Content',
+        'AWS Only Content',
+        'AWS Community Content',
+      ]));
     });
 
     it('should filter by visibility parameter', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Public Content', visibility: Visibility.PUBLIC },
-          ],
-          total: 1,
-        }),
-      });
-
       const event = createEvent(testUserId, { visibility: Visibility.PUBLIC });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].visibility).toBe(Visibility.PUBLIC);
     });
 
     it('should support multiple visibility filters', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Public Content', visibility: Visibility.PUBLIC },
-            { title: 'Private Content', visibility: Visibility.PRIVATE },
-          ],
-          total: 2,
-        }),
-      });
-
       const event = createEvent(testUserId, {
         visibility: `${Visibility.PUBLIC},${Visibility.PRIVATE}`,
       });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
+      const visibilities = body.items.map((item: any) => item.visibility);
       expect(body.items).toHaveLength(2);
+      expect(visibilities).toEqual(expect.arrayContaining([Visibility.PUBLIC, Visibility.PRIVATE]));
     });
   });
 
@@ -563,62 +412,35 @@ describe('List Content Lambda Handler', () => {
     });
 
     it('should filter by content type', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Blog Post', contentType: ContentType.BLOG },
-          ],
-          total: 1,
-        }),
-      });
-
       const event = createEvent(testUserId, { contentType: ContentType.BLOG });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].contentType).toBe(ContentType.BLOG);
     });
 
     it('should support multiple content types', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            { title: 'Blog Post', contentType: ContentType.BLOG },
-            { title: 'YouTube Video', contentType: ContentType.YOUTUBE },
-          ],
-          total: 2,
-        }),
-      });
-
       const event = createEvent(testUserId, {
         contentType: `${ContentType.BLOG},${ContentType.YOUTUBE}`,
       });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
+      expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
+      const types = body.items.map((item: any) => item.contentType);
       expect(body.items).toHaveLength(2);
+      expect(types).toEqual(expect.arrayContaining([ContentType.BLOG, ContentType.YOUTUBE]));
     });
   });
 
   describe('error handling', () => {
     it('should return 401 for unauthenticated requests', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 401,
-        body: JSON.stringify({
-          error: {
-            code: 'AUTH_REQUIRED',
-            message: 'Authentication required',
-          },
-        }),
-      });
-
       const event = createEvent(testUserId);
       event.requestContext.authorizer = null;
 
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
       expect(result.statusCode).toBe(401);
       const body = JSON.parse(result.body);
@@ -626,58 +448,34 @@ describe('List Content Lambda Handler', () => {
     });
 
     it('should handle invalid limit parameter', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 400,
-        body: JSON.stringify({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid limit parameter',
-            details: { limit: 'Must be between 1 and 100' },
-          },
-        }),
-      });
-
       const event = createEvent(testUserId, { limit: '-5' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
       expect(result.statusCode).toBe(400);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details.limit).toBeDefined();
     });
 
     it('should handle invalid offset parameter', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 400,
-        body: JSON.stringify({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid offset parameter',
-            details: { offset: 'Must be non-negative' },
-          },
-        }),
-      });
-
       const event = createEvent(testUserId, { offset: 'invalid' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
       expect(result.statusCode).toBe(400);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details.offset).toBeDefined();
     });
 
     it('should handle database connection errors', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 500,
-        body: JSON.stringify({
-          error: {
-            code: 'INTERNAL_ERROR',
-            message: 'Internal server error',
-          },
-        }),
-      });
+      const spy = jest
+        .spyOn(ContentRepository.prototype, 'findByUserId')
+        .mockRejectedValue(new Error('Simulated failure'));
 
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
+
+      spy.mockRestore();
 
       expect(result.statusCode).toBe(500);
       const body = JSON.parse(result.body);
@@ -687,18 +485,8 @@ describe('List Content Lambda Handler', () => {
 
   describe('edge cases', () => {
     it('should return empty array when user has no content', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [],
-          total: 0,
-          limit: 20,
-          offset: 0,
-        }),
-      });
-
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
       const body = JSON.parse(result.body);
       expect(body.items).toHaveLength(0);
@@ -711,41 +499,17 @@ describe('List Content Lambda Handler', () => {
         visibility: Visibility.PUBLIC,
       });
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          items: [
-            {
-              id: content.id,
-              title: 'No URLs Content',
-              urls: [],
-            },
-          ],
-          total: 1,
-        }),
-      });
-
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
       const body = JSON.parse(result.body);
-      expect(body.items[0].urls).toEqual([]);
+      const item = body.items.find((i: any) => i.id === content.id);
+      expect(item?.urls).toEqual([]);
     });
 
     it('should handle very large limit gracefully', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 400,
-        body: JSON.stringify({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Limit exceeds maximum allowed value',
-            details: { limit: 'Maximum is 100' },
-          },
-        }),
-      });
-
       const event = createEvent(testUserId, { limit: '10000' });
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
       expect(result.statusCode).toBe(400);
     });
@@ -757,19 +521,8 @@ describe('List Content Lambda Handler', () => {
         visibility: Visibility.PUBLIC,
       });
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({ items: [], total: 0 }),
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': 'http://localhost:3000',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
-          'Access-Control-Allow-Methods': 'GET,OPTIONS',
-        },
-      });
-
       const event = createEvent(testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(event, createContext()) as APIGatewayProxyResult;
 
       expect(result.headers).toHaveProperty('Access-Control-Allow-Origin');
       expect(result.headers).toHaveProperty('Access-Control-Allow-Headers');

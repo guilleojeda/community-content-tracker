@@ -12,8 +12,7 @@ export interface ContentSearchOptions extends FindAllOptions {
   };
 }
 
-export interface ContentViewOptions {
-  viewerId?: string | null;
+export interface ContentViewOptions extends ContentSearchOptions {
   includeAnalytics?: boolean;
 }
 
@@ -127,6 +126,7 @@ export class ContentRepository extends BaseRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       deletedAt: row.deleted_at ?? undefined,
+      version: row.version ?? 1,
     };
   }
 
@@ -292,17 +292,70 @@ export class ContentRepository extends BaseRepository {
    * Find content by user ID with visibility filtering
    */
   async findByUserId(userId: string, options: ContentViewOptions = {}): Promise<Content[]> {
-    const { viewerId } = options;
+    const {
+      viewerId,
+      limit,
+      offset,
+      orderBy = 'created_at',
+      orderDirection = 'DESC',
+      filters = {},
+    } = options;
 
-    const baseQuery = `
+    let baseQuery = `
       SELECT c.*
       FROM content c
       WHERE c.user_id = $1
       $VISIBILITY_FILTER
-      ORDER BY c.created_at DESC
     `;
 
-    return this.executeContentQuery(baseQuery, [userId], viewerId);
+    const params: any[] = [userId];
+    let paramIndex = params.length;
+
+    if (filters.contentTypes && filters.contentTypes.length > 0) {
+      const placeholders = filters.contentTypes.map(() => `$${++paramIndex}`).join(', ');
+      baseQuery += ` AND c.content_type IN (${placeholders})`;
+      params.push(...filters.contentTypes);
+    }
+
+    if (filters.visibility && filters.visibility.length > 0) {
+      const placeholders = filters.visibility.map(() => `$${++paramIndex}`).join(', ');
+      baseQuery += ` AND c.visibility IN (${placeholders})`;
+      params.push(...filters.visibility);
+    }
+
+    if (filters.tags && filters.tags.length > 0) {
+      const tagConditions = filters.tags
+        .map(() => `c.tags && ARRAY[$${++paramIndex}]`)
+        .join(' OR ');
+      baseQuery += ` AND (${tagConditions})`;
+      params.push(...filters.tags);
+    }
+
+    if (filters.dateRange) {
+      const { start, end } = filters.dateRange;
+      if (start && end && start <= end) {
+        baseQuery += ` AND c.publish_date BETWEEN $${++paramIndex} AND $${++paramIndex}`;
+        params.push(start, end);
+      } else if (start && end) {
+        // Invalid range prevents matches
+        baseQuery += ' AND FALSE';
+      }
+    }
+
+    const safeOrderDirection = orderDirection.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    baseQuery += ` ORDER BY ${this.escapeIdentifier(orderBy)} ${safeOrderDirection}`;
+
+    if (limit) {
+      baseQuery += ` LIMIT $${++paramIndex}`;
+      params.push(limit);
+    }
+
+    if (offset) {
+      baseQuery += ` OFFSET $${++paramIndex}`;
+      params.push(offset);
+    }
+
+    return this.executeContentQuery(baseQuery, params, viewerId);
   }
 
   /**
@@ -824,16 +877,19 @@ export class ContentRepository extends BaseRepository {
   async claimContent(
     contentId: string,
     userId: string,
-    metadata?: { requestId?: string; sourceIp?: string }
+    options: { requestId?: string; sourceIp?: string; force?: boolean } = {}
   ): Promise<Content | null> {
+    const forceClaim = options.force === true;
+
     const query = `
       UPDATE content
       SET
         is_claimed = true,
         user_id = $2,
         claimed_at = NOW(),
-        updated_at = NOW()
-      WHERE id = $1 AND is_claimed = false
+        updated_at = NOW(),
+        version = version + 1
+      WHERE id = $1${forceClaim ? '' : ' AND (is_claimed = false OR user_id IS NULL)'}
       RETURNING *
     `;
 
@@ -998,7 +1054,8 @@ export class ContentRepository extends BaseRepository {
         description = $3,
         publish_date = $4,
         tags = $5,
-        updated_at = NOW()
+        updated_at = NOW(),
+        version = version + 1
       WHERE id = $1
     `;
 
@@ -1156,9 +1213,11 @@ export class ContentRepository extends BaseRepository {
    */
   async updateWithEmbedding(
     contentId: string,
-    data: ContentUpdateData & { embedding?: number[]; metadata?: Record<string, any> }
+    data: ContentUpdateData & { embedding?: number[]; metadata?: Record<string, any> },
+    options: { expectedVersion?: number } = {}
   ): Promise<Content | null> {
     const { embedding, metadata, ...updateData } = data;
+    const { expectedVersion } = options;
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -1172,9 +1231,17 @@ export class ContentRepository extends BaseRepository {
     }
 
     // Handle embedding
-    if (embedding !== undefined && embedding.length > 0) {
-      updates.push(`embedding = $${paramIndex++}::vector`);
-      values.push(`[${embedding.join(',')}]`);
+    if (embedding !== undefined) {
+      const isInMemory = process.env.TEST_DB_INMEMORY === 'true';
+      if (embedding.length === 0) {
+        updates.push(`embedding = NULL`);
+      } else if (isInMemory) {
+        updates.push(`embedding = $${paramIndex++}::jsonb`);
+        values.push(JSON.stringify(embedding));
+      } else {
+        updates.push(`embedding = $${paramIndex++}::vector`);
+        values.push(`[${embedding.join(',')}]`);
+      }
     }
 
     // Handle metadata (stored in metrics JSONB field)
@@ -1183,18 +1250,28 @@ export class ContentRepository extends BaseRepository {
       values.push(JSON.stringify(metadata));
     }
 
-    if (updates.length === 0) {
+    const hasFieldMutations = updates.length > 0;
+    if (!hasFieldMutations) {
       return this.findById(contentId);
     }
 
     updates.push(`updated_at = NOW()`);
+    updates.push(`version = version + 1`);
 
+    let whereClause = `id = $${paramIndex}`;
     values.push(contentId);
+    paramIndex += 1;
+
+    if (expectedVersion !== undefined) {
+      whereClause += ` AND version = $${paramIndex}`;
+      values.push(expectedVersion);
+      paramIndex += 1;
+    }
 
     const query = `
       UPDATE content
       SET ${updates.join(', ')}
-      WHERE id = $${paramIndex}
+      WHERE ${whereClause}
       RETURNING *
     `;
 

@@ -412,6 +412,18 @@ describe('Content Claim Handler', () => {
       const response = await handler(event as APIGatewayProxyEvent, mockContext);
 
       expect(response.statusCode).toBe(200);
+      expect(mockNotificationService.notifyAdminForReview).toHaveBeenCalledWith(
+        adminUserId,
+        validContentId,
+        expect.stringContaining('Admin override')
+      );
+      expect(mockContentRepo.claimContent).toHaveBeenCalledWith(
+        validContentId,
+        adminUserId,
+        expect.objectContaining({
+          force: true,
+        })
+      );
     });
 
     it('should reject admin override from non-admin user', async () => {
@@ -441,6 +453,53 @@ describe('Content Claim Handler', () => {
       expect(response.statusCode).toBe(403);
       const body = JSON.parse(response.body);
       expect(body.error.message).toContain('Admin privileges required');
+    });
+
+    it('should reassign already claimed content when admin override is used', async () => {
+      const event: Partial<APIGatewayProxyEvent> = {
+        httpMethod: 'POST',
+        pathParameters: { id: validContentId },
+        queryStringParameters: { admin: 'true' },
+        requestContext: {
+          requestId: 'req-140',
+          authorizer: {
+            userId: adminUserId,
+            isAdmin: true,
+          },
+          identity: { sourceIp: '10.0.0.1' },
+        } as any,
+      };
+
+      mockUserRepo.findById.mockResolvedValue({
+        id: adminUserId,
+        email: 'admin@example.com',
+        username: 'Admin User',
+        cognitoSub: 'cognito-admin',
+      });
+
+      mockContentRepo.findById.mockResolvedValue({
+        id: validContentId,
+        originalAuthor: 'John Doe',
+        isClaimed: true,
+        userId: otherUserId,
+      });
+
+      mockContentRepo.claimContent.mockResolvedValue({
+        id: validContentId,
+        userId: adminUserId,
+        isClaimed: true,
+      });
+
+      const response = await handler(event as APIGatewayProxyEvent, mockContext);
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.message).toMatch(/success/i);
+      expect(mockContentRepo.claimContent).toHaveBeenLastCalledWith(
+        validContentId,
+        adminUserId,
+        expect.objectContaining({ force: true })
+      );
     });
   });
 

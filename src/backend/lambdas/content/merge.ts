@@ -138,7 +138,7 @@ export async function handler(
       await notificationService.notifyContentMerged(
         userId,
         requestBody.primaryId,
-        secondaryContentIds
+        secondaryContentIds.length
       );
 
       console.log('Content merged successfully:', {

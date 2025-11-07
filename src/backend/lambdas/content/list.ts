@@ -14,6 +14,26 @@ interface ListQueryParams {
   contentType?: string;
 }
 
+const normalizeContentUrls = (contentId: string, rawUrls: any[]): Array<{ id: string; url: string }> => {
+  return (rawUrls || [])
+    .filter(url => url !== null && url !== undefined)
+    .map((entry: any, index: number) => {
+      if (typeof entry === 'string') {
+        return { id: `url-${contentId}-${index}`, url: entry };
+      }
+
+      if (entry && typeof entry === 'object' && typeof entry.url === 'string') {
+        return {
+          id: entry.id ?? `url-${contentId}-${index}`,
+          url: entry.url,
+        };
+      }
+
+      return null;
+    })
+    .filter((entry): entry is { id: string; url: string } => Boolean(entry?.url));
+};
+
 export const handler = async (
   event: APIGatewayProxyEvent,
   context: Context
@@ -134,14 +154,6 @@ export const handler = async (
 
     // Transform content items to include URLs with proper structure
     const transformedItems = contentItems.map(content => {
-      // Transform URLs array to proper format
-      const urls = (content.urls || [])
-        .filter(url => url !== null)
-        .map((url, index) => ({
-          id: `url-${content.id}-${index}`,
-          url: url,
-        }));
-
       return {
         id: content.id,
         userId: content.userId,
@@ -154,9 +166,10 @@ export const handler = async (
         tags: content.tags || [],
         isClaimed: content.isClaimed,
         originalAuthor: content.originalAuthor,
-        urls,
+        urls: normalizeContentUrls(content.id, content.urls as any),
         createdAt: content.createdAt.toISOString(),
         updatedAt: content.updatedAt.toISOString(),
+        version: content.version,
       };
     });
 

@@ -5,6 +5,26 @@ import { Visibility } from '@aws-community-hub/shared';
 import { createErrorResponse, createSuccessResponse, canAccessContent, getContentAccessLevel } from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
 
+const normalizeContentUrls = (contentId: string, rawUrls: any[]): Array<{ id: string; url: string }> => {
+  return (rawUrls || [])
+    .filter(url => url !== null && url !== undefined)
+    .map((entry: any, index: number) => {
+      if (typeof entry === 'string') {
+        return { id: `url-${contentId}-${index}`, url: entry };
+      }
+
+      if (entry && typeof entry === 'object' && typeof entry.url === 'string') {
+        return {
+          id: entry.id ?? `url-${contentId}-${index}`,
+          url: entry.url,
+        };
+      }
+
+      return null;
+    })
+    .filter((entry): entry is { id: string; url: string } => Boolean(entry?.url));
+};
+
 function isValidUUID(id: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   return uuidRegex.test(id);
@@ -76,12 +96,7 @@ export const handler = async (
     }
 
     // Transform URLs array to proper format with IDs
-    const urls = (content.urls || [])
-      .filter(url => url !== null)
-      .map((url, index) => ({
-        id: `url-${content.id}-${index}`,
-        url: url,
-      }));
+    const urls = normalizeContentUrls(content.id, content.urls as any);
 
     // Return the content with all fields
     const responseData = {
@@ -99,6 +114,7 @@ export const handler = async (
       urls,
       createdAt: content.createdAt.toISOString(),
       updatedAt: content.updatedAt.toISOString(),
+      version: content.version,
     };
 
     return createSuccessResponse(200, responseData);

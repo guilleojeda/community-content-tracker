@@ -1,27 +1,29 @@
 import { Pool } from 'pg';
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { setupTestDatabase, teardownTestDatabase, resetTestData, createTestUser, createTestContent } from '../../repositories/test-setup';
+import {
+  setupTestDatabase,
+  teardownTestDatabase,
+  resetTestData,
+  createTestUser,
+  createTestContent,
+} from '../../repositories/test-setup';
 import { ContentType, Visibility } from '@aws-community-hub/shared';
-
-// Mock handler will be imported when implemented
-const mockHandler = jest.fn();
-jest.mock('../../../../src/backend/lambdas/content/get', () => ({
-  handler: (...args: any[]) => mockHandler(...args)
-}));
+import { handler } from '../../../../src/backend/lambdas/content/get';
+import * as database from '../../../../src/backend/services/database';
 
 describe('Get Content Lambda Handler', () => {
   let pool: Pool;
-  let testUserId: string;
+  let ownerId: string;
   let otherUserId: string;
-  let awsEmployeeUserId: string;
+  let awsEmployeeId: string;
   let adminUserId: string;
 
   beforeAll(async () => {
     const setup = await setupTestDatabase();
     pool = setup.pool;
-
-    // Set required environment variables
     process.env.DATABASE_URL = setup.connectionString;
+    database.resetDatabaseCache();
+    database.setTestDatabasePool(pool);
   });
 
   afterAll(async () => {
@@ -30,53 +32,44 @@ describe('Get Content Lambda Handler', () => {
 
   beforeEach(async () => {
     await resetTestData();
-    jest.clearAllMocks();
 
-    // Create test users
-    const testUser = await createTestUser(pool, {
-      username: 'testuser',
+    const owner = await createTestUser(pool, {
+      username: 'owner',
       isAdmin: false,
       isAwsEmployee: false,
     });
-    testUserId = testUser.id;
+    ownerId = owner.id;
 
-    const otherUser = await createTestUser(pool, {
-      username: 'otheruser',
+    const other = await createTestUser(pool, {
+      username: 'other-user',
       isAdmin: false,
       isAwsEmployee: false,
     });
-    otherUserId = otherUser.id;
+    otherUserId = other.id;
 
     const awsEmployee = await createTestUser(pool, {
-      username: 'awsemployee',
+      username: 'aws-employee',
       isAdmin: false,
       isAwsEmployee: true,
     });
-    awsEmployeeUserId = awsEmployee.id;
+    awsEmployeeId = awsEmployee.id;
 
-    const adminUser = await createTestUser(pool, {
-      username: 'adminuser',
+    const admin = await createTestUser(pool, {
+      username: 'admin-user',
       isAdmin: true,
       isAwsEmployee: false,
     });
-    adminUserId = adminUser.id;
+    adminUserId = admin.id;
   });
 
-  const createEvent = (
-    contentId: string,
-    userId?: string
-  ): APIGatewayProxyEvent => ({
+  const createEvent = (contentId: string, userId?: string): APIGatewayProxyEvent => ({
     body: null,
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     multiValueHeaders: {},
     httpMethod: 'GET',
     isBase64Encoded: false,
     path: `/content/${contentId}`,
-    pathParameters: {
-      id: contentId,
-    },
+    pathParameters: { id: contentId },
     queryStringParameters: null,
     multiValueQueryStringParameters: null,
     stageVariables: null,
@@ -109,12 +102,14 @@ describe('Get Content Lambda Handler', () => {
       accountId: 'test-account',
       apiId: 'test-api',
       protocol: 'HTTP/1.1',
-      authorizer: userId ? {
-        claims: {
-          sub: userId,
-          email: 'test@example.com',
-        },
-      } : null,
+      authorizer: userId
+        ? {
+            claims: {
+              sub: userId,
+              email: 'test@example.com',
+            },
+          }
+        : undefined,
     },
     resource: '/content/{id}',
   } as any);
@@ -135,104 +130,38 @@ describe('Get Content Lambda Handler', () => {
   });
 
   describe('successful retrieval', () => {
-    it('should get content by ID with all fields', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'Test Content',
-        description: 'Test description',
+    it('returns full content metadata for the owner', async () => {
+      const content = await createTestContent(pool, ownerId, {
+        title: 'Owner Content',
+        description: 'Detailed description',
         contentType: ContentType.BLOG,
         visibility: Visibility.PUBLIC,
-        publishDate: new Date('2024-01-15'),
+        publishDate: new Date('2024-01-15T00:00:00Z'),
         tags: ['aws', 'lambda'],
         isClaimed: true,
       });
 
-      // Add URLs
       await pool.query(
         'INSERT INTO content_urls (content_id, url) VALUES ($1, $2), ($1, $3)',
         [content.id, 'https://example.com/post', 'https://mirror.example.com/post']
       );
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          userId: testUserId,
-          title: 'Test Content',
-          description: 'Test description',
-          contentType: ContentType.BLOG,
-          visibility: Visibility.PUBLIC,
-          publishDate: '2024-01-15T00:00:00.000Z',
-          tags: ['aws', 'lambda'],
-          isClaimed: true,
-          urls: [
-            { id: expect.any(String), url: 'https://example.com/post' },
-            { id: expect.any(String), url: 'https://mirror.example.com/post' },
-          ],
-          createdAt: expect.any(String),
-          updatedAt: expect.any(String),
-        }),
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': 'http://localhost:3000',
-        },
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const context = createContext();
-
-      const result = await mockHandler(event, context) as APIGatewayProxyResult;
+      const result = await handler(createEvent(content.id, ownerId), createContext());
 
       expect(result.statusCode).toBe(200);
-
       const body = JSON.parse(result.body);
       expect(body.id).toBe(content.id);
-      expect(body.title).toBe('Test Content');
-      expect(body.description).toBe('Test description');
-      expect(body.contentType).toBe(ContentType.BLOG);
-      expect(body.visibility).toBe(Visibility.PUBLIC);
+      expect(body.userId).toBe(ownerId);
+      expect(body.title).toBe('Owner Content');
+      expect(body.description).toBe('Detailed description');
       expect(body.tags).toEqual(['aws', 'lambda']);
-      expect(body.urls).toHaveLength(2);
+      expect(body.urls.map((u: any) => u.url)).toEqual(
+        expect.arrayContaining(['https://example.com/post', 'https://mirror.example.com/post'])
+      );
     });
 
-    it('should include all URLs for the content', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'Multi-URL Content',
-        visibility: Visibility.PUBLIC,
-      });
-
-      // Add multiple URLs
-      const urls = [
-        'https://blog.example.com/post',
-        'https://medium.com/@user/post',
-        'https://dev.to/user/post',
-        'https://hashnode.com/@user/post',
-      ];
-
-      for (const url of urls) {
-        await pool.query(
-          'INSERT INTO content_urls (content_id, url) VALUES ($1, $2)',
-          [content.id, url]
-        );
-      }
-
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          urls: urls.map(url => ({ id: expect.any(String), url })),
-        }),
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      const body = JSON.parse(result.body);
-      expect(body.urls).toHaveLength(4);
-      expect(body.urls.map((u: any) => u.url)).toEqual(urls);
-    });
-
-    it('should work for public content without authentication', async () => {
-      const content = await createTestContent(pool, testUserId, {
+    it('allows anonymous access to public content', async () => {
+      const content = await createTestContent(pool, ownerId, {
         title: 'Public Content',
         visibility: Visibility.PUBLIC,
       });
@@ -242,406 +171,116 @@ describe('Get Content Lambda Handler', () => {
         [content.id, 'https://example.com/public']
       );
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          title: 'Public Content',
-          visibility: Visibility.PUBLIC,
-          urls: [{ id: expect.any(String), url: 'https://example.com/public' }],
-        }),
-      });
-
-      const event = createEvent(content.id);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(createEvent(content.id), createContext());
 
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.title).toBe('Public Content');
+      expect(body.urls).toHaveLength(1);
     });
   });
 
-  describe('visibility enforcement', () => {
-    it('should allow owner to view their own private content', async () => {
-      const content = await createTestContent(pool, testUserId, {
+  describe('visibility and permissions', () => {
+    it('allows owner to view private content', async () => {
+      const content = await createTestContent(pool, ownerId, {
         title: 'Private Content',
         visibility: Visibility.PRIVATE,
       });
 
-      await pool.query(
-        'INSERT INTO content_urls (content_id, url) VALUES ($1, $2)',
-        [content.id, 'https://example.com/private']
-      );
-
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          title: 'Private Content',
-          visibility: Visibility.PRIVATE,
-          urls: [{ id: expect.any(String), url: 'https://example.com/private' }],
-        }),
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(createEvent(content.id, ownerId), createContext());
 
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.visibility).toBe(Visibility.PRIVATE);
     });
 
-    it('should deny access to private content for other users', async () => {
-      const content = await createTestContent(pool, testUserId, {
+    it('denies private content to other users', async () => {
+      const content = await createTestContent(pool, ownerId, {
         title: 'Private Content',
         visibility: Visibility.PRIVATE,
       });
 
-      mockHandler.mockResolvedValue({
-        statusCode: 404,
-        body: JSON.stringify({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Content not found',
-          },
-        }),
-      });
-
-      const event = createEvent(content.id, otherUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      expect(result.statusCode).toBe(404);
-      const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('NOT_FOUND');
-    });
-
-    it('should allow AWS employees to view AWS_ONLY content', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'AWS Only Content',
-        visibility: Visibility.AWS_ONLY,
-      });
-
-      await pool.query(
-        'INSERT INTO content_urls (content_id, url) VALUES ($1, $2)',
-        [content.id, 'https://example.com/aws-only']
-      );
-
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          title: 'AWS Only Content',
-          visibility: Visibility.AWS_ONLY,
-          urls: [{ id: expect.any(String), url: 'https://example.com/aws-only' }],
-        }),
-      });
-
-      const event = createEvent(content.id, awsEmployeeUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      expect(result.statusCode).toBe(200);
-    });
-
-    it('should deny AWS_ONLY content to regular users', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'AWS Only Content',
-        visibility: Visibility.AWS_ONLY,
-      });
-
-      mockHandler.mockResolvedValue({
-        statusCode: 404,
-        body: JSON.stringify({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Content not found',
-          },
-        }),
-      });
-
-      const event = createEvent(content.id, otherUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(createEvent(content.id, otherUserId), createContext());
 
       expect(result.statusCode).toBe(404);
     });
 
-    it('should allow admins to view AWS_ONLY content', async () => {
-      const content = await createTestContent(pool, testUserId, {
+    it('allows AWS employees to view aws_only content', async () => {
+      const content = await createTestContent(pool, ownerId, {
         title: 'AWS Only Content',
         visibility: Visibility.AWS_ONLY,
       });
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          visibility: Visibility.AWS_ONLY,
-        }),
-      });
-
-      const event = createEvent(content.id, adminUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(createEvent(content.id, awsEmployeeId), createContext());
 
       expect(result.statusCode).toBe(200);
     });
 
-    it('should allow authenticated users to view AWS_COMMUNITY content', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'AWS Community Content',
-        visibility: Visibility.AWS_COMMUNITY,
+    it('denies aws_only content to regular users', async () => {
+      const content = await createTestContent(pool, ownerId, {
+        title: 'AWS Only Content',
+        visibility: Visibility.AWS_ONLY,
       });
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          visibility: Visibility.AWS_COMMUNITY,
-        }),
+      const result = await handler(createEvent(content.id, otherUserId), createContext());
+
+      expect(result.statusCode).toBe(404);
+    });
+
+    it('allows admins to view any content', async () => {
+      const content = await createTestContent(pool, ownerId, {
+        title: 'Private Content',
+        visibility: Visibility.PRIVATE,
       });
 
-      const event = createEvent(content.id, otherUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(createEvent(content.id, adminUserId), createContext());
 
       expect(result.statusCode).toBe(200);
     });
   });
 
-  describe('error handling', () => {
-    it('should return 404 for non-existent content ID', async () => {
-      const nonExistentId = '00000000-0000-0000-0000-000000000000';
-
-      mockHandler.mockResolvedValue({
-        statusCode: 404,
-        body: JSON.stringify({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Content not found',
-          },
-        }),
-      });
-
-      const event = createEvent(nonExistentId, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      expect(result.statusCode).toBe(404);
-
-      const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('NOT_FOUND');
-      expect(body.error.message).toBe('Content not found');
-    });
-
-    it('should return 400 for invalid content ID format', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 400,
-        body: JSON.stringify({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid content ID format',
-            details: { id: 'Must be a valid UUID' },
-          },
-        }),
-      });
-
-      const event = createEvent('invalid-id', testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+  describe('validation and errors', () => {
+    it('rejects invalid UUIDs', async () => {
+      const result = await handler(createEvent('invalid-id', ownerId), createContext());
 
       expect(result.statusCode).toBe(400);
-
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
     });
 
-    it('should return 400 for missing content ID', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 400,
-        body: JSON.stringify({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Content ID is required',
-          },
-        }),
-      });
+    it('returns 404 for non-existent content', async () => {
+      const result = await handler(
+        createEvent('00000000-0000-0000-0000-000000000000', ownerId),
+        createContext()
+      );
 
-      const event = createEvent('', testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      expect(result.statusCode).toBe(400);
+      expect(result.statusCode).toBe(404);
     });
 
-    it('should handle database connection errors gracefully', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        visibility: Visibility.PUBLIC,
+    it('returns 404 when unauthenticated user requests private content', async () => {
+      const content = await createTestContent(pool, ownerId, {
+        title: 'Private Content',
+        visibility: Visibility.PRIVATE,
       });
 
-      mockHandler.mockResolvedValue({
-        statusCode: 500,
-        body: JSON.stringify({
-          error: {
-            code: 'INTERNAL_ERROR',
-            message: 'Internal server error',
-          },
-        }),
-      });
+      const result = await handler(createEvent(content.id), createContext());
 
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      expect(result.statusCode).toBe(500);
-      const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('INTERNAL_ERROR');
-    });
-  });
-
-  describe('edge cases', () => {
-    it('should handle content with no URLs', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'No URLs',
-        visibility: Visibility.PUBLIC,
-      });
-
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          title: 'No URLs',
-          urls: [],
-        }),
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      const body = JSON.parse(result.body);
-      expect(body.urls).toEqual([]);
-    });
-
-    it('should handle content with no description', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'No Description',
-        description: null,
-        visibility: Visibility.PUBLIC,
-      });
-
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          title: 'No Description',
-          description: null,
-        }),
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      const body = JSON.parse(result.body);
-      expect(body.description).toBeNull();
-    });
-
-    it('should handle content with no tags', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'No Tags',
-        tags: [],
-        visibility: Visibility.PUBLIC,
-      });
-
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          title: 'No Tags',
-          tags: [],
-        }),
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      const body = JSON.parse(result.body);
-      expect(body.tags).toEqual([]);
-    });
-
-    it('should handle content with no publish date', async () => {
-      const content = await createTestContent(pool, testUserId, {
-        title: 'No Publish Date',
-        publishDate: null,
-        visibility: Visibility.PUBLIC,
-      });
-
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({
-          id: content.id,
-          title: 'No Publish Date',
-          publishDate: null,
-        }),
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      const body = JSON.parse(result.body);
-      expect(body.publishDate).toBeNull();
+      expect(result.statusCode).toBe(404);
     });
   });
 
   describe('CORS headers', () => {
-    it('should include CORS headers in response', async () => {
-      const content = await createTestContent(pool, testUserId, {
+    it('includes CORS headers in success responses', async () => {
+      const content = await createTestContent(pool, ownerId, {
         visibility: Visibility.PUBLIC,
       });
 
-      mockHandler.mockResolvedValue({
-        statusCode: 200,
-        body: JSON.stringify({ id: content.id }),
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': 'http://localhost:3000',
-          'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
-          'Access-Control-Allow-Methods': 'GET,OPTIONS',
-        },
-      });
-
-      const event = createEvent(content.id, testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
+      const result = await handler(createEvent(content.id, ownerId), createContext());
 
       expect(result.headers).toHaveProperty('Access-Control-Allow-Origin');
       expect(result.headers).toHaveProperty('Access-Control-Allow-Headers');
       expect(result.headers).toHaveProperty('Access-Control-Allow-Methods');
     });
-
-    it('should include CORS headers in error responses', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 404,
-        body: JSON.stringify({ error: { code: 'NOT_FOUND' } }),
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': 'http://localhost:3000',
-        },
-      });
-
-      const event = createEvent('00000000-0000-0000-0000-000000000000', testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      expect(result.headers).toHaveProperty('Access-Control-Allow-Origin');
-    });
-  });
-
-  describe('SQL injection protection', () => {
-    it('should handle malicious ID parameter safely', async () => {
-      mockHandler.mockResolvedValue({
-        statusCode: 400,
-        body: JSON.stringify({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid content ID format',
-          },
-        }),
-      });
-
-      const event = createEvent("'; DROP TABLE content; --", testUserId);
-      const result = await mockHandler(event, createContext()) as APIGatewayProxyResult;
-
-      expect(result.statusCode).toBe(400);
-    });
   });
 });
+

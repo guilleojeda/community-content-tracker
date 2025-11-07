@@ -77,6 +77,7 @@ export enum Visibility {
     createdAt: Date;
     updatedAt: Date;
     deletedAt?: Date;
+    version: number;
   }
 
 export interface Badge {

@@ -84,3 +84,12 @@ COMMENT ON COLUMN content_merge_history.unmerged_by IS 'User who undid the merge
 
 COMMENT ON FUNCTION soft_delete_content(UUID) IS 'Soft deletes content and associated URLs by setting deleted_at timestamp';
 COMMENT ON FUNCTION restore_content(UUID) IS 'Restores soft-deleted content by clearing deleted_at timestamp';
+
+-- Add version column for optimistic locking (Sprint 3 Task 3.3)
+ALTER TABLE content
+  ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+
+-- Backfill null versions if any rows pre-exist without a version value
+UPDATE content
+SET version = 1
+WHERE version IS NULL;

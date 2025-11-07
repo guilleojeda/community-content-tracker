@@ -51,6 +51,7 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
     const migrationFiles = [
       '20240101000000000_initial_schema.sql',
       '20240115000000000_sprint_3_additions.sql',
+      '20240116000000000_update_content_merge_history_schema.sql',
       '20240201000000000_create_channels_table.sql',
       '20240215000000000_add_user_profile_fields.sql',
       '20240301000000000_add_missing_user_fields.sql',
@@ -58,6 +59,21 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
 
     for (const file of migrationFiles) {
       const migrationPath = path.join(migrationsDir, file);
+      const migrationName = path.basename(file, '.sql');
+
+      try {
+        const existing = await pool.query(
+          `SELECT 1 FROM pgmigrations WHERE name = $1 LIMIT 1`,
+          [migrationName]
+        );
+        if (existing.rowCount > 0) {
+          console.log(`→ Migration ${file} already applied (pgmigrations)`);
+          continue;
+        }
+      } catch (lookupError) {
+        // If pgmigrations table is missing, continue and let the migration run (initial setup case)
+        console.warn(`⚠️ Could not verify migration ${file} in pgmigrations:`, lookupError);
+      }
 
       try {
         const sql = await fs.readFile(migrationPath, 'utf-8');
@@ -524,13 +540,13 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
 
   describe('Content Merge History', () => {
     let testUserId: string;
-    let sourceContentId: string;
-    let targetContentId: string;
+    let primaryContentId: string;
+    let mergedContentId: string;
 
     beforeEach(async () => {
       testUserId = uuidv4();
-      sourceContentId = uuidv4();
-      targetContentId = uuidv4();
+      primaryContentId = uuidv4();
+      mergedContentId = uuidv4();
 
       await pool.query(`
         INSERT INTO users (id, cognito_sub, email, username, profile_slug, default_visibility, is_admin, is_aws_employee)
@@ -542,29 +558,45 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
         VALUES
           ($1, $2, 'Source Content', 'blog', 'public', true),
           ($3, $2, 'Target Content', 'blog', 'public', true)
-      `, [sourceContentId, testUserId, targetContentId]);
+      `, [primaryContentId, testUserId, mergedContentId]);
     });
 
     afterEach(async () => {
-      await pool.query('DELETE FROM content_merge_history WHERE source_content_id = $1', [sourceContentId]);
-      await pool.query('DELETE FROM content WHERE id IN ($1, $2)', [sourceContentId, targetContentId]);
+      await pool.query('DELETE FROM content_merge_history WHERE primary_content_id = $1', [primaryContentId]);
+      await pool.query('DELETE FROM content WHERE id IN ($1, $2)', [primaryContentId, mergedContentId]);
       await pool.query('DELETE FROM users WHERE id = $1', [testUserId]);
     });
 
     it('should track content merge history', async () => {
       const mergeId = uuidv4();
+      const metadata = { contentCount: 1, urlCount: 0 };
+      const reason = 'integration-test';
+      const undoDeadline = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
       await pool.query(`
-        INSERT INTO content_merge_history (id, source_content_id, target_content_id, merged_by, merged_at)
-        VALUES ($1, $2, $3, $4, NOW())
-      `, [mergeId, sourceContentId, targetContentId, testUserId]);
+        INSERT INTO content_merge_history (
+          id,
+          primary_content_id,
+          merged_content_ids,
+          merged_by,
+          merge_reason,
+          merged_metadata,
+          can_undo,
+          undo_deadline,
+          merged_at
+        )
+        VALUES ($1, $2, ARRAY[$3]::uuid[], $4, $5, $6, true, $7, NOW())
+      `, [mergeId, primaryContentId, mergedContentId, testUserId, reason, JSON.stringify(metadata), undoDeadline]);
 
       const result = await pool.query('SELECT * FROM content_merge_history WHERE id = $1', [mergeId]);
 
       expect(result.rowCount).toBe(1);
-      expect(result.rows[0].source_content_id).toBe(sourceContentId);
-      expect(result.rows[0].target_content_id).toBe(targetContentId);
+      expect(result.rows[0].primary_content_id).toBe(primaryContentId);
+      expect(result.rows[0].merged_content_ids).toEqual([mergedContentId]);
       expect(result.rows[0].merged_by).toBe(testUserId);
+      expect(result.rows[0].merge_reason).toBe(reason);
+      expect(result.rows[0].merged_metadata).toEqual(metadata);
+      expect(result.rows[0].can_undo).toBe(true);
     });
 
     it('should allow content to be unmerged', async () => {
@@ -572,14 +604,22 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
 
       // Record merge
       await pool.query(`
-        INSERT INTO content_merge_history (id, source_content_id, target_content_id, merged_by, merged_at)
-        VALUES ($1, $2, $3, $4, NOW())
-      `, [mergeId, sourceContentId, targetContentId, testUserId]);
+        INSERT INTO content_merge_history (
+          id,
+          primary_content_id,
+          merged_content_ids,
+          merged_by,
+          merged_at,
+          can_undo,
+          undo_deadline
+        )
+        VALUES ($1, $2, ARRAY[$3]::uuid[], $4, NOW(), true, NOW() + INTERVAL '30 days')
+      `, [mergeId, primaryContentId, mergedContentId, testUserId]);
 
       // Record unmerge
       await pool.query(`
         UPDATE content_merge_history
-        SET unmerged_at = NOW(), unmerged_by = $1
+        SET unmerged_at = NOW(), unmerged_by = $1, can_undo = false
         WHERE id = $2
       `, [testUserId, mergeId]);
 
@@ -587,6 +627,7 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
 
       expect(result.rows[0].unmerged_at).toBeTruthy();
       expect(result.rows[0].unmerged_by).toBe(testUserId);
+      expect(result.rows[0].can_undo).toBe(false);
     });
   });
 

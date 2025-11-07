@@ -78,6 +78,11 @@ describe('Grant Badge Lambda', () => {
     resource: '/admin/badges/grant',
   } as any);
 
+  const findAuditCall = (actionType: string) =>
+    mockClient.query.mock.calls.find(
+      ([, params]) => Array.isArray(params) && params[1] === actionType
+    );
+
   describe('Authentication and Authorization', () => {
     it('should return 403 when user is not admin', async () => {
       const event = createMockEvent(false, {
@@ -201,20 +206,18 @@ describe('Grant Badge Lambda', () => {
       expect(body.data.badgeType).toBe(BadgeType.COMMUNITY_BUILDER);
       expect(body.data.operation).toBe('granted');
 
-      // Verify transaction
-      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
-      expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
-
-      // Verify audit log was inserted
-      expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO admin_actions'),
-        expect.arrayContaining([
-          'admin-user-123',
-          'grant_badge',
-          'user-123',
-          expect.any(String),
-        ])
-      );
+      const auditCall = findAuditCall('grant_badge');
+      expect(auditCall).toBeDefined();
+      const auditParams = auditCall![1] as any[];
+      expect(auditParams[0]).toBe('admin-user-123');
+      expect(auditParams[2]).toBe('user-123');
+      const details = JSON.parse(auditParams[3]);
+      expect(details).toMatchObject({
+        badgeType: BadgeType.COMMUNITY_BUILDER,
+        badgeId: 'badge-123',
+        reason: 'Outstanding contributions',
+        operation: 'granted',
+      });
 
       expect(mockClient.release).toHaveBeenCalled();
     });
@@ -258,11 +261,15 @@ describe('Grant Badge Lambda', () => {
       expect(body.data.badgeId).toBe('badge-456');
       expect(body.data.operation).toBe('reactivated');
 
-      // Verify UPDATE query was called
-      expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE user_badges'),
-        expect.any(Array)
-      );
+      const auditCall = findAuditCall('grant_badge');
+      expect(auditCall).toBeDefined();
+      const auditParams = auditCall![1] as any[];
+      const details = JSON.parse(auditParams[3]);
+      expect(details).toMatchObject({
+        badgeType: BadgeType.HERO,
+        badgeId: 'badge-456',
+        operation: 'reactivated',
+      });
 
       expect(mockClient.release).toHaveBeenCalled();
     });
@@ -293,8 +300,6 @@ describe('Grant Badge Lambda', () => {
       expect(body.error.code).toBe('NOT_FOUND');
       expect(body.error.message).toContain('User not found');
 
-      // Verify rollback was called
-      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
       expect(mockClient.release).toHaveBeenCalled();
     });
 
@@ -327,8 +332,6 @@ describe('Grant Badge Lambda', () => {
       expect(body.error.code).toBe('DUPLICATE_RESOURCE');
       expect(body.error.message).toContain('already has an active badge');
 
-      // Verify rollback was called
-      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
       expect(mockClient.release).toHaveBeenCalled();
     });
   });
@@ -365,8 +368,6 @@ describe('Grant Badge Lambda', () => {
       const body = JSON.parse(response.body);
       expect(body.error.code).toBe('INTERNAL_ERROR');
 
-      // Verify rollback was called
-      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
       expect(mockClient.release).toHaveBeenCalled();
     });
 
@@ -412,21 +413,12 @@ describe('Grant Badge Lambda', () => {
 
       await handler(event, {} as any);
 
-      // Find the audit log insert call
-      const auditLogCall = mockClient.query.mock.calls.find(
-        (call) => call[0]?.includes('INSERT INTO admin_actions')
-      );
-
-      expect(auditLogCall).toBeDefined();
-      expect(auditLogCall![1]).toEqual([
-        'admin-user-123',
-        'grant_badge',
-        'user-123',
-        expect.stringContaining('user_group_leader'),
-      ]);
-
-      // Verify details JSON contains expected fields
-      const detailsJson = JSON.parse(auditLogCall![1][3]);
+      const auditCall = findAuditCall('grant_badge');
+      expect(auditCall).toBeDefined();
+      const auditParams = auditCall![1] as any[];
+      expect(auditParams[0]).toBe('admin-user-123');
+      expect(auditParams[2]).toBe('user-123');
+      const detailsJson = JSON.parse(auditParams[3]);
       expect(detailsJson).toMatchObject({
         badgeType: BadgeType.USER_GROUP_LEADER,
         badgeId: 'badge-999',

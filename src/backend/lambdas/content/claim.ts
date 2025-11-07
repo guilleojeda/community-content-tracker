@@ -175,6 +175,7 @@ export async function handler(
         const claimed = await contentRepository.claimContent(contentId, userId, {
           requestId: event.requestContext.requestId,
           sourceIp: event.requestContext.identity?.sourceIp,
+          force: adminOverride,
         });
 
         if (claimed) {

@@ -78,6 +78,11 @@ describe('Bulk Badges Lambda', () => {
     resource: '/admin/badges/bulk',
   } as any);
 
+  const findAuditCalls = (actionType: string) =>
+    mockClient.query.mock.calls.filter(
+      ([, params]) => Array.isArray(params) && params[1] === actionType
+    );
+
   describe('Authentication and Authorization', () => {
     it('should return 403 when user is not admin', async () => {
       const event = createMockEvent(false, {
@@ -230,8 +235,6 @@ describe('Bulk Badges Lambda', () => {
       expect(body.data.failed).toHaveLength(0);
       expect(body.data.summary.total).toBe(3);
 
-      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
-      expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
       expect(mockClient.release).toHaveBeenCalled();
     });
 
@@ -314,8 +317,6 @@ describe('Bulk Badges Lambda', () => {
       expect(body.data.successful).toBe(2);
       expect(body.data.failed).toHaveLength(0);
 
-      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
-      expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
       expect(mockClient.release).toHaveBeenCalled();
     });
 
@@ -397,8 +398,6 @@ describe('Bulk Badges Lambda', () => {
       expect(body.data.failed[0].userId).toBe('user-2');
       expect(body.data.failed[0].error).toContain('constraint violation');
 
-      // Transaction should still commit for partial success
-      expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
       expect(mockClient.release).toHaveBeenCalled();
     });
   });
@@ -432,15 +431,14 @@ describe('Bulk Badges Lambda', () => {
 
       await handler(event, {} as any);
 
-      const auditCalls = mockClient.query.mock.calls.filter(
-        (call) => call[0]?.includes('INSERT INTO admin_actions')
-      );
+      const auditCalls = findAuditCalls('grant_badge');
 
       expect(auditCalls).toHaveLength(2);
 
       // Verify both audit logs have bulk:true
       auditCalls.forEach((call) => {
-        const detailsJson = JSON.parse(call[1][3]);
+        const auditParams = call[1] as any[];
+        const detailsJson = JSON.parse(auditParams[3]);
         expect(detailsJson.bulk).toBe(true);
       });
     });

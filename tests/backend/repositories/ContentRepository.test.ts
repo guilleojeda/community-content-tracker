@@ -582,6 +582,29 @@ describe('ContentRepository', () => {
       expect(failure?.error).toBe('Content not found or already claimed');
     });
 
+    it('allows admin override to reclaim content', async () => {
+      const originalOwner = await createTestUser(pool, { username: 'original-owner' });
+      const newOwner = await createTestUser(pool, { username: 'new-owner' });
+      const content = await createTestContent(pool, originalOwner.id, {
+        title: 'Reassignable Content',
+        isClaimed: true,
+      });
+
+      const overridden = await contentRepository.claimContent(content.id, newOwner.id, {
+        force: true,
+      });
+
+      expect(overridden).not.toBeNull();
+      expect(overridden?.userId).toBe(newOwner.id);
+      expect(overridden?.isClaimed).toBe(true);
+
+      const row = await pool.query('SELECT user_id, version FROM content WHERE id = $1', [
+        content.id,
+      ]);
+      expect(row.rows[0].user_id).toBe(newOwner.id);
+      expect(row.rows[0].version).toBeGreaterThanOrEqual((content.version ?? 1) + 1);
+    });
+
     it('should find content by date range and similar tags', async () => {
       const earlyContent = await createTestContent(pool, testUserId, {
         title: 'Early Article',

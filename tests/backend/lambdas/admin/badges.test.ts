@@ -532,6 +532,28 @@ describe('Badge Management Handler', () => {
   });
 
   describe('GET /admin/badges/history/:userId - Badge History', () => {
+    it('should reject non-admin users', async () => {
+      const event: Partial<APIGatewayProxyEvent> = {
+        httpMethod: 'GET',
+        path: '/admin/badges/history/user-123',
+        pathParameters: { userId: 'user-123' },
+        requestContext: {
+          authorizer: {
+            claims: {
+              sub: 'regular-user',
+              'cognito:groups': ['User'],
+            },
+          },
+        } as any,
+      };
+
+      const response = await handler(event as APIGatewayProxyEvent, mockContext);
+
+      expect(response.statusCode).toBe(403);
+      const body = JSON.parse(response.body);
+      expect(body.error.code).toBe('PERMISSION_DENIED');
+    });
+
     it('should return complete badge history including revoked', async () => {
       const event: Partial<APIGatewayProxyEvent> = {
         httpMethod: 'GET',
