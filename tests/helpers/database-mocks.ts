@@ -254,6 +254,22 @@ export function setupChannelMocks(mockQuery: jest.Mock, options?: { duplicateUrl
       return Promise.resolve(createMockQueryResult(activeChannels));
     }
 
+    if (sql.includes('SELECT') && sql.includes('FROM channels') && sql.includes('sync_frequency') && sql.includes('ORDER BY last_sync_at')) {
+      const syncFrequency = params[0];
+      const activeChannels = Array.from(channels.values()).filter(
+        (c: any) => c.enabled === true && c.sync_frequency === syncFrequency
+      );
+
+      activeChannels.sort((a: any, b: any) => {
+        const aTime = a.last_sync_at ? a.last_sync_at.getTime() : -Infinity;
+        const bTime = b.last_sync_at ? b.last_sync_at.getTime() : -Infinity;
+
+        return aTime - bTime;
+      });
+
+      return Promise.resolve(createMockQueryResult(activeChannels));
+    }
+
     if (sql.includes('SELECT') && sql.includes('FROM channels') && params.length === 1 && typeof params[0] === 'string') {
       // findByUserId
       const userId = params[0];

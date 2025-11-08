@@ -131,6 +131,9 @@ describe('List Channels Lambda', () => {
         metadata: {},
         createdAt: new Date(),
         updatedAt: new Date(),
+        lastSyncAt: new Date('2024-01-02T00:00:00Z'),
+        lastSyncStatus: 'success' as const,
+        lastSyncError: null,
       },
     ];
 
@@ -148,5 +151,35 @@ describe('List Channels Lambda', () => {
     expect(channel).toHaveProperty('enabled');
     expect(channel).toHaveProperty('syncFrequency');
     expect(channel).toHaveProperty('createdAt');
+    expect(channel).toHaveProperty('lastSyncAt');
+    expect(channel).toHaveProperty('lastSyncStatus', 'success');
+  });
+
+  it('should serialize last sync timestamps to ISO strings', async () => {
+    const lastSyncDate = new Date('2024-01-03T12:34:00Z');
+    mockChannelRepo.findByUserId.mockResolvedValue([
+      {
+        id: 'channel-2',
+        userId: testUserId,
+        channelType: ChannelType.YOUTUBE,
+        url: 'https://youtube.com/channel/123',
+        name: 'YT',
+        enabled: true,
+        syncFrequency: 'daily' as const,
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastSyncAt: lastSyncDate,
+        lastSyncStatus: 'error' as const,
+        lastSyncError: 'API quota',
+      },
+    ]);
+
+    const response = await handler(createEvent(), mockContext);
+
+    expect(response.statusCode).toBe(200);
+    const { channels } = JSON.parse(response.body);
+    expect(channels[0].lastSyncAt).toBe(lastSyncDate.toISOString());
+    expect(channels[0].lastSyncError).toBe('API quota');
   });
 });

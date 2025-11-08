@@ -362,6 +362,8 @@ describe('Blog RSS Scraper Lambda', () => {
 
       expect(messageInput.MessageAttributes).toHaveProperty('contentType');
       expect(messageInput.MessageAttributes?.contentType?.StringValue).toBe('blog');
+      expect(messageInput.MessageAttributes).toHaveProperty('channelId');
+      expect(messageInput.MessageAttributes?.channelId?.StringValue).toBe('channel-1');
     });
   });
 

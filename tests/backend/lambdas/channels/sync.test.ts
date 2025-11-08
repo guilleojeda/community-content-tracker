@@ -32,6 +32,7 @@ jest.mock('../../../../src/backend/services/database', () => ({
 
 const mockChannelRepository = ChannelRepository as jest.MockedClass<typeof ChannelRepository>;
 const mockLambdaClient = LambdaClient as jest.MockedClass<typeof LambdaClient>;
+const mockInvokeCommand = InvokeCommand as jest.MockedClass<typeof InvokeCommand>;
 
 describe('Channel Sync Lambda', () => {
   let mockContext: Context;
@@ -70,6 +71,27 @@ describe('Channel Sync Lambda', () => {
     resource: '',
   });
 
+  const getInvokeCommandInput = (callIndex = 0) => {
+    const commandArgs = mockInvokeCommand.mock.calls[callIndex];
+    if (!commandArgs) {
+      return undefined;
+    }
+    return commandArgs[0];
+  };
+
+  const parsePayload = (payload: any) => {
+    if (!payload) {
+      return undefined;
+    }
+    if (typeof payload === 'string') {
+      return JSON.parse(payload);
+    }
+    if (payload instanceof Uint8Array || ArrayBuffer.isView(payload)) {
+      return JSON.parse(Buffer.from(payload).toString('utf-8'));
+    }
+    return payload;
+  };
+
   describe('Success Cases', () => {
     it('should trigger blog scraper sync successfully', async () => {
       const userId = 'user-123';
@@ -88,14 +110,22 @@ describe('Channel Sync Lambda', () => {
       const event = createEvent(channelId, userId);
       const result = await handler(event, mockContext);
 
-      if (result.statusCode !== 200) {
-        console.log('Error response:', result.body);
-      }
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
-      expect(body.message).toContain('sync triggered');
-      expect(body.channelId).toBe(channelId);
+      expect(body).toEqual({
+        message: expect.stringContaining('sync triggered'),
+        syncJobId: expect.any(String),
+      });
       expect(mockSend).toHaveBeenCalledWith(expect.any(InvokeCommand));
+
+       const invokeInput = getInvokeCommandInput();
+       expect(invokeInput).toBeDefined();
+       expect(invokeInput?.FunctionName).toBe('blog-scraper');
+       expect(parsePayload(invokeInput?.Payload)).toEqual({
+        channelId,
+        manual: true,
+        syncJobId: body.syncJobId,
+      });
     });
 
     it('should trigger YouTube scraper sync successfully', async () => {
@@ -117,7 +147,19 @@ describe('Channel Sync Lambda', () => {
 
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
-      expect(body.message).toContain('sync triggered');
+      expect(body).toEqual({
+        message: expect.stringContaining('sync triggered'),
+        syncJobId: expect.any(String),
+      });
+
+      const invokeInput = getInvokeCommandInput();
+      expect(invokeInput).toBeDefined();
+      expect(invokeInput?.FunctionName).toBe('youtube-scraper');
+      expect(parsePayload(invokeInput?.Payload)).toEqual({
+        channelId,
+        manual: true,
+        syncJobId: body.syncJobId,
+      });
     });
 
     it('should trigger GitHub scraper sync successfully', async () => {
@@ -138,6 +180,20 @@ describe('Channel Sync Lambda', () => {
       const result = await handler(event, mockContext);
 
       expect(result.statusCode).toBe(200);
+      const body = JSON.parse(result.body);
+      expect(body).toEqual({
+        message: expect.stringContaining('sync triggered'),
+        syncJobId: expect.any(String),
+      });
+
+      const invokeInput = getInvokeCommandInput();
+      expect(invokeInput).toBeDefined();
+      expect(invokeInput?.FunctionName).toBe('github-scraper');
+      expect(parsePayload(invokeInput?.Payload)).toEqual({
+        channelId,
+        manual: true,
+        syncJobId: body.syncJobId,
+      });
     });
   });
 

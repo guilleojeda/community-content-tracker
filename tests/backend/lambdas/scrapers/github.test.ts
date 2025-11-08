@@ -1116,4 +1116,78 @@ describe('GitHub Scraper Lambda', () => {
       expect(githubCall[1].headers.Authorization).toBeUndefined();
     });
   });
+
+  describe('Metadata Filtering', () => {
+    it('should filter organization repositories by language metadata', async () => {
+      const channel = {
+        id: 'channel-language',
+        userId: 'user-456',
+        url: 'https://github.com/orgs/testorg',
+        channelType: ChannelType.GITHUB,
+        enabled: true,
+        lastSyncAt: undefined,
+        syncFrequency: 'daily' as const,
+        metadata: { type: 'organization', language: 'TypeScript' },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFindActiveByType.mockResolvedValue([channel]);
+
+      const tsRepo = { ...mockGitHubRepoResponse, name: 'ts-repo', full_name: 'testorg/ts-repo', language: 'TypeScript' };
+      const pyRepo = { ...mockGitHubRepoResponse, name: 'py-repo', full_name: 'testorg/py-repo', language: 'Python' };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => '5000' },
+        json: async () => [tsRepo, pyRepo],
+      });
+
+      mockSend.mockResolvedValue({});
+      mockUpdateSyncStatus.mockResolvedValue(channel);
+
+      const event = createScheduledEvent();
+      await handler(event, mockContext);
+
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(mockSend.mock.calls[0][0].input.MessageBody);
+      expect(body.title).toContain('ts-repo');
+    });
+
+    it('should filter repositories by topics metadata and skip non-matching repos', async () => {
+      const channel = {
+        id: 'channel-topics',
+        userId: 'user-456',
+        url: 'https://github.com/orgs/testorg',
+        channelType: ChannelType.GITHUB,
+        enabled: true,
+        lastSyncAt: undefined,
+        syncFrequency: 'daily' as const,
+        metadata: { type: 'organization', topics: ['aws', 'serverless'] },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFindActiveByType.mockResolvedValue([channel]);
+
+      const awsRepo = { ...mockGitHubRepoResponse, name: 'aws-tool', full_name: 'testorg/aws-tool', topics: ['AWS', 'Lambda'] };
+      const otherRepo = { ...mockGitHubRepoResponse, name: 'random-tool', full_name: 'testorg/random-tool', topics: ['typescript'] };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => '5000' },
+        json: async () => [awsRepo, otherRepo],
+      });
+
+      mockSend.mockResolvedValue({});
+      mockUpdateSyncStatus.mockResolvedValue(channel);
+
+      const event = createScheduledEvent();
+      await handler(event, mockContext);
+
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      const messageBody = JSON.parse(mockSend.mock.calls[0][0].input.MessageBody);
+      expect(messageBody.title).toContain('aws-tool');
+    });
+  });
 });

@@ -90,7 +90,7 @@ describe('Update Channel Lambda', () => {
     expect(response.statusCode).toBe(200);
 
     const body = JSON.parse(response.body);
-    expect(body.channel.name).toBe('New Name');
+    expect(body.name).toBe('New Name');
   });
 
   it('should update channel enabled status', async () => {
@@ -121,7 +121,7 @@ describe('Update Channel Lambda', () => {
     expect(response.statusCode).toBe(200);
 
     const body = JSON.parse(response.body);
-    expect(body.channel.enabled).toBe(false);
+    expect(body.enabled).toBe(false);
   });
 
   it('should update sync frequency', async () => {
@@ -152,7 +152,7 @@ describe('Update Channel Lambda', () => {
     expect(response.statusCode).toBe(200);
 
     const body = JSON.parse(response.body);
-    expect(body.channel.syncFrequency).toBe('weekly');
+    expect(body.syncFrequency).toBe('weekly');
   });
 
   it('should update metadata', async () => {
@@ -185,7 +185,7 @@ describe('Update Channel Lambda', () => {
     expect(response.statusCode).toBe(200);
 
     const body = JSON.parse(response.body);
-    expect(body.channel.metadata).toEqual({ platform: 'medium', customField: 'value' });
+    expect(body.metadata).toEqual({ platform: 'medium', customField: 'value' });
   });
 
   it('should return 404 for non-existent channel', async () => {

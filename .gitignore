@@ -12,6 +12,8 @@
 
 # Dependencies
 node_modules/
+.embedded-postgres/
+.embedded-postgres-dev/
 .pnp
 .pnp.js
 .yarn/install-state.gz

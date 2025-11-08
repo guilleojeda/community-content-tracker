@@ -20,12 +20,7 @@ jest.mock('pg', () => ({
 jest.mock('../../../../src/backend/repositories/ChannelRepository');
 
 // Mock fetch for URL accessibility check
-global.fetch = jest.fn(() =>
-  Promise.resolve({
-    status: 200,
-    ok: true,
-  } as Response)
-) as jest.Mock;
+global.fetch = jest.fn() as jest.Mock;
 
 describe('Create Channel Lambda', () => {
   let mockChannelRepo: jest.Mocked<ChannelRepository>;
@@ -108,7 +103,7 @@ describe('Create Channel Lambda', () => {
     expect(body.enabled).toBe(true);
   });
 
-  it('should auto-detect channel type from URL', async () => {
+  it('should auto-detect YouTube channel type when not provided', async () => {
     const mockChannel = {
       id: 'channel-123',
       userId: testUserId,
@@ -125,7 +120,6 @@ describe('Create Channel Lambda', () => {
     mockChannelRepo.create.mockResolvedValue(mockChannel);
 
     const event = createEvent({
-      channelType: ChannelType.YOUTUBE,
       url: 'https://youtube.com/channel/UC123',
     });
 
@@ -135,6 +129,73 @@ describe('Create Channel Lambda', () => {
 
     const body = JSON.parse(response.body);
     expect(body.channelType).toBe(ChannelType.YOUTUBE);
+  });
+
+  it('should auto-detect blog channels when URL indicates feed', async () => {
+    const mockChannel = {
+      id: 'channel-blog',
+      userId: testUserId,
+      channelType: ChannelType.BLOG,
+      url: 'https://blog.example.com/feed',
+      enabled: true,
+      syncFrequency: 'daily' as const,
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    mockChannelRepo.findByUserIdAndUrl.mockResolvedValue(null);
+    mockChannelRepo.create.mockResolvedValue(mockChannel);
+
+    const event = createEvent({
+      url: 'https://blog.example.com/feed',
+    });
+
+    const response = await handler(event, mockContext);
+
+    expect(response.statusCode).toBe(201);
+    const body = JSON.parse(response.body);
+    expect(body.channelType).toBe(ChannelType.BLOG);
+  });
+
+  it('should auto-detect GitHub channels from repository URLs', async () => {
+    const mockChannel = {
+      id: 'channel-github',
+      userId: testUserId,
+      channelType: ChannelType.GITHUB,
+      url: 'https://github.com/aws/aws-sdk-js',
+      enabled: true,
+      syncFrequency: 'daily' as const,
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    mockChannelRepo.findByUserIdAndUrl.mockResolvedValue(null);
+    mockChannelRepo.create.mockResolvedValue(mockChannel);
+
+    const event = createEvent({
+      url: 'https://github.com/aws/aws-sdk-js',
+    });
+
+    const response = await handler(event, mockContext);
+
+    expect(response.statusCode).toBe(201);
+    const body = JSON.parse(response.body);
+    expect(body.channelType).toBe(ChannelType.GITHUB);
+  });
+
+  it('should require explicit channel type when detection fails', async () => {
+    mockChannelRepo.findByUserIdAndUrl.mockResolvedValue(null);
+
+    const response = await handler(createEvent({
+      url: 'https://content.example.com/articles',
+    }), mockContext);
+
+    expect(response.statusCode).toBe(400);
+    const body = JSON.parse(response.body);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.message).toContain('Could not detect channel type');
   });
 
   it('should return 400 for invalid channel type', async () => {
@@ -219,5 +280,35 @@ describe('Create Channel Lambda', () => {
 
     const body = JSON.parse(response.body);
     expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('should reject inaccessible URLs', async () => {
+    (fetch as jest.Mock).mockResolvedValueOnce({
+      status: 500,
+      ok: false,
+    } as Response);
+
+    const response = await handler(createEvent({
+      channelType: ChannelType.BLOG,
+      url: 'https://example.com/feed',
+    }), mockContext);
+
+    expect(response.statusCode).toBe(400);
+    const body = JSON.parse(response.body);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.details.fields.url).toContain('URL returned status 500');
+  });
+
+  it('should handle URL accessibility timeouts', async () => {
+    (fetch as jest.Mock).mockRejectedValueOnce({ name: 'AbortError' });
+
+    const response = await handler(createEvent({
+      channelType: ChannelType.BLOG,
+      url: 'https://slow.example.com/feed',
+    }), mockContext);
+
+    expect(response.statusCode).toBe(400);
+    const body = JSON.parse(response.body);
+    expect(body.error.details.fields.url).toBe('URL check timed out');
   });
 });

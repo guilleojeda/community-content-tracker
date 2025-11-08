@@ -47,6 +47,8 @@ function detectChannelType(url: string): ChannelType | null {
   try {
     const urlObj = new URL(url);
     const hostname = urlObj.hostname.toLowerCase();
+    const pathname = urlObj.pathname.toLowerCase();
+    const search = urlObj.search.toLowerCase();
 
     // YouTube detection
     if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
@@ -58,8 +60,13 @@ function detectChannelType(url: string): ChannelType | null {
       return ChannelType.GITHUB;
     }
 
-    // For other domains, assume blog/RSS (can be refined with actual RSS feed check)
-    return ChannelType.BLOG;
+    // Basic RSS/blog detection (feed, rss, atom, xml hints)
+    const blogIndicators = ['feed', 'rss', 'atom', '.xml'];
+    if (blogIndicators.some(indicator => pathname.includes(indicator) || search.includes(indicator))) {
+      return ChannelType.BLOG;
+    }
+
+    return null;
   } catch {
     return null;
   }

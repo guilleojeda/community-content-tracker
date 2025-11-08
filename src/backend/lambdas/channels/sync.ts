@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { Pool } from 'pg';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
+import { randomUUID } from 'crypto';
 import { ChannelRepository } from '../../repositories/ChannelRepository';
 import { ChannelType } from '../../../shared/types';
 import { errorResponse, successResponse } from '../../../shared/api-errors';
@@ -68,6 +69,9 @@ export const handler = async (
       );
     }
 
+    // Generate sync job id so clients can track manual runs
+    const syncJobId = randomUUID();
+
     // Invoke the scraper Lambda asynchronously
     const invokeCommand = new InvokeCommand({
       FunctionName: scraperFunction,
@@ -75,6 +79,7 @@ export const handler = async (
       Payload: JSON.stringify({
         channelId: channel.id,
         manual: true, // Flag to indicate manual trigger
+        syncJobId,
       }),
     });
 
@@ -94,9 +99,7 @@ export const handler = async (
     // Return standardized success response
     return successResponse(200, {
       message: 'Channel sync triggered successfully',
-      channelId: channel.id,
-      channelType: channel.channelType,
-      syncStatus: 'in_progress',
+      syncJobId,
     });
   } catch (error: any) {
     console.error(formatErrorForLogging(error, { context: 'channel-sync-handler' }));

@@ -117,6 +117,74 @@ interface GitHubRepo {
   readme?: string;
 }
 
+function normalizeFilterValues(value: unknown): string[] {
+  if (!value && value !== 0) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .filter(item => typeof item === 'string')
+      .map(item => item.toLowerCase().trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map(part => part.toLowerCase().trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function extractFilterValues(
+  metadata: Record<string, any> | undefined,
+  keys: string[]
+): string[] {
+  if (!metadata) {
+    return [];
+  }
+
+  const values: string[] = [];
+  for (const key of keys) {
+    values.push(...normalizeFilterValues(metadata[key]));
+  }
+  return values;
+}
+
+function filterReposByMetadata(repos: GitHubRepo[], metadata?: Record<string, any>): GitHubRepo[] {
+  if (!metadata) {
+    return repos;
+  }
+
+  const languageFilters = extractFilterValues(metadata, ['language', 'languages', 'languageFilter', 'languageFilters']);
+  const topicFilters = extractFilterValues(metadata, ['topic', 'topics', 'topicFilter', 'topicFilters']);
+
+  if (languageFilters.length === 0 && topicFilters.length === 0) {
+    return repos;
+  }
+
+  return repos.filter(repo => {
+    if (languageFilters.length > 0) {
+      const repoLanguage = repo.language?.toLowerCase();
+      if (!repoLanguage || !languageFilters.includes(repoLanguage)) {
+        return false;
+      }
+    }
+
+    if (topicFilters.length > 0) {
+      const repoTopics = (repo.topics || []).map(topic => topic.toLowerCase());
+      if (!repoTopics.some(topic => topicFilters.includes(topic))) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
 function extractOwnerAndRepo(url: string): { owner: string; repo: string } | null {
   // Support various GitHub URL formats
   const pattern = /github\.com\/([^\/]+)\/([^\/\?#]+)/;
@@ -377,10 +445,11 @@ export const handler = async (
           }
         }
 
-        console.log(`Found ${repos.length} repositories to process for channel ${channel.id}`);
+        const filteredRepos = filterReposByMetadata(repos, channel.metadata);
+        console.log(`Found ${repos.length} repositories to process for channel ${channel.id} (after filters: ${filteredRepos.length})`);
 
         // Send each repo to the processing queue
-        for (const repoData of repos) {
+        for (const repoData of filteredRepos) {
           try {
             await sendToQueue(channel.id, channel.userId, repoData);
             totalProcessed++;

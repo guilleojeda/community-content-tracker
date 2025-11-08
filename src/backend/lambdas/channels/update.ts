@@ -58,8 +58,11 @@ export const handler = async (
 
     // Update channel
     const updatedChannel = await channelRepository.update(channelId, requestData);
+    if (!updatedChannel) {
+      return errorResponse('INTERNAL_ERROR', 'Failed to update channel', 500);
+    }
 
-    return successResponse(200, { channel: updatedChannel });
+    return successResponse(200, updatedChannel);
   } catch (error: any) {
     console.error('Error updating channel:', error);
 

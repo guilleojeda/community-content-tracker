@@ -262,4 +262,72 @@ describe('ChannelRepository', () => {
       expect(found).toBeNull();
     });
   });
+
+  describe('findAllActiveForSync', () => {
+    const otherUserId = 'user-999';
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('should return enabled channels with matching frequency ordered by last sync time (nulls first)', async () => {
+      const repo = repository;
+
+      const neverSynced = await repo.create({
+        userId: testUserId,
+        channelType: ChannelType.BLOG,
+        url: 'https://daily-never.example.com/feed',
+        syncFrequency: 'daily',
+      });
+
+      const oldestSynced = await repo.create({
+        userId: testUserId,
+        channelType: ChannelType.BLOG,
+        url: 'https://daily-old.example.com/feed',
+        syncFrequency: 'daily',
+      });
+
+      const newestSynced = await repo.create({
+        userId: otherUserId,
+        channelType: ChannelType.GITHUB,
+        url: 'https://daily-new.example.com',
+        syncFrequency: 'daily',
+      });
+
+      jest.setSystemTime(new Date('2024-01-01T00:00:00Z'));
+      await repo.updateSyncStatus(oldestSynced.id, 'success');
+
+      jest.setSystemTime(new Date('2024-01-03T00:00:00Z'));
+      await repo.updateSyncStatus(newestSynced.id, 'success');
+
+      await repo.create({
+        userId: testUserId,
+        channelType: ChannelType.YOUTUBE,
+        url: 'https://weekly.example.com/channel',
+        syncFrequency: 'weekly',
+      });
+
+      await repo.create({
+        userId: testUserId,
+        channelType: ChannelType.BLOG,
+        url: 'https://disabled-daily.example.com/feed',
+        syncFrequency: 'daily',
+        enabled: false,
+      });
+
+      const results = await repo.findAllActiveForSync('daily');
+
+      expect(results.map(channel => channel.id)).toEqual([
+        neverSynced.id,
+        oldestSynced.id,
+        newestSynced.id,
+      ]);
+      expect(results.every(channel => channel.syncFrequency === 'daily')).toBe(true);
+      expect(results.every(channel => channel.enabled)).toBe(true);
+    });
+  });
 });
