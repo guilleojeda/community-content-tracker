@@ -20,6 +20,8 @@ jest.mock('../../../../src/backend/services/rateLimiter', () => ({
   consumeRateLimit: jest.fn(),
 }));
 
+const originalEnv = process.env;
+
 describe('GET /search Lambda handler', () => {
   let mockSearchService: any;
   let mockPool: jest.Mocked<Pool>;
@@ -28,6 +30,7 @@ describe('GET /search Lambda handler', () => {
   const mockConsumeRateLimit = consumeRateLimit as jest.MockedFunction<typeof consumeRateLimit>;
 
   beforeEach(() => {
+    process.env = { ...originalEnv };
     jest.clearAllMocks();
 
     // Create mock pool
@@ -52,6 +55,10 @@ describe('GET /search Lambda handler', () => {
     mockGetSearchService = getSearchService as jest.MockedFunction<any>;
     mockGetSearchService.mockReturnValue(mockSearchService);
     mockConsumeRateLimit.mockResolvedValue({ allowed: true, remaining: 99, reset: Date.now() + 60000 });
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   const createEvent = (queryParams: Record<string, string> = {}, authorizer?: any): APIGatewayProxyEvent => ({
@@ -81,6 +88,52 @@ describe('GET /search Lambda handler', () => {
     },
     body: null,
     isBase64Encoded: false
+  });
+
+  describe('rate limiting configuration', () => {
+    beforeEach(() => {
+      process.env.RATE_LIMIT_ANONYMOUS = '50';
+      process.env.RATE_LIMIT_AUTHENTICATED = '500';
+      process.env.RATE_LIMIT_WINDOW_MINUTES = '2';
+    });
+
+    it('uses anonymous rate limit configuration for unauthenticated users', async () => {
+      const event = createEvent({ q: 'AWS' });
+      mockSearchService.search = jest.fn().mockResolvedValue({
+        items: [],
+        total: 0,
+        limit: 10,
+        offset: 0,
+      });
+
+      await handler(event);
+
+      expect(mockConsumeRateLimit).toHaveBeenCalledWith(
+        expect.stringMatching(/^search:ip:/),
+        50,
+        120_000,
+        'anon'
+      );
+    });
+
+    it('uses authenticated rate limit configuration when viewer ID is present', async () => {
+      const event = createEvent({ q: 'AWS' }, { userId: 'user-123' });
+      mockSearchService.search = jest.fn().mockResolvedValue({
+        items: [],
+        total: 0,
+        limit: 10,
+        offset: 0,
+      });
+
+      await handler(event);
+
+      expect(mockConsumeRateLimit).toHaveBeenCalledWith(
+        'search:user:user-123',
+        500,
+        120_000,
+        'auth'
+      );
+    });
   });
 
   describe('when performing a search query', () => {

@@ -23,6 +23,17 @@ const setSearchParams = (entries: Record<string, string | null>) => {
   });
 };
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return {
+    promise,
+    resolve: (value: T) => resolve(value),
+  };
+};
+
 describe('Public Search Page', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -277,6 +288,62 @@ describe('Public Search Page', () => {
     await waitFor(() => {
       expect(mockApiClient.search).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 110 }));
       expect(screen.getAllByText('...').length).toBe(1);
+    });
+  });
+
+  it('shows loading spinner while searches are pending', async () => {
+    const deferred = createDeferred<any>();
+    mockApiClient.search.mockReturnValue(deferred.promise);
+
+    render(<SearchPage />);
+
+    fireEvent.change(screen.getByPlaceholderText(/search aws content/i), { target: { value: 'lambda' } });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    const searchingLabels = screen.getAllByText('Searching...');
+    expect(searchingLabels.length).toBeGreaterThanOrEqual(2);
+    expect(searchingLabels.some((node) => node.tagName === 'P')).toBe(true);
+
+    deferred.resolve({ results: [], total: 0, offset: 0, limit: 10 });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Searching...')).not.toBeInTheDocument();
+    });
+  });
+
+  it('filters out non-public results before rendering', async () => {
+    mockApiClient.search.mockResolvedValue({
+      results: [
+        {
+          id: '1',
+          title: 'Public Blog',
+          contentType: 'blog',
+          visibility: 'public',
+          tags: [],
+          urls: [{ url: 'https://example.com/public' }],
+        },
+        {
+          id: '2',
+          title: 'Internal Paper',
+          contentType: 'whitepaper',
+          visibility: 'aws_only',
+          tags: [],
+          urls: [{ url: 'https://example.com/internal' }],
+        },
+      ],
+      total: 2,
+      offset: 0,
+      limit: 10,
+    });
+
+    render(<SearchPage />);
+
+    fireEvent.change(screen.getByPlaceholderText(/search aws content/i), { target: { value: 'lambda' } });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Public Blog')).toBeInTheDocument();
+      expect(screen.queryByText('Internal Paper')).toBeNull();
     });
   });
 });

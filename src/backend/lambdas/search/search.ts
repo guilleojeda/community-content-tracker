@@ -6,6 +6,31 @@ import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwat
 import { consumeRateLimit } from '../../services/rateLimiter';
 import { buildCorsHeaders } from '../../services/cors';
 
+interface RateLimitConfig {
+  anonymousLimit: number;
+  authenticatedLimit: number;
+  windowMs: number;
+}
+
+const parsePositiveInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const getRateLimitConfig = (): RateLimitConfig => {
+  const anonymousLimit = parsePositiveInt(process.env.RATE_LIMIT_ANONYMOUS, 100);
+  const authenticatedLimit = parsePositiveInt(process.env.RATE_LIMIT_AUTHENTICATED, 1000);
+  const windowMinutes = parsePositiveInt(process.env.RATE_LIMIT_WINDOW_MINUTES, 1);
+  return {
+    anonymousLimit,
+    authenticatedLimit,
+    windowMs: Math.max(windowMinutes, 1) * 60_000,
+  };
+};
+
 /**
  * GET /search - Search for content
  * Supports semantic and keyword search with filtering
@@ -26,10 +51,23 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     ...buildCorsHeaders({ origin: originHeader, methods: 'GET,OPTIONS' }),
     'Content-Type': 'application/json',
   };
+  const viewerId = event.requestContext?.authorizer?.userId;
 
   try {
     const sourceIp = event.requestContext?.identity?.sourceIp || 'anonymous';
-    const rateLimit = await consumeRateLimit(`search:${sourceIp}`, 100, 60_000, 'anon');
+    const rateLimitConfig = getRateLimitConfig();
+    const rateLimitKey = viewerId
+      ? `search:user:${viewerId}`
+      : `search:ip:${sourceIp}`;
+    const activeLimit = viewerId ? rateLimitConfig.authenticatedLimit : rateLimitConfig.anonymousLimit;
+    const rateLimitPrefix = viewerId ? 'auth' : 'anon';
+
+    const rateLimit = await consumeRateLimit(
+      rateLimitKey,
+      activeLimit,
+      rateLimitConfig.windowMs,
+      rateLimitPrefix
+    );
 
     if (!rateLimit.allowed) {
       return {
@@ -48,6 +86,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       ...headers,
       'X-RateLimit-Remaining': rateLimit.remaining.toString(),
       'X-RateLimit-Reset': rateLimit.reset.toString(),
+      'X-RateLimit-Limit': activeLimit.toString(),
     };
     // Parse and validate query parameters
     const query = event.queryStringParameters?.q;
@@ -242,7 +281,6 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
 
     // Get viewer information from authorizer
-    const viewerId = event.requestContext.authorizer?.userId;
     const viewerBadges = event.requestContext.authorizer?.badges
       ? JSON.parse(event.requestContext.authorizer.badges)
       : undefined;

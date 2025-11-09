@@ -31,6 +31,9 @@ module.exports = {
     'lambdas/auth/register.ts',
     'lambdas/auth/refresh.ts',
     'lambdas/auth/verify-email.ts',
+    'lambdas/search/**/*.ts',
+    'services/EmbeddingService.ts',
+    'services/SearchService.ts',
     'scripts/bootstrap-admin.ts'
   ],
   coverageDirectory: 'coverage',

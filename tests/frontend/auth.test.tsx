@@ -188,6 +188,13 @@ describe('LoginPage', () => {
       expect(screen.getByText(/login failed/i)).toBeInTheDocument();
     });
   });
+
+  it('renders social login placeholders', () => {
+    render(<LoginPage />);
+
+    expect(screen.getByRole('button', { name: /continue with google/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue with github/i })).toBeInTheDocument();
+  });
 });
 
 const mockUseSearchParams = useSearchParams as jest.Mock;

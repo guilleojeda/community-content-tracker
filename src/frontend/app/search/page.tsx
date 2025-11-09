@@ -85,7 +85,16 @@ function SearchContent() {
         items: (data as any).items ?? (data as any).results ?? [],
       };
 
-      setResults(normalizedData);
+      const publicOnly = (normalizedData.items ?? []).filter(
+        (item: ContentItem) => item.visibility === 'public'
+      );
+
+      const sanitizedData: SearchResponse = {
+        ...normalizedData,
+        items: publicOnly,
+      };
+
+      setResults(sanitizedData);
 
       // Update URL with current search parameters
       const urlParams = new URLSearchParams({ q: query });

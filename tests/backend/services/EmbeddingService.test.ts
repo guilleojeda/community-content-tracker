@@ -434,6 +434,37 @@ describe('EmbeddingService', () => {
       // Assert
       expect(result).toEqual(mockEmbedding);
     });
+
+    it('includes estimated cost metric with required dimensions', async () => {
+      const mockEmbedding = new Array(1536).fill(0.5);
+      bedrockMock.on(InvokeModelCommand).resolves({
+        body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
+          embedding: mockEmbedding
+        }))) as any
+      });
+
+      await service.generateEmbedding('cost metric validation');
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const calls = cloudwatchMock.commandCalls(PutMetricDataCommand);
+      expect(calls.length).toBeGreaterThan(0);
+      const metricData = calls[0].args[0].input.MetricData;
+      const metricNames = (metricData ?? []).map(metric => metric.MetricName);
+
+      expect(metricNames).toEqual(expect.arrayContaining([
+        'EmbeddingAPICallCount',
+        'EmbeddingAPILatency',
+        'EstimatedCost',
+        'CacheHitRate'
+      ]));
+
+      const estimatedCostMetric = metricData?.find(metric => metric.MetricName === 'EstimatedCost');
+      expect(estimatedCostMetric).toBeDefined();
+      expect(estimatedCostMetric?.Dimensions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ Name: 'ModelId', Value: 'amazon.titan-embed-text-v1' }),
+        expect.objectContaining({ Name: 'Service', Value: 'Bedrock' })
+      ]));
+    });
   });
 
   describe('embedding update strategy', () => {

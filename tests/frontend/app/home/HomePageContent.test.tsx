@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import HomePageContent from '@/app/HomePageContent';
 
 const mockApiClient = {
@@ -15,13 +15,16 @@ jest.mock('next/dynamic', () => () => {
   return mod.default || mod;
 });
 
+const mockPush = jest.fn();
+
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 describe('HomePageContent', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPush.mockClear();
   });
 
   it('loads platform stats and renders summary cards', async () => {
@@ -62,5 +65,27 @@ describe('HomePageContent', () => {
       expect(mockApiClient.getStats).toHaveBeenCalled();
       expect(screen.getByText('Platform Features')).toBeInTheDocument();
     });
+  });
+
+  it('submits hero search form and navigates to search page', async () => {
+    mockApiClient.getStats.mockResolvedValueOnce(null);
+    render(<HomePageContent />);
+
+    const input = screen.getByPlaceholderText(/search for aws content/i);
+    const button = screen.getByRole('button', { name: /search/i });
+
+    fireEvent.change(input, { target: { value: 'lambda' } });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/search?q=lambda');
+    });
+  });
+
+  it('shows call-to-action to register', () => {
+    mockApiClient.getStats.mockResolvedValueOnce(null);
+    render(<HomePageContent />);
+
+    expect(screen.getByRole('link', { name: /create free account/i })).toBeInTheDocument();
   });
 });
