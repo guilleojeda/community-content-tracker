@@ -55,6 +55,7 @@ describe('AnalyticsDashboardPage', () => {
       limit: 10,
       offset: 0,
     });
+    delete (window as any).matchMedia;
   });
 
   async function renderDashboard() {
@@ -540,6 +541,46 @@ describe('AnalyticsDashboardPage', () => {
 
       // Page should still render successfully
       expect(screen.getByText('Content Views Over Time')).toBeInTheDocument();
+    });
+  });
+
+  describe('Responsive Layout', () => {
+    const mockMatchMedia = (matches: boolean) => {
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        value: jest.fn().mockImplementation(() => ({
+          matches,
+          media: '(min-width: 1024px)',
+          onchange: null,
+          addListener: jest.fn(),
+          removeListener: jest.fn(),
+          addEventListener: jest.fn(),
+          removeEventListener: jest.fn(),
+          dispatchEvent: jest.fn(),
+        })),
+      });
+    };
+
+    it('renders single-column layout on mobile viewports', async () => {
+      mockMatchMedia(false);
+      await renderDashboard();
+
+      const overviewGrid = await screen.findByTestId('analytics-overview-grid');
+      expect(overviewGrid).toHaveAttribute('data-layout', 'mobile');
+      expect(overviewGrid.className).toContain('grid-cols-1');
+    });
+
+    it('renders two-column layout on desktop viewports', async () => {
+      mockMatchMedia(true);
+      await renderDashboard();
+
+      const overviewGrid = await screen.findByTestId('analytics-overview-grid');
+      const breakdownGrid = await screen.findByTestId('analytics-breakdown-grid');
+
+      expect(overviewGrid).toHaveAttribute('data-layout', 'desktop');
+      expect(overviewGrid.className).toContain('grid-cols-2');
+      expect(breakdownGrid).toHaveAttribute('data-layout', 'desktop');
+      expect(breakdownGrid.className).toContain('grid-cols-2');
     });
   });
 });

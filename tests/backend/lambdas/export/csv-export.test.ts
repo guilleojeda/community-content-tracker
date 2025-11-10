@@ -219,6 +219,16 @@ describe('CSV Export Lambda', () => {
     expect(csvBody).toContain('"Event with ""Quotes"" and, Commas"');
   });
 
+  it('should filter content by publish date range when provided', async () => {
+    const event = createMockEvent('community_builder');
+
+    await handler(event, {} as any);
+
+    const selectCall = mockPool.query.mock.calls[0];
+    expect(selectCall[0]).toContain('publish_date BETWEEN');
+    expect(selectCall[1]).toEqual(['user-123', '2024-01-01', '2024-12-31']);
+  });
+
   it('should return 400 for invalid program type', async () => {
     const event = createMockEvent('invalid_program');
 

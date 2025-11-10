@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { EmptyState } from './EmptyState';
 
 interface TimeSeriesPoint {
@@ -25,6 +25,8 @@ interface TopContentEntry {
   views: number;
 }
 
+type ResponsiveLayout = 'desktop' | 'mobile';
+
 interface AnalyticsVisualizationsProps {
   timeSeries: TimeSeriesPoint[];
   contentDistribution: DistributionPoint[];
@@ -34,6 +36,47 @@ interface AnalyticsVisualizationsProps {
 }
 
 const CHART_COLORS = ['#2563eb', '#16a34a', '#f97316', '#a855f7', '#f43f5e', '#14b8a6'];
+
+function useResponsiveLayout(): ResponsiveLayout {
+  const getInitialLayout = () => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return 'desktop' as ResponsiveLayout;
+    }
+    return window.matchMedia('(min-width: 1024px)').matches ? 'desktop' : 'mobile';
+  };
+
+  const [layout, setLayout] = useState<ResponsiveLayout>(getInitialLayout);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const handler = (event: MediaQueryListEvent) => {
+      setLayout(event.matches ? 'desktop' : 'mobile');
+    };
+
+    // Sync with current viewport
+    setLayout(mediaQuery.matches ? 'desktop' : 'mobile');
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handler);
+    } else {
+      mediaQuery.addListener(handler);
+    }
+
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener('change', handler);
+      } else {
+        mediaQuery.removeListener(handler);
+      }
+    };
+  }, []);
+
+  return layout;
+}
 
 function Sparkline({ data }: { data: TimeSeriesPoint[] }): JSX.Element {
   if (data.length === 0) {
@@ -155,10 +198,16 @@ export function AnalyticsVisualizations({
   topContent,
   groupBy,
 }: AnalyticsVisualizationsProps): JSX.Element {
+  const layout = useResponsiveLayout();
+  const gridColumnsClass = layout === 'desktop' ? 'grid-cols-2' : 'grid-cols-1';
 
   return (
     <>
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section
+        className={`grid gap-6 ${gridColumnsClass}`}
+        data-testid="analytics-overview-grid"
+        data-layout={layout}
+      >
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900">Content Views Over Time</h2>
           <p className="text-sm text-gray-500">Engagement trend grouped by {groupBy}.</p>
@@ -175,7 +224,11 @@ export function AnalyticsVisualizations({
         </div>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section
+        className={`grid gap-6 ${gridColumnsClass}`}
+        data-testid="analytics-breakdown-grid"
+        data-layout={layout}
+      >
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900">Topic Distribution</h2>
           <p className="text-sm text-gray-500">Top tags across your published content.</p>

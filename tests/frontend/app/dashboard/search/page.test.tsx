@@ -26,6 +26,10 @@ jest.mock('@/api/client', () => ({
   },
 }));
 
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadSharedApiClient: jest.fn(),
+}));
+
 jest.mock('@/utils/download', () => ({
   downloadBlob: jest.fn(),
 }));
@@ -51,6 +55,10 @@ const setSearchParams = (entries: Record<string, string | null>) => {
 };
 
 const downloadBlob = jest.requireMock('@/utils/download').downloadBlob as jest.Mock;
+const { loadSharedApiClient } = jest.requireMock('@/lib/api/lazyClient') as {
+  loadSharedApiClient: jest.Mock;
+};
+const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
 
 describe('Authenticated Search Interface', () => {
   const searchItems = [
@@ -101,6 +109,7 @@ describe('Authenticated Search Interface', () => {
     setSearchParams({});
     localStorageMock.clear();
     downloadBlob.mockReset();
+    loadSharedApiClient.mockResolvedValue(apiClient);
 
     mockedApiClient.getSavedSearches.mockResolvedValue({ searches: [], count: 0 });
     mockedApiClient.saveSearch.mockImplementation(async ({ query, filters }) => ({
@@ -345,6 +354,37 @@ describe('Authenticated Search Interface', () => {
         })
       );
       expect(downloadBlob).toHaveBeenCalledWith(blob, 'with-results.csv');
+    });
+  });
+
+  describe('Content interaction analytics', () => {
+    it('tracks analytics when a result link is clicked', async () => {
+      const user = userEvent.setup();
+      mockedApiClient.search.mockResolvedValueOnce(mockSearchResults);
+
+      render(<SearchPage />);
+
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'aws');
+
+      const searchButton = screen.getAllByRole('button', { name: /^search$/i })[0];
+      await user.click(searchButton);
+
+      const resultLink = await screen.findByRole('link', { name: 'AWS Lambda Best Practices' });
+      await user.click(resultLink);
+
+      await waitFor(() =>
+        expect(mockedApiClient.trackAnalyticsEvents).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'content_click',
+            contentId: '1',
+            metadata: expect.objectContaining({
+              source: 'search_results',
+              url: 'https://example.com/lambda',
+            }),
+          })
+        )
+      );
     });
   });
 
@@ -2011,7 +2051,6 @@ describe('Sort Options', () => {
     });
   });
 });
-const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
 
 // Mock localStorage for search history tests
 const localStorageMock = (() => {

@@ -59,7 +59,9 @@ export default function AdminAuditLogPage(): JSX.Element {
           total: response.pagination.total,
           hasMore: response.pagination.hasMore,
         });
-        setFilters(prev => ({ ...prev, ...override }));
+        if (override && Object.keys(override).length > 0) {
+          setFilters(prev => ({ ...prev, ...override }));
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load audit log');
       } finally {

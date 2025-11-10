@@ -192,6 +192,54 @@ describe('Analytics Track Event Lambda', () => {
     expect(body.data.eventIds).toEqual(['evt-1', 'evt-2']);
   });
 
+  it('should track content view events with contentId metadata', async () => {
+    const event = createMockEvent(
+      {
+        eventType: 'content_view',
+        contentId: 'content-123',
+        metadata: { source: 'dashboard' },
+      },
+      'user-777'
+    );
+
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ granted: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'content-view-1' }] });
+
+    const response = await handler(event, {} as any);
+
+    expect(response.statusCode).toBe(201);
+    const body = JSON.parse(response.body);
+    expect(body.success).toBe(true);
+    expect(body.data.eventId).toBe('content-view-1');
+
+    const insertCall = mockPool.query.mock.calls[1];
+    expect(insertCall[1]).toEqual(
+      expect.arrayContaining(['content_view', 'user-777', expect.any(String), 'content-123', expect.any(String)])
+    );
+  });
+
+  it('should record content click events for anonymous users', async () => {
+    const event = createMockEvent({
+      eventType: 'content_click',
+      contentId: 'content-555',
+      metadata: { url: 'https://example.com' },
+    });
+
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'content-click-1' }] });
+
+    const response = await handler(event, {} as any);
+
+    expect(response.statusCode).toBe(201);
+    const body = JSON.parse(response.body);
+    expect(body.data.eventId).toBe('content-click-1');
+
+    const insertCall = mockPool.query.mock.calls[0];
+    expect(insertCall[1]).toEqual(
+      expect.arrayContaining(['content_click', null, expect.any(String), 'content-555', expect.any(String)])
+    );
+  });
+
   describe('Consent Checking', () => {
     it('should track event when user has granted analytics consent', async () => {
       const event = createMockEvent(
