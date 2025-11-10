@@ -1,22 +1,23 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { User, Badge, Content, BadgeType, ContentType, Visibility } from '@shared/types';
+import { Badge, BadgeType, Content, ContentType, User, Visibility } from '@shared/types';
 import { getBadgeLabel, getBadgeColor } from '@/lib/constants/ui';
 import { getPublicApiClient } from '@/api/client';
 
-interface ProfilePageProps {
+interface ProfileClientProps {
   params: {
     username: string;
   };
+  initialUser?: User | null;
 }
 
-export default function ProfilePage({ params }: ProfilePageProps) {
+export default function ProfilePage({ params, initialUser }: ProfileClientProps) {
   const router = useRouter();
   const username = params.username;
 
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(initialUser ?? null);
   const [badges, setBadges] = useState<Badge[]>([]);
   const [content, setContent] = useState<Content[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,11 +27,19 @@ export default function ProfilePage({ params }: ProfilePageProps) {
   const [tagFilter, setTagFilter] = useState('');
 
   useEffect(() => {
+    if (initialUser) {
+      setUser(initialUser);
+    }
+  }, [initialUser]);
+
+  useEffect(() => {
     if (!username) {
       setLoading(false);
       setError('No username provided');
       return;
     }
+
+    let isMounted = true;
 
     const fetchData = async () => {
       setLoading(true);
@@ -38,28 +47,46 @@ export default function ProfilePage({ params }: ProfilePageProps) {
 
       try {
         const client = getPublicApiClient();
+        let resolvedUser = initialUser ?? null;
 
-        const fetchedUser = await client.getUserByUsername(username);
-        setUser(fetchedUser);
+        if (!resolvedUser) {
+          resolvedUser = await client.getUserByUsername(username);
+          if (!isMounted) {
+            return;
+          }
+          setUser(resolvedUser);
+        }
 
-        // Fetch badges and content in parallel
         const [badgesData, contentData] = await Promise.all([
-          client.getUserBadgesByUserId(fetchedUser.id),
-          client.getUserContent(fetchedUser.id, { visibility: Visibility.PUBLIC }),
+          client.getUserBadgesByUserId(resolvedUser.id),
+          client.getUserContent(resolvedUser.id, { visibility: Visibility.PUBLIC }),
         ]);
+
+        if (!isMounted) {
+          return;
+        }
 
         setBadges(badgesData);
         setContent(contentData.content);
       } catch (err) {
+        if (!isMounted) {
+          return;
+        }
         console.error('Error fetching profile data:', err);
         setError('Failed to load profile');
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchData();
-  }, [username]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [username, initialUser?.id]);
 
   const filteredContent = useMemo(() => {
     const searchValue = searchTerm.trim().toLowerCase();

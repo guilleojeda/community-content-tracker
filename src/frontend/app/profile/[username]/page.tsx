@@ -1,7 +1,9 @@
 import { Metadata } from 'next';
 import dynamic from 'next/dynamic';
+import { notFound } from 'next/navigation';
 import { getPublicApiClient } from '@/api/client';
 import type { ApiError } from '@/api/client';
+import type { User } from '@shared/types';
 
 interface ProfilePageProps {
   params: {
@@ -78,6 +80,25 @@ const ProfileClient = dynamic(() => import('./ProfileClient'), {
   ),
 });
 
-export default function ProfilePage({ params }: ProfilePageProps) {
-  return <ProfileClient params={params} />;
+async function loadInitialUser(username: string): Promise<User> {
+  let capturedError: ApiError | undefined;
+  const client = getPublicApiClient({
+    onError: (error) => {
+      capturedError = error;
+    },
+  });
+
+  try {
+    return await client.getUserByUsername(username);
+  } catch (error) {
+    if (capturedError?.code === 'NOT_FOUND') {
+      notFound();
+    }
+    throw error;
+  }
+}
+
+export default async function ProfilePage({ params }: ProfilePageProps) {
+  const initialUser = await loadInitialUser(params.username);
+  return <ProfileClient params={params} initialUser={initialUser} />;
 }

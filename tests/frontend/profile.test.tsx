@@ -83,15 +83,24 @@ const contentItems: Content[] = [
   },
 ];
 
-const renderProfile = async () => {
-  mockClient.getUserByUsername.mockResolvedValue(baseUser);
+const renderProfile = async (props: Partial<React.ComponentProps<typeof ProfilePage>> = {}) => {
   mockClient.getUserBadgesByUserId.mockResolvedValue(badges);
   mockClient.getUserContent.mockResolvedValue({ content: contentItems, total: contentItems.length });
 
-  render(<ProfilePage params={{ username: 'testuser' }} />);
+  render(
+    <ProfilePage
+      params={{ username: 'testuser' }}
+      initialUser={baseUser}
+      {...props}
+    />
+  );
 
   await waitFor(() => {
-    expect(mockClient.getUserByUsername).toHaveBeenCalledWith('testuser');
+    expect(mockClient.getUserBadgesByUserId).toHaveBeenCalledWith('user-1');
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByText(/loading profile/i)).not.toBeInTheDocument();
   });
 };
 
@@ -143,24 +152,80 @@ describe('ProfilePage', () => {
   });
 
   it('shows empty state when user has no content', async () => {
-    mockClient.getUserByUsername.mockResolvedValue(baseUser);
     mockClient.getUserBadgesByUserId.mockResolvedValue([]);
     mockClient.getUserContent.mockResolvedValue({ content: [], total: 0 });
 
-    render(<ProfilePage params={{ username: 'testuser' }} />);
+    render(
+      <ProfilePage
+        params={{ username: 'testuser' }}
+        initialUser={baseUser}
+      />
+    );
 
     await waitFor(() => {
       expect(screen.getByText(/no public content available/i)).toBeInTheDocument();
     });
   });
 
-  it('handles user not found scenario', async () => {
-    mockClient.getUserByUsername.mockRejectedValue(new Error('User not found'));
+  it('surfaces fetch errors when badges or content calls fail', async () => {
+    mockClient.getUserBadgesByUserId.mockRejectedValue(new Error('boom'));
 
-    render(<ProfilePage params={{ username: 'missing' }} />);
+    render(
+      <ProfilePage
+        params={{ username: 'testuser' }}
+        initialUser={baseUser}
+      />
+    );
 
     await waitFor(() => {
       expect(screen.getByText(/failed to load profile/i)).toBeInTheDocument();
     });
+  });
+
+  it('shows AWS employee badge when the profile belongs to an employee', async () => {
+    await renderProfile();
+
+    expect(screen.getByText(/aws employee/i)).toBeInTheDocument();
+  });
+
+  it('hides AWS employee badge for community members', async () => {
+    render(
+      <ProfilePage
+        params={{ username: 'testuser' }}
+        initialUser={{ ...baseUser, isAwsEmployee: false }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('testuser')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/aws employee/i)).not.toBeInTheDocument();
+  });
+
+  it('renders social links and contact CTA when provided', async () => {
+    const socialLinks = {
+      twitter: 'https://twitter.com/testuser',
+      linkedin: 'https://linkedin.com/in/testuser',
+      github: 'https://github.com/testuser',
+      website: 'https://testuser.dev',
+    };
+
+    await renderProfile({
+      initialUser: { ...baseUser, socialLinks },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/twitter/i)).toHaveAttribute('href', socialLinks.twitter);
+    });
+
+    expect(screen.getByLabelText(/linkedin/i)).toHaveAttribute('href', socialLinks.linkedin);
+    expect(screen.getByLabelText(/github/i)).toHaveAttribute('href', socialLinks.github);
+    expect(screen.getByLabelText(/website/i)).toHaveAttribute('href', socialLinks.website);
+
+    const contactButton = screen.getByRole('link', { name: /contact testuser/i });
+    expect(contactButton).toHaveAttribute(
+      'href',
+      `mailto:${baseUser.email}?subject=AWS Community - Contact from ${baseUser.username}'s profile`
+    );
   });
 });

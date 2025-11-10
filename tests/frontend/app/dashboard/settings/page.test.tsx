@@ -125,6 +125,26 @@ describe('SettingsPage', () => {
     });
   });
 
+  it('updates the default visibility preference', async () => {
+    mockApiClient.updateUserProfile.mockResolvedValue({
+      ...defaultUser,
+      defaultVisibility: Visibility.AWS_ONLY,
+    });
+
+    await setupPage();
+
+    fireEvent.change(screen.getByLabelText(/default visibility/i), { target: { value: Visibility.AWS_ONLY } });
+    fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+
+    await waitFor(() => {
+      expect(mockApiClient.updateUserProfile).toHaveBeenCalledWith(
+        defaultUser.id,
+        expect.objectContaining({ defaultVisibility: Visibility.AWS_ONLY })
+      );
+      expect(screen.getByText(/profile updated successfully/i)).toBeInTheDocument();
+    });
+  });
+
   it('updates email and notifies user to verify change', async () => {
     const updatedEmail = 'new-email@example.com';
     mockApiClient.updateUserProfile.mockResolvedValue({ ...defaultUser, email: updatedEmail });

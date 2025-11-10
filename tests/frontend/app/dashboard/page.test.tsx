@@ -241,6 +241,25 @@ describe('DashboardPage', () => {
         expect(within(engagementCard).getByText(/custom metric/i)).toBeInTheDocument();
       });
     });
+
+    it('renders content counts for the key content types', async () => {
+      render(<DashboardPage />);
+
+      await waitFor(() => {
+        const blogCard = screen.getByRole('heading', { name: /^blogs$/i }).closest('div');
+        expect(blogCard).toBeTruthy();
+        expect(blogCard).toHaveTextContent('1');
+        const githubCard = screen.getByRole('heading', { name: /^github$/i }).closest('div');
+        expect(githubCard).toBeTruthy();
+        expect(githubCard).toHaveTextContent('1');
+        const talksCard = screen.getByRole('heading', { name: /^conference talks$/i }).closest('div');
+        expect(talksCard).toBeTruthy();
+        expect(talksCard).toHaveTextContent('1');
+        const podcastCard = screen.getByRole('heading', { name: /^podcasts$/i }).closest('div');
+        expect(podcastCard).toBeTruthy();
+        expect(podcastCard).toHaveTextContent('1');
+      });
+    });
   });
 
   describe('recent content list', () => {
