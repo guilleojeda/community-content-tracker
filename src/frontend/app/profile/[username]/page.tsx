@@ -1,9 +1,9 @@
 import { Metadata } from 'next';
-import dynamic from 'next/dynamic';
 import { notFound } from 'next/navigation';
-import { getPublicApiClient } from '@/api/client';
 import type { ApiError } from '@/api/client';
 import type { User } from '@shared/types';
+import { Visibility } from '@shared/types';
+import ProfileClient from './ProfileClient';
 
 interface ProfilePageProps {
   params: {
@@ -11,13 +11,18 @@ interface ProfilePageProps {
   };
 }
 
+async function getClientWithErrorCapture(onError: (error: ApiError) => void) {
+  const { getPublicApiClient } = await import('@/api/client');
+  return getPublicApiClient({
+    onError,
+  });
+}
+
 // Generate metadata for SEO
 export async function generateMetadata({ params }: ProfilePageProps): Promise<Metadata> {
   let capturedError: ApiError | undefined;
-  const client = getPublicApiClient({
-    onError: (error) => {
-      capturedError = error;
-    },
+  const client = await getClientWithErrorCapture((error) => {
+    capturedError = error;
   });
 
   try {
@@ -57,39 +62,26 @@ export async function generateMetadata({ params }: ProfilePageProps): Promise<Me
   }
 }
 
-// Generate static params for build - returns empty array as profiles are fetched client-side
+// Generate static params for build - profiles remain dynamic
 export async function generateStaticParams(): Promise<Array<{ username: string }>> {
-  // Return empty array - all profile routes will be handled client-side
-  // This satisfies Next.js static export requirements
   return [];
 }
 
 export const dynamicParams = false;
 
-const ProfileClient = dynamic(() => import('./ProfileClient'), {
-  ssr: false,
-  loading: () => (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-aws-blue mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading profile...</p>
-        </div>
-      </div>
-    </div>
-  ),
-});
-
-async function loadInitialUser(username: string): Promise<User> {
+async function fetchProfileData(username: string) {
   let capturedError: ApiError | undefined;
-  const client = getPublicApiClient({
-    onError: (error) => {
-      capturedError = error;
-    },
+  const client = await getClientWithErrorCapture((error) => {
+    capturedError = error;
   });
 
   try {
-    return await client.getUserByUsername(username);
+    const user = await client.getUserByUsername(username);
+    const [badges, contentData] = await Promise.all([
+      client.getUserBadgesByUserId(user.id),
+      client.getUserContent(user.id, { visibility: Visibility.PUBLIC }),
+    ]);
+    return { user, badges, content: contentData.content };
   } catch (error) {
     if (capturedError?.code === 'NOT_FOUND') {
       notFound();
@@ -99,6 +91,6 @@ async function loadInitialUser(username: string): Promise<User> {
 }
 
 export default async function ProfilePage({ params }: ProfilePageProps) {
-  const initialUser = await loadInitialUser(params.username);
-  return <ProfileClient params={params} initialUser={initialUser} />;
+  const { user, badges, content } = await fetchProfileData(params.username);
+  return <ProfileClient user={user} badges={badges} content={content} />;
 }

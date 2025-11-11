@@ -18,6 +18,8 @@ jest.mock('next/navigation', () => ({
 describe('profile route page', () => {
   const mockClient = {
     getUserByUsername: jest.fn(),
+    getUserBadgesByUserId: jest.fn(),
+    getUserContent: jest.fn(),
   };
 
   const baseUser: User = {
@@ -41,6 +43,10 @@ describe('profile route page', () => {
   beforeEach(() => {
     capturedOnError = undefined;
     mockClient.getUserByUsername.mockReset();
+    mockClient.getUserBadgesByUserId.mockReset();
+    mockClient.getUserContent.mockReset();
+    mockClient.getUserBadgesByUserId.mockResolvedValue([]);
+    mockClient.getUserContent.mockResolvedValue({ content: [], total: 0 });
     getPublicApiClientMock.mockImplementation((config?: { onError?: (error: any) => void }) => {
       capturedOnError = config?.onError;
       return mockClient;

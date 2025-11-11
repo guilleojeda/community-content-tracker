@@ -24,25 +24,25 @@ export default function StatsSection({ stats, loading }: StatsSectionProps) {
         ) : stats ? (
           <div className="grid md:grid-cols-4 gap-8 text-center">
             <div>
-              <div className="text-4xl font-bold text-aws-orange mb-2">
+              <div className="text-4xl font-bold text-aws-orange-dark mb-2">
                 {stats.topContributors?.toLocaleString() ?? 0}+
               </div>
               <div className="text-gray-600">Contributors</div>
             </div>
             <div>
-              <div className="text-4xl font-bold text-aws-orange mb-2">
+              <div className="text-4xl font-bold text-aws-orange-dark mb-2">
                 {stats.totalContent?.toLocaleString() ?? 0}+
               </div>
               <div className="text-gray-600">Content Pieces</div>
             </div>
             <div>
-              <div className="text-4xl font-bold text-aws-orange mb-2">
+              <div className="text-4xl font-bold text-aws-orange-dark mb-2">
                 {stats.recentActivity?.last24h?.toLocaleString() ?? 0}+
               </div>
               <div className="text-gray-600">Last 24 Hours</div>
             </div>
             <div>
-              <div className="text-4xl font-bold text-aws-orange mb-2">
+              <div className="text-4xl font-bold text-aws-orange-dark mb-2">
                 {stats.totalUsers?.toLocaleString() ?? 0}+
               </div>
               <div className="text-gray-600">Registered Users</div>

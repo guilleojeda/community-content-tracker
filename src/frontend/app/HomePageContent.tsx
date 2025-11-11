@@ -102,19 +102,19 @@ export default function HomePageContent() {
           <h2 className="text-3xl font-bold text-center mb-12">Platform Features</h2>
           <div className="grid md:grid-cols-3 gap-8">
             <div className="p-6 border rounded-lg hover:shadow-lg transition-shadow">
-              <h3 className="text-xl font-bold mb-3 text-aws-orange">Semantic Search</h3>
+              <h3 className="text-xl font-bold mb-3 text-aws-orange-dark">Semantic Search</h3>
               <p className="text-gray-600">
                 Find relevant content using AI-powered semantic search technology
               </p>
             </div>
             <div className="p-6 border rounded-lg hover:shadow-lg transition-shadow">
-              <h3 className="text-xl font-bold mb-3 text-aws-orange">Content Tracking</h3>
+              <h3 className="text-xl font-bold mb-3 text-aws-orange-dark">Content Tracking</h3>
               <p className="text-gray-600">
                 Automatically track content from blogs, YouTube, GitHub, and conferences
               </p>
             </div>
             <div className="p-6 border rounded-lg hover:shadow-lg transition-shadow">
-              <h3 className="text-xl font-bold mb-3 text-aws-orange">Community Profiles</h3>
+              <h3 className="text-xl font-bold mb-3 text-aws-orange-dark">Community Profiles</h3>
               <p className="text-gray-600">
                 Discover AWS Heroes, Community Builders, and Ambassadors
               </p>

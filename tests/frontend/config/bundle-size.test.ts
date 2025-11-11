@@ -29,4 +29,18 @@ describe('Next.js bundle performance configuration', () => {
       ])
     );
   });
+
+  it('includes required security headers on every route', async () => {
+    const headers = await nextConfig.headers();
+    const globalRule = headers.find((entry: any) => entry.source === '/(.*)');
+    expect(globalRule).toBeDefined();
+
+    const headerMap = Object.fromEntries(
+      (globalRule?.headers || []).map(({ key, value }: { key: string; value: string }) => [key, value])
+    );
+
+    expect(headerMap['Strict-Transport-Security']).toContain('max-age=');
+    expect(headerMap['X-Frame-Options']).toBe('DENY');
+    expect(headerMap['Content-Security-Policy']).toContain("default-src 'self'");
+  });
 });
