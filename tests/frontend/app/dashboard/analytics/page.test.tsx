@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import AnalyticsDashboardPage from '../../../../../src/frontend/app/dashboard/analytics/page';
@@ -20,6 +20,9 @@ jest.mock('../../../../../src/frontend/src/api', () => ({
 jest.mock('../../../../../src/frontend/src/utils/download', () => ({
   downloadBlob: jest.fn(),
 }));
+
+const mockedDownload = jest.requireMock('../../../../../src/frontend/src/utils/download')
+  .downloadBlob as jest.MockedFunction<typeof import('../../../../../src/frontend/src/utils/download').downloadBlob>;
 
 describe('AnalyticsDashboardPage', () => {
   const mockAnalyticsData = {
@@ -55,6 +58,7 @@ describe('AnalyticsDashboardPage', () => {
       limit: 10,
       offset: 0,
     });
+    mockedDownload.mockReset();
     delete (window as any).matchMedia;
   });
 
@@ -363,6 +367,23 @@ describe('AnalyticsDashboardPage', () => {
         expect(screen.getByText('Analytics CSV exported successfully.')).toBeInTheDocument();
       });
     });
+
+    it('uses fallback filename when analytics export response omits filename', async () => {
+      const mockBlob = new Blob(['csv data'], { type: 'text/csv' });
+      (apiClient.exportAnalyticsCsv as jest.Mock).mockResolvedValue({
+        blob: mockBlob,
+        filename: undefined,
+      });
+
+      await renderDashboard();
+      await waitFor(() => expect(screen.getByText('Export Analytics CSV')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Export Analytics CSV'));
+
+      await waitFor(() => {
+        expect(mockedDownload).toHaveBeenCalledWith(mockBlob, 'analytics-export.csv');
+      });
+    });
   });
 
   describe('Export History', () => {
@@ -450,6 +471,13 @@ describe('AnalyticsDashboardPage', () => {
       await waitFor(() => expect(screen.getByText('History unavailable')).toBeInTheDocument());
     });
 
+    it('falls back to default history error for non-error rejection', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockRejectedValueOnce('offline');
+
+      await renderDashboard();
+      await waitFor(() => expect(screen.getByText(/Failed to load export history/i)).toBeInTheDocument());
+    });
+
     it('describes analytics exports with groupBy and range metadata', async () => {
       (apiClient.getExportHistory as jest.Mock).mockResolvedValue({
         history: [
@@ -476,6 +504,119 @@ describe('AnalyticsDashboardPage', () => {
         expect(screen.getByText(/Analytics CSV export • Group By: month • Range: 2024-01-01 → 2024-02-29/)).toBeInTheDocument()
       );
     });
+
+    it('describes program exports with program name and range metadata', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockResolvedValue({
+        history: [
+          {
+            id: 'program-export',
+            exportType: 'program',
+            exportFormat: null,
+            rowCount: 42,
+            createdAt: new Date().toISOString(),
+            parameters: {
+              programType: 'hero',
+              startDate: '2024-05-01',
+              endDate: '2024-05-31',
+            },
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+
+      await renderDashboard();
+      expect(await screen.findByText(/Program: hero • Range: 2024-05-01 → 2024-05-31/i)).toBeInTheDocument();
+    });
+
+    it('falls back to export format when history entry type is unknown', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockResolvedValue({
+        history: [
+          {
+            id: 'custom-export',
+            exportType: 'custom_type',
+            exportFormat: 'custom.csv',
+            rowCount: null,
+            createdAt: new Date().toISOString(),
+            parameters: {},
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+
+      await renderDashboard();
+      expect(await screen.findByText(/custom.csv/i)).toBeInTheDocument();
+    });
+
+    it('falls back to export format when program history lacks explicit program type', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockResolvedValue({
+        history: [
+          {
+            id: 'program-format-fallback',
+            exportType: 'program',
+            exportFormat: 'legacy.csv',
+            rowCount: 12,
+            createdAt: new Date().toISOString(),
+            parameters: {},
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+
+      await renderDashboard();
+      expect(await screen.findByText(/Program: legacy\.csv/i)).toBeInTheDocument();
+    });
+
+    it('uses default program label when program type and export format are missing', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockResolvedValue({
+        history: [
+          {
+            id: 'program-default-label',
+            exportType: 'program',
+            exportFormat: undefined,
+            rowCount: 8,
+            createdAt: new Date().toISOString(),
+            parameters: {},
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+
+      await renderDashboard();
+      expect(await screen.findByText(/Program: Program export/i)).toBeInTheDocument();
+    });
+
+    it('uses placeholder when export details resolve to an empty string', async () => {
+      (apiClient.getExportHistory as jest.Mock).mockResolvedValue({
+        history: [
+          {
+            id: 'custom-empty-details',
+            exportType: 'custom_type',
+            exportFormat: '',
+            rowCount: null,
+            createdAt: new Date().toISOString(),
+            parameters: {},
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+
+      await renderDashboard();
+      const typeCell = await screen.findByText(/custom type/i);
+      const row = typeCell.closest('tr');
+      expect(row).not.toBeNull();
+      const cells = within(row!).getAllByRole('cell');
+      expect(cells[2]).toHaveTextContent('—');
+    });
   });
 
   describe('Error Handling', () => {
@@ -485,6 +626,13 @@ describe('AnalyticsDashboardPage', () => {
 
       await renderDashboard();
       await waitFor(() => expect(screen.getByText(errorMessage)).toBeInTheDocument());
+    });
+
+    it('shows default analytics error when rejection is not an Error', async () => {
+      (apiClient.getUserAnalytics as jest.Mock).mockRejectedValue('boom');
+
+      await renderDashboard();
+      await waitFor(() => expect(screen.getByText(/Failed to load analytics data/i)).toBeInTheDocument());
     });
 
     it('should display error message when CSV export fails', async () => {
@@ -502,6 +650,17 @@ describe('AnalyticsDashboardPage', () => {
       });
     });
 
+    it('shows default analytics export error when rejection is not an Error', async () => {
+      (apiClient.exportAnalyticsCsv as jest.Mock).mockRejectedValue('nope');
+
+      await renderDashboard();
+      await waitFor(() => expect(screen.getByText('Export Analytics CSV')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Export Analytics CSV'));
+
+      await waitFor(() => expect(screen.getByText(/Failed to export analytics CSV/i)).toBeInTheDocument());
+    });
+
     it('should handle program export errors gracefully', async () => {
       const errorMessage = 'Failed to export program CSV';
       (apiClient.exportProgramCsv as jest.Mock).mockRejectedValue(new Error(errorMessage));
@@ -515,6 +674,17 @@ describe('AnalyticsDashboardPage', () => {
       await waitFor(() => {
         expect(screen.getByText(errorMessage)).toBeInTheDocument();
       });
+    });
+
+    it('shows default program export error for non-error rejection', async () => {
+      (apiClient.exportProgramCsv as jest.Mock).mockRejectedValue('fail');
+
+      await renderDashboard();
+      await waitFor(() => expect(screen.getByText('Export Program CSV')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Export Program CSV'));
+
+      await waitFor(() => expect(screen.getByText(/Failed to export program CSV/i)).toBeInTheDocument());
     });
   });
 

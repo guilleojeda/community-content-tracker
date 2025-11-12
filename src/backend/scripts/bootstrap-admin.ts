@@ -268,14 +268,14 @@ async function createDatabaseUser(
   });
 }
 
-async function run() {
+export async function runCli(executor: () => Promise<void> = bootstrapAdmin) {
   try {
-    await bootstrapAdmin();
+    await executor();
   } catch (error) {
     process.exit(1);
   }
 }
 
 if (require.main === module) {
-  run();
+  runCli();
 }

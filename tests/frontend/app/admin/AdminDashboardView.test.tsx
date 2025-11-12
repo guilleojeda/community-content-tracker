@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import AdminDashboardView from '@/app/admin/AdminDashboardView';
 import { AdminContextProvider } from '@/app/admin/context';
 import type { AdminDashboardStats, SystemHealthStatus } from '@/api';
@@ -23,6 +23,16 @@ const adminUser = {
   createdAt: new Date(),
   updatedAt: new Date(),
 };
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function renderDashboard(): void {
   render(
@@ -136,5 +146,123 @@ describe('AdminDashboardView', () => {
     expect(screen.getByText(/No pending badge candidates/i)).toBeInTheDocument();
     // Unknown system health badge
     expect(screen.getByText(/unknown/i)).toBeInTheDocument();
+  });
+
+  it('shows degraded system health details with timestamps', async () => {
+    const timestamp = new Date().toISOString();
+    mockedLoadSharedApiClient.mockResolvedValue({
+      getAdminDashboardStats: jest.fn().mockResolvedValue(createStats()),
+      getAdminSystemHealth: jest.fn().mockResolvedValue(
+        createHealth({
+          database: 'degraded',
+          error: 'RDS connection issues',
+          timestamp,
+        })
+      ),
+      trackAnalyticsEvents: jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/Platform Overview/i)).toBeInTheDocument());
+    const statusChip = screen.getByText(/degraded/i);
+    expect(statusChip).toHaveClass('bg-red-100');
+    expect(screen.getByText(/RDS connection issues/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Checked/i).length).toBeGreaterThan(0);
+  });
+
+  it('ignores dashboard updates when component unmounts before data resolves', async () => {
+    const statsDeferred = createDeferred<AdminDashboardStats>();
+    const healthDeferred = createDeferred<SystemHealthStatus>();
+
+    mockedLoadSharedApiClient.mockResolvedValue({
+      getAdminDashboardStats: jest.fn().mockReturnValue(statsDeferred.promise),
+      getAdminSystemHealth: jest.fn().mockReturnValue(healthDeferred.promise),
+      trackAnalyticsEvents: jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    const { unmount } = render(
+      <AdminContextProvider value={{ currentUser: adminUser }}>
+        <AdminDashboardView />
+      </AdminContextProvider>
+    );
+
+    unmount();
+
+    await act(async () => {
+      statsDeferred.resolve(createStats());
+      healthDeferred.resolve(createHealth());
+    });
+
+    expect(mockedLoadSharedApiClient).toHaveBeenCalled();
+  });
+
+  it('ignores dashboard errors after the component unmounts', async () => {
+    const statsDeferred = createDeferred<AdminDashboardStats>();
+
+    mockedLoadSharedApiClient.mockResolvedValue({
+      getAdminDashboardStats: jest.fn().mockReturnValue(statsDeferred.promise),
+      getAdminSystemHealth: jest.fn().mockResolvedValue(createHealth()),
+      trackAnalyticsEvents: jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    const { unmount } = render(
+      <AdminContextProvider value={{ currentUser: adminUser }}>
+        <AdminDashboardView />
+      </AdminContextProvider>
+    );
+
+    unmount();
+
+    await act(async () => {
+      statsDeferred.reject(new Error('network timeout'));
+    });
+
+    expect(mockedLoadSharedApiClient).toHaveBeenCalled();
+  });
+
+  it('falls back to unknown error when the API returns no dashboard stats', async () => {
+    mockedLoadSharedApiClient.mockResolvedValue({
+      getAdminDashboardStats: jest.fn().mockResolvedValue(null),
+      getAdminSystemHealth: jest.fn().mockResolvedValue(null),
+      trackAnalyticsEvents: jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/Unable to load admin dashboard/i)).toBeInTheDocument());
+    expect(screen.getByText(/Unknown error/i)).toBeInTheDocument();
+  });
+
+  it('renders fallback message when API throws a non-Error value', async () => {
+    mockedLoadSharedApiClient.mockResolvedValue({
+      getAdminDashboardStats: jest.fn().mockRejectedValue('Service exploded'),
+      getAdminSystemHealth: jest.fn().mockResolvedValue(createHealth()),
+      trackAnalyticsEvents: jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/Unable to load admin dashboard/i)).toBeInTheDocument());
+    expect(screen.getByText(/Failed to load admin dashboard/i)).toBeInTheDocument();
+  });
+
+  it('shows anonymous admin message when context user missing and health unavailable', async () => {
+    mockedLoadSharedApiClient.mockResolvedValue({
+      getAdminDashboardStats: jest.fn().mockResolvedValue(createStats()),
+      getAdminSystemHealth: jest.fn().mockResolvedValue(null),
+      trackAnalyticsEvents: jest.fn().mockResolvedValue(undefined),
+    } as any);
+
+    render(
+      <AdminContextProvider value={{ currentUser: null }}>
+        <AdminDashboardView />
+      </AdminContextProvider>
+    );
+
+    await waitFor(() => expect(screen.getByText(/Platform Overview/i)).toBeInTheDocument());
+    expect(screen.getByText(/Administrator authenticated/i)).toBeInTheDocument();
+    expect(screen.getByText(/Database/i).closest('div')).toHaveTextContent(/unknown/i);
+    expect(screen.getByText(/Unavailable/i)).toBeInTheDocument();
   });
 });

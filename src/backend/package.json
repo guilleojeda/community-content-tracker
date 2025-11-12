@@ -25,6 +25,7 @@
         "@aws-sdk/client-dynamodb": "^3.899.0",
         "@aws-sdk/client-lambda": "^3.899.0",
         "@aws-sdk/client-secrets-manager": "^3.0.0",
+        "@aws-sdk/client-ses": "^3.929.0",
         "@aws-sdk/client-sqs": "^3.899.0",
         "@aws-sdk/util-dynamodb": "^3.899.0",
         "@types/axios": "^0.9.36",

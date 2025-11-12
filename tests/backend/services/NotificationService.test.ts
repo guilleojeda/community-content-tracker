@@ -1,10 +1,15 @@
-import { NotificationService } from '../../../src/backend/services/NotificationService';
+import { NotificationService, NotificationServiceOptions } from '../../../src/backend/services/NotificationService';
+import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { mockClient } from 'aws-sdk-client-mock';
+import 'aws-sdk-client-mock-jest';
 
 describe('NotificationService', () => {
   const mockPool = () => ({ query: jest.fn() }) as any;
+  const sesMock = mockClient(SESClient);
 
   afterEach(() => {
     jest.restoreAllMocks();
+    sesMock.reset();
   });
 
   it('notifies all admins for review', async () => {
@@ -93,8 +98,14 @@ describe('NotificationService', () => {
 
   it('sends email using default implementation', async () => {
     const pool = mockPool();
-    const service = new NotificationService(pool, 'noreply@test.com');
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    sesMock.on(SendEmailCommand).resolves({});
+
+    const options: NotificationServiceOptions = {
+      fromEmail: 'noreply@test.com',
+      sesClient: sesMock.client,
+      sesRegion: 'us-east-1',
+    };
+    const service = new NotificationService(pool, options);
 
     const result = await service.sendEmail({
       to: 'recipient@example.com',
@@ -103,11 +114,42 @@ describe('NotificationService', () => {
     });
 
     expect(result).toBe(true);
-    expect(consoleSpy).toHaveBeenCalledWith('Email would be sent:', {
-      from: 'noreply@test.com',
+    expect(sesMock).toHaveReceivedCommandTimes(SendEmailCommand, 1);
+  });
+
+  it('gracefully skips email sends when SES is not configured', async () => {
+    const pool = mockPool();
+    const service = new NotificationService(pool);
+
+    const result = await service.sendEmail({
       to: 'recipient@example.com',
       subject: 'Test Email',
+      body: 'Body',
     });
+
+    expect(result).toBe(false);
+    expect(sesMock).toHaveReceivedCommandTimes(SendEmailCommand, 0);
+  });
+
+  it('persists notification rows in the database', async () => {
+    const pool = mockPool();
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'notif-123' }] });
+    const service = new NotificationService(pool);
+
+    const id = await (service as any).createNotification({
+      recipientId: 'user-1',
+      type: 'badge.granted',
+      title: 'Congrats',
+      message: 'You earned a badge',
+      metadata: { badge: 'hero' },
+      priority: 'high',
+    });
+
+    expect(id).toBe('notif-123');
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO notifications'),
+      expect.arrayContaining(['user-1', 'badge.granted', 'Congrats'])
+    );
   });
 
   it('bulk notifies recipients while continuing on failure', async () => {

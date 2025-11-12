@@ -21,6 +21,9 @@ const BADGE_LABELS: Record<BadgeType, string> = {
   [BadgeType.USER_GROUP_LEADER]: 'User Group Leader',
 };
 
+const USER_LOST_MESSAGE = 'Selected user is no longer available. Please choose another user.';
+const USER_REQUIRED_MESSAGE = 'Select a user before updating badges.';
+
 export default function AdminUsersPage(): JSX.Element {
   const getSharedApiClient = useCallback(async () => {
     const { loadSharedApiClient } = await import('@/lib/api/lazyClient');
@@ -74,6 +77,23 @@ export default function AdminUsersPage(): JSX.Element {
           total: response.total,
           offset: response.offset,
         }));
+
+        let selectionCleared = false;
+        setSelectedUser(prev => {
+          if (prev && !response.users.some(user => user.id === prev.user.id)) {
+            selectionCleared = true;
+            return null;
+          }
+          return prev;
+        });
+        if (selectionCleared) {
+          setSelectedUserContent([]);
+          setActionMessage(USER_LOST_MESSAGE);
+        }
+
+        setSelectedUserIds(prev =>
+          prev.filter(id => response.users.some(user => user.id === id))
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load users');
       } finally {
@@ -151,7 +171,10 @@ export default function AdminUsersPage(): JSX.Element {
     try {
       const client = await getSharedApiClient();
       if (badgeModal.mode === 'grant') {
-        if (!selectedUser) return;
+        if (!selectedUser) {
+          setActionMessage(USER_REQUIRED_MESSAGE);
+          return;
+        }
         await client.grantBadge({
           userId: selectedUser.user.id,
           badgeType: badgeModal.badgeType,
@@ -160,7 +183,10 @@ export default function AdminUsersPage(): JSX.Element {
         setActionMessage('Badge granted successfully.');
         await loadUserDetails(selectedUser.user.id);
       } else if (badgeModal.mode === 'revoke') {
-        if (!selectedUser) return;
+        if (!selectedUser) {
+          setActionMessage(USER_REQUIRED_MESSAGE);
+          return;
+        }
         await client.revokeBadge({
           userId: selectedUser.user.id,
           badgeType: badgeModal.badgeType,
@@ -319,6 +345,12 @@ export default function AdminUsersPage(): JSX.Element {
       {actionMessage && (
         <div className="rounded border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
           {actionMessage}
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
         </div>
       )}
 

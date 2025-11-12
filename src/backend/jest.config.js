@@ -31,7 +31,7 @@ module.exports = {
     'lambdas/auth/register.ts',
     'lambdas/auth/refresh.ts',
     'lambdas/auth/verify-email.ts',
-    'lambdas/search/**/*.ts',
+    'lambdas/search/searchHandler.ts',
     'services/EmbeddingService.ts',
     'services/SearchService.ts',
     'scripts/bootstrap-admin.ts'
@@ -61,6 +61,7 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@tests/(.*)$': '<rootDir>/../tests/backend/$1',
     '^@handlers/(.*)$': '<rootDir>/handlers/$1',
+    '^@lambdas/(.*)$': '<rootDir>/lambdas/$1',
     '^@services/(.*)$': '<rootDir>/services/$1',
     '^@models/(.*)$': '<rootDir>/models/$1',
     '^@utils/(.*)$': '<rootDir>/utils/$1',

@@ -60,7 +60,7 @@ const listResponse = {
       id: 'user-2',
       username: 'bob',
       email: 'bob@example.com',
-      isAdmin: false,
+      isAdmin: true,
       isAwsEmployee: true,
       createdAt: new Date().toISOString(),
     },
@@ -104,8 +104,27 @@ const flaggedContentResponse = {
       },
       flaggedBy: 'moderator',
     },
+    {
+      id: 'content-2',
+      title: 'Missing metadata post',
+      description: 'No reason provided',
+      contentType: 'video',
+      visibility: 'private',
+      isFlagged: true,
+      flaggedAt: undefined,
+      flagReason: undefined,
+      moderationStatus: 'flagged',
+      createdAt: new Date().toISOString(),
+      urls: ['https://example.com/video'],
+      user: {
+        id: 'user-1',
+        username: 'alice',
+        email: 'alice@example.com',
+      },
+      flaggedBy: 'moderator',
+    },
   ],
-  total: 1,
+  total: 2,
   limit: 100,
   offset: 0,
 };
@@ -177,6 +196,28 @@ describe('AdminUsersPage', () => {
     );
   });
 
+  it('shows user detail fetch errors when API fails', async () => {
+    mockedApiClient.getAdminUser.mockRejectedValueOnce(new Error('Detail unavailable'));
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('row', { name: /alice/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('row', { name: /alice/i }));
+
+    expect(await screen.findByText(/Detail unavailable/i)).toBeInTheDocument();
+  });
+
+  it('uses default message when user detail rejection is not an Error', async () => {
+    mockedApiClient.getAdminUser.mockRejectedValueOnce('oops');
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('row', { name: /alice/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('row', { name: /alice/i }));
+
+    expect(await screen.findByText(/Failed to load user details/i)).toBeInTheDocument();
+  });
+
   it('exports user list to CSV', async () => {
     renderUsersPage();
     await waitFor(() => expect(screen.getByRole('button', { name: /Export CSV/i })).toBeEnabled());
@@ -191,6 +232,17 @@ describe('AdminUsersPage', () => {
         metadata: expect.objectContaining({ type: 'user_list', exportFormat: 'csv' }),
       })
     );
+  });
+
+  it('falls back to default export error message for non-error rejections', async () => {
+    mockedApiClient.exportUsersCsv.mockRejectedValueOnce('nope');
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('button', { name: /Export CSV/i })).toBeEnabled());
+
+    await userEvent.click(screen.getByRole('button', { name: /Export CSV/i }));
+
+    expect(await screen.findByText(/Failed to export user list/i)).toBeInTheDocument();
   });
 
   it('toggles AWS employee status for the selected user', async () => {
@@ -282,6 +334,82 @@ describe('AdminUsersPage', () => {
   expect((screen.getByLabelText(/Search/i) as HTMLInputElement).value).toBe('');
   expect((screen.getByLabelText(/Badge Filter/i) as HTMLSelectElement).value).toBe('');
 });
+
+  it('shows empty state when no users match filters', async () => {
+    mockedApiClient.listAdminUsers.mockResolvedValueOnce({ ...listResponse, users: [], total: 0 });
+
+    renderUsersPage();
+
+    expect(await screen.findByText(/No users found for the given filters/i)).toBeInTheDocument();
+  });
+
+  it('displays API errors when user list request fails', async () => {
+    mockedApiClient.listAdminUsers.mockRejectedValueOnce(new Error('Database offline'));
+
+    renderUsersPage();
+
+    expect(await screen.findByText(/Database offline/i)).toBeInTheDocument();
+  });
+
+  it('falls back to generic error text when user list rejects non-error values', async () => {
+    mockedApiClient.listAdminUsers.mockRejectedValueOnce('boom');
+
+    renderUsersPage();
+
+    expect(await screen.findByText(/Failed to load users/i)).toBeInTheDocument();
+  });
+
+  it('surfaces export errors without crashing the page', async () => {
+    mockedApiClient.exportUsersCsv.mockRejectedValueOnce(new Error('Export failed'));
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('button', { name: /Export CSV/i })).toBeEnabled());
+
+    await userEvent.click(screen.getByRole('button', { name: /Export CSV/i }));
+
+    expect(await screen.findByText(/Export failed/i)).toBeInTheDocument();
+    expect(mockedDownload).not.toHaveBeenCalled();
+  });
+
+  it('shows failure message when AWS employee toggle fails', async () => {
+    mockedApiClient.setAwsEmployee.mockRejectedValueOnce(new Error('Permission denied'));
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('row', { name: /alice/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('row', { name: /alice/i }));
+    const toggleButton = await screen.findByRole('button', { name: /Mark as AWS Employee/i });
+    await userEvent.click(toggleButton);
+
+    expect(await screen.findByText(/Permission denied/i)).toBeInTheDocument();
+  });
+
+  it('falls back to default AWS employee error message when rejection is non-error', async () => {
+    mockedApiClient.setAwsEmployee.mockRejectedValueOnce('denied');
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('row', { name: /alice/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('row', { name: /alice/i }));
+    const toggleButton = await screen.findByRole('button', { name: /Mark as AWS Employee/i });
+    await userEvent.click(toggleButton);
+
+    expect(await screen.findByText(/Failed to update AWS employee status/i)).toBeInTheDocument();
+  });
+
+  it('allows toggling individual user selections via checkboxes', async () => {
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByLabelText(/Select alice/i)).toBeInTheDocument());
+
+    const checkbox = screen.getByLabelText(/Select alice/i) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    await userEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    await userEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+  });
 
   it('allows revoking a badge through the modal', async () => {
     mockedApiClient.getAdminUser.mockResolvedValueOnce({
@@ -397,6 +525,35 @@ describe('AdminUsersPage', () => {
     expect(mockedApiClient.moderateContent).toHaveBeenCalledWith('content-1', 'remove');
   });
 
+  it('shows empty flagged content state when no items exist', async () => {
+    mockedApiClient.listFlaggedContent.mockResolvedValueOnce({ ...flaggedContentResponse, content: [], total: 0 });
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('row', { name: /alice/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('row', { name: /alice/i }));
+
+    expect(await screen.findByText(/No flagged content for this user/i)).toBeInTheDocument();
+  });
+
+  it('surfaces moderation errors when approve/remove fail', async () => {
+    mockedApiClient.moderateContent.mockRejectedValueOnce(new Error('Approve denied'));
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('row', { name: /alice/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('row', { name: /alice/i }));
+    const flaggedItem = await screen.findByText('Flagged blog');
+    const flaggedCard = flaggedItem.closest('li')!;
+
+    await userEvent.click(within(flaggedCard).getByRole('button', { name: /Approve/i }));
+    expect(await screen.findByText(/Failed to approve content/i)).toBeInTheDocument();
+
+    mockedApiClient.moderateContent.mockRejectedValueOnce('Removal denied');
+    await userEvent.click(within(flaggedCard).getByRole('button', { name: /Remove/i }));
+    expect(await screen.findByText(/Failed to remove content/i)).toBeInTheDocument();
+  });
+
   it('supports pagination controls', async () => {
     mockedApiClient.listAdminUsers
       .mockResolvedValueOnce({ ...listResponse, offset: 0 })
@@ -439,5 +596,29 @@ describe('AdminUsersPage', () => {
 
     await waitFor(() => expect(mockedApiClient.bulkBadges).not.toHaveBeenCalled());
     expect(await screen.findByText(/Badge type is required\./i)).toBeInTheDocument();
+  });
+
+  it('prevents badge actions when the selected user disappears during refresh', async () => {
+    mockedApiClient.listAdminUsers
+      .mockResolvedValueOnce(listResponse)
+      .mockResolvedValueOnce({ ...listResponse, users: [], total: 0 });
+
+    renderUsersPage();
+    await waitFor(() => expect(screen.getByRole('row', { name: /alice/i })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('row', { name: /alice/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Grant Badge/i })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: /Grant Badge/i }));
+
+    const modal = await screen.findByRole('dialog');
+    await userEvent.selectOptions(within(modal).getByLabelText(/Badge Type/i), 'hero');
+
+    await userEvent.click(screen.getByRole('button', { name: /Clear/i }));
+    await waitFor(() => expect(mockedApiClient.listAdminUsers).toHaveBeenCalledTimes(2));
+
+    await userEvent.click(within(modal).getByRole('button', { name: /Confirm/i }));
+
+    expect(mockedApiClient.grantBadge).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Select a user before updating badges/i)).toBeInTheDocument();
   });
 });

@@ -133,6 +133,13 @@ describe('AdminModerationPage', () => {
     expect(await screen.findByText(/Failed to load flagged content/i)).toBeInTheDocument();
   });
 
+  it('displays API error when load fails with an Error instance', async () => {
+    mockedApiClient.listFlaggedContent.mockRejectedValueOnce(new Error('Service unavailable'));
+
+    render(<AdminModerationPage />);
+    expect(await screen.findByText(/Service unavailable/i)).toBeInTheDocument();
+  });
+
   it('filters by pending and removed statuses', async () => {
     const pendingItem = {
       ...flaggedItem,
@@ -163,6 +170,42 @@ describe('AdminModerationPage', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('Status Filter'), 'removed');
     expect(screen.getByText('Removed Content')).toBeInTheDocument();
+  });
+
+  it('renders fallback metadata when flag reason or timestamp missing', async () => {
+    mockedApiClient.listFlaggedContent.mockResolvedValueOnce({
+      content: [
+        {
+          ...flaggedItem,
+          id: 'missing-reason',
+          title: 'No Reason Provided',
+          flagReason: undefined,
+          flaggedAt: undefined,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+
+    render(<AdminModerationPage />);
+    await waitFor(() => expect(screen.getByText('No Reason Provided')).toBeInTheDocument());
+
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('surfaces moderation errors for approve/remove failures', async () => {
+    mockedApiClient.moderateContent.mockRejectedValueOnce(new Error('Approve failed'));
+
+    render(<AdminModerationPage />);
+    await screen.findByText('Flagged Guide');
+
+    await userEvent.click(screen.getByRole('button', { name: /Approve/i }));
+    expect(await screen.findByText(/Approve failed/i)).toBeInTheDocument();
+
+    mockedApiClient.moderateContent.mockRejectedValueOnce('Remove failed');
+    await userEvent.click(screen.getByRole('button', { name: /Remove/i }));
+    expect(await screen.findByText(/Moderation action failed/i)).toBeInTheDocument();
   });
 
   it('refreshes content via the refresh button', async () => {

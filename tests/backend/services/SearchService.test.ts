@@ -570,6 +570,25 @@ describe('SearchService', () => {
       expect(result.items.length).toBe(5);
       expect(result.total).toBe(50);
     });
+
+    it('treats missing similarity and rank metadata as zero scores', async () => {
+      const request: SearchRequest = {
+        query: 'metadata gaps',
+        limit: 10,
+        offset: 0,
+      };
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockContentRepo.semanticSearch.mockResolvedValue([{ ...mockContent2 }] as any);
+      mockContentRepo.keywordSearch.mockResolvedValue([{ ...mockContent1 }] as any);
+      mockContentRepo.countSearchResults.mockResolvedValue(2);
+
+      const result = await searchService.search(request, false);
+
+      expect(result.items.map(item => item.id).sort()).toEqual(['content-1', 'content-2']);
+      expect(mockContentRepo.semanticSearch).toHaveBeenCalled();
+      expect(mockContentRepo.keywordSearch).toHaveBeenCalled();
+    });
   });
 
   describe('error handling', () => {
@@ -629,6 +648,29 @@ describe('SearchService', () => {
 
       expect(result).toBeDefined();
       expect(result.items).toEqual([]);
+    });
+
+    it('should warn when CloudWatch error tracking fails', async () => {
+      const request: SearchRequest = {
+        query: 'AWS',
+        limit: 10,
+        offset: 0,
+      };
+
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      mockEmbeddingService.generateEmbedding.mockRejectedValue(
+        new Error('Timeout while generating embedding')
+      );
+      (mockCloudWatch.send as jest.Mock).mockRejectedValueOnce(new Error('Metric send failed'));
+
+      await expect(searchService.search(request, false)).rejects.toThrow('Search failed');
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(warnSpy).toHaveBeenCalledWith('Failed to track search error:', 'Metric send failed');
+
+      warnSpy.mockRestore();
     });
   });
 
@@ -708,6 +750,48 @@ describe('SearchService', () => {
       expect(semanticCall[1].visibilityLevels).toContain(Visibility.PUBLIC);
       expect(semanticCall[1].visibilityLevels).toContain(Visibility.AWS_COMMUNITY);
       expect(semanticCall[1].visibilityLevels).toContain(Visibility.AWS_ONLY);
+    });
+  });
+
+  describe('internal helpers', () => {
+    it.each([
+      ['Embedding service failed', 'EmbeddingError'],
+      ['Database connection error', 'DatabaseError'],
+      ['Request timeout reached', 'TimeoutError'],
+      ['ThrottlingException from AWS', 'ThrottlingError'],
+      ['Completely unknown problem', 'UnknownError'],
+    ])('categorizeError maps "%s" to %s', (message, expectedCategory) => {
+      const result = (searchService as any).categorizeError(message);
+      expect(result).toBe(expectedCategory);
+    });
+  });
+
+  describe('getSearchService singleton behavior', () => {
+    it('throws if dependencies are missing on first call', () => {
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const module = require('../../../src/backend/services/SearchService');
+        expect(() => module.getSearchService()).toThrow('SearchService not initialized');
+      });
+    });
+
+    it('reuses the same instance after initialization', () => {
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const module = require('../../../src/backend/services/SearchService');
+        const repo = {
+          semanticSearch: jest.fn(),
+          keywordSearch: jest.fn(),
+          countSearchResults: jest.fn(),
+        } as unknown as ContentRepository;
+        const embedding = { generateEmbedding: jest.fn() } as unknown as EmbeddingService;
+        const cloudwatch = { send: jest.fn().mockResolvedValue(undefined) } as unknown as CloudWatchClient;
+
+        const firstInstance = module.getSearchService(repo, embedding, cloudwatch);
+        const secondInstance = module.getSearchService();
+
+        expect(secondInstance).toBe(firstInstance);
+      });
     });
   });
 });

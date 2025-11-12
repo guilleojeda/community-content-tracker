@@ -8,12 +8,18 @@ describe('EmbeddingService', () => {
   const bedrockMock = mockClient(BedrockRuntimeClient);
   const cloudwatchMock = mockClient(CloudWatchClient);
   let service: EmbeddingService;
+  const originalEnv = process.env;
 
   beforeEach(() => {
+    process.env = { ...originalEnv };
     bedrockMock.reset();
     cloudwatchMock.reset();
     cloudwatchMock.on(PutMetricDataCommand).resolves({});
     service = new EmbeddingService();
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   describe('when generating an embedding for a single text', () => {
@@ -572,6 +578,37 @@ describe('EmbeddingService', () => {
 
       // Assert
       expect(result).toBe(true);
+    });
+  });
+
+  describe('configuration overrides', () => {
+    it('respects BEDROCK_MODEL_ID environment variable', async () => {
+      process.env.BEDROCK_MODEL_ID = 'custom.model';
+      const customService = new EmbeddingService();
+      const mockEmbedding = new Array(1536).fill(0.2);
+
+      bedrockMock.on(InvokeModelCommand).resolves({
+        body: new Uint8Array(new TextEncoder().encode(JSON.stringify({ embedding: mockEmbedding }))) as any
+      });
+
+      await customService.generateEmbedding('env-configured content');
+
+      const calls = bedrockMock.commandCalls(InvokeModelCommand);
+      expect(calls[0]?.args[0]?.input?.modelId).toBe('custom.model');
+    });
+
+    it('accepts explicit region and model overrides via constructor options', async () => {
+      const customService = new EmbeddingService({ region: 'us-west-2', modelId: 'custom.model' });
+      const mockEmbedding = new Array(1536).fill(0.7);
+
+      bedrockMock.on(InvokeModelCommand).resolves({
+        body: new Uint8Array(new TextEncoder().encode(JSON.stringify({ embedding: mockEmbedding }))) as any
+      });
+
+      await customService.generateEmbedding('explicit configuration');
+
+      const calls = bedrockMock.commandCalls(InvokeModelCommand);
+      expect(calls[0]?.args[0]?.input?.modelId).toBe('custom.model');
     });
   });
 });

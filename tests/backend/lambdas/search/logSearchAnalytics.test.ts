@@ -1,5 +1,5 @@
 import { PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
-import { logSearchAnalytics } from '../../../../src/backend/lambdas/search/search';
+import { logSearchAnalytics } from '@lambdas/search/searchHandler';
 
 describe('logSearchAnalytics', () => {
   const basePayload = {

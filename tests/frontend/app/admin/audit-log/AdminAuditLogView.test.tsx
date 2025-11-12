@@ -178,4 +178,111 @@ describe('AdminAuditLogView', () => {
 
     await waitFor(() => expect(screen.getByText(/network down/i)).toBeInTheDocument());
   });
+
+  it('uses default error text when audit log rejects with non-error', async () => {
+    const client = {
+      listAuditLog: jest.fn().mockRejectedValue('boom'),
+    };
+    mockLoadSharedApiClient.mockResolvedValue(client as any);
+
+    render(<AdminAuditLogView />);
+
+    await waitFor(() => expect(screen.getByText(/Failed to load audit log/i)).toBeInTheDocument());
+  });
+
+  it('renders fallback labels for unknown admin and target data', async () => {
+    mockClientWithResponses({
+      entries: [
+        {
+          ...defaultEntry(),
+          adminUser: {
+            id: 'admin-unknown',
+            username: '',
+            email: '',
+          },
+          targetUser: null,
+          details: null,
+          ipAddress: '',
+        },
+      ],
+      pagination: { total: 1, limit: 25, offset: 0, hasMore: false },
+    });
+
+    render(<AdminAuditLogView />);
+
+    expect(await screen.findByText(/Unknown \(admin-unknown\)/i)).toBeInTheDocument();
+    const placeholderCells = screen.getAllByText('—');
+    expect(placeholderCells.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('clears filters and reloads baseline parameters', async () => {
+    const client = mockClientWithResponses(
+      {
+        entries: [defaultEntry()],
+        pagination: { total: 10, limit: 25, offset: 0, hasMore: false },
+      },
+      {
+        entries: [],
+        pagination: { total: 0, limit: 25, offset: 0, hasMore: false },
+      }
+    );
+
+    render(<AdminAuditLogView />);
+    await waitFor(() => expect(client.listAuditLog).toHaveBeenCalledTimes(1));
+
+    await userEvent.selectOptions(screen.getByLabelText(/Action Type/i), 'flag_content');
+    fireEvent.change(screen.getByLabelText(/Admin User ID/i), { target: { value: 'admin-42' } });
+    fireEvent.change(screen.getByLabelText(/Start Date/i), { target: { value: '2024-02-01' } });
+    fireEvent.change(screen.getByLabelText(/End Date/i), { target: { value: '2024-02-29' } });
+
+    const initialCalls = client.listAuditLog.mock.calls.length;
+    await userEvent.click(screen.getByRole('button', { name: /Clear/i }));
+
+    await waitFor(() => expect(client.listAuditLog.mock.calls.length).toBeGreaterThan(initialCalls));
+    expect(client.listAuditLog).toHaveBeenLastCalledWith({
+      actionType: undefined,
+      adminUserId: undefined,
+      startDate: undefined,
+      endDate: undefined,
+      limit: 25,
+      offset: 0,
+    });
+
+    expect((screen.getByLabelText(/Action Type/i) as HTMLSelectElement).value).toBe('');
+    expect((screen.getByLabelText(/Admin User ID/i) as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText(/Start Date/i) as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText(/End Date/i) as HTMLInputElement).value).toBe('');
+  });
+
+  it('summarizes bulk operations and fallback detail fields', async () => {
+    mockClientWithResponses({
+      entries: [
+        {
+          ...defaultEntry(),
+          id: 'bulk',
+          actionType: 'bulk_badge',
+          details: { operation: 'grant' },
+        },
+        {
+          ...defaultEntry(),
+          id: 'json',
+          actionType: 'set_aws_employee',
+          details: { custom: 'value' },
+        },
+        {
+          ...defaultEntry(),
+          id: 'none',
+          actionType: 'delete_content',
+          details: null,
+        },
+      ],
+      pagination: { total: 3, limit: 25, offset: 0, hasMore: false },
+    });
+
+    render(<AdminAuditLogView />);
+
+    expect(await screen.findByText(/grant \(\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/{"custom":"value"}/i)).toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
 });

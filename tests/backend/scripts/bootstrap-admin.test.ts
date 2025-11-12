@@ -196,9 +196,37 @@ describe('Admin Bootstrap Script', () => {
                 email: 'admin@example.com',
                 username: 'admin',
                 password: 'ValidPassword123!'
-            });
-        });
     });
+  });
+
+  describe('runCli', () => {
+    it('exits the process when bootstrap fails', async () => {
+      const script = loadScript();
+      const failingExecutor = jest.fn().mockRejectedValue(new Error('boom'));
+      const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as any);
+
+      await script.runCli(failingExecutor);
+
+      expect(failingExecutor).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+
+      exitSpy.mockRestore();
+    });
+
+    it('does not exit when bootstrap succeeds', async () => {
+      const script = loadScript();
+      const executor = jest.fn().mockResolvedValue(undefined);
+      const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as any);
+
+      await script.runCli(executor);
+
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      exitSpy.mockRestore();
+    });
+  });
+});
 
     describe('Environment Variables', () => {
         test('should fail when COGNITO_USER_POOL_ID is missing', () => {
@@ -240,6 +268,34 @@ describe('Admin Bootstrap Script', () => {
             expect(env.databaseUrl).toBe('postgresql://contentuser:secret@localhost:5432/contenthub');
         });
 
+        test('should encode database password when assembled from individual parts', () => {
+            delete process.env.DATABASE_URL;
+            process.env.DB_HOST = 'db.aws.local';
+            process.env.DB_PORT = '5544';
+            process.env.DB_NAME = 'contenthub';
+            process.env.DB_USER = 'content.user';
+            process.env.DB_PASSWORD = 'S3cret!@#';
+            process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
+
+            const { validateEnvironment } = loadScript();
+            const env = validateEnvironment();
+
+            expect(env.databaseUrl).toBe('postgresql://content.user:S3cret!%40%23@db.aws.local:5544/contenthub');
+        });
+
+        test('should fail when database configuration is missing', () => {
+            delete process.env.DATABASE_URL;
+            delete process.env.DB_HOST;
+            delete process.env.DB_PORT;
+            delete process.env.DB_NAME;
+            delete process.env.DB_USER;
+            delete process.env.DB_PASSWORD;
+
+            const { validateEnvironment } = loadScript();
+
+            expect(() => validateEnvironment()).toThrow(/Invalid environment: DATABASE_URL is required/);
+        });
+
         test('should use default AWS_REGION when not provided', () => {
             delete process.env.AWS_REGION;
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
@@ -256,6 +312,54 @@ describe('Admin Bootstrap Script', () => {
 
         beforeEach(() => {
             process.argv = validArgs;
+        });
+
+        test('should instantiate default dependencies when overrides are omitted', async () => {
+            mockUserRepo.findByEmail.mockResolvedValue(null);
+            mockCognitoClient.send
+                .mockResolvedValueOnce({ User: { Username: 'generated-admin' } })
+                .mockResolvedValueOnce({})
+                .mockResolvedValueOnce({});
+
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(undefined, { cognitoClient: mockCognitoClient as any });
+
+            expect(mockCognitoClient.send).toHaveBeenCalledTimes(3);
+        });
+
+        test('should fall back to email when Cognito response lacks username', async () => {
+            mockUserRepo.findByEmail.mockResolvedValue(null);
+            mockCognitoClient.send
+                .mockResolvedValueOnce({})
+                .mockResolvedValueOnce({})
+                .mockResolvedValueOnce({});
+
+            const { bootstrapAdmin } = loadScript();
+            await bootstrapAdmin(defaultArgs, defaultDeps());
+
+            expect(mockUserRepo.createUser).toHaveBeenCalledWith(
+                expect.objectContaining({ cognitoSub: defaultArgs.email })
+            );
+        });
+
+        test('should swallow UserNotFoundException when ensuring admin group', async () => {
+            mockUserRepo.findByEmail.mockResolvedValue(null);
+            const usernameExistsError = new Error('exists');
+            (usernameExistsError as any).name = 'UsernameExistsException';
+            const userNotFoundError = new Error('missing user');
+            (userNotFoundError as any).name = 'UserNotFoundException';
+
+            mockCognitoClient.send
+                .mockRejectedValueOnce(usernameExistsError)
+                .mockResolvedValueOnce({})
+                .mockRejectedValueOnce(userNotFoundError);
+
+            const { bootstrapAdmin } = loadScript();
+            await expect(bootstrapAdmin(defaultArgs, defaultDeps())).resolves.toBeUndefined();
+
+            expect(mockUserRepo.createUser).toHaveBeenCalledWith(
+                expect.objectContaining({ email: defaultArgs.email })
+            );
         });
 
         test('should create new admin user successfully', async () => {

@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 
 export interface NotificationData {
   recipientId: string;
@@ -17,18 +18,47 @@ export interface EmailData {
   from?: string;
 }
 
+export interface NotificationServiceOptions {
+  fromEmail?: string;
+  sesRegion?: string;
+  sesClient?: SESClient;
+}
+
 /**
  * Service for sending notifications and emails
  * Handles user notifications, admin alerts, and email delivery
  */
 export class NotificationService {
-  private readonly fromEmail: string;
+  private readonly fromEmail?: string;
+  private readonly sesClient?: SESClient;
 
   constructor(
     private pool: Pool | PoolClient,
-    fromEmail: string = 'noreply@aws-community-hub.com'
+    optionsOrFromEmail?: NotificationServiceOptions | string
   ) {
-    this.fromEmail = fromEmail;
+    if (typeof optionsOrFromEmail === 'string') {
+      this.fromEmail = optionsOrFromEmail;
+    } else if (optionsOrFromEmail?.fromEmail) {
+      this.fromEmail = optionsOrFromEmail.fromEmail;
+    } else {
+      this.fromEmail =
+        process.env.NOTIFICATION_EMAIL_FROM ||
+        process.env.SES_EMAIL_SENDER ||
+        process.env.SES_FROM_EMAIL;
+    }
+
+    if (typeof optionsOrFromEmail === 'object' && optionsOrFromEmail?.sesClient) {
+      this.sesClient = optionsOrFromEmail.sesClient;
+    } else {
+      const region =
+        (typeof optionsOrFromEmail === 'object' && optionsOrFromEmail?.sesRegion) ||
+        process.env.SES_REGION ||
+        process.env.AWS_REGION;
+
+      if (this.fromEmail && region) {
+        this.sesClient = new SESClient({ region });
+      }
+    }
   }
 
   /**
@@ -128,50 +158,63 @@ export class NotificationService {
   }
 
   /**
-   * Send email (stub for actual email service)
+   * Send email using Amazon SES (when configured)
    */
   async sendEmail(emailData: EmailData): Promise<boolean> {
+    if (!this.sesClient || !this.fromEmail) {
+      console.warn('Email service is not configured; skipping email send');
+      return false;
+    }
+
     try {
-      // In production, this would use SES, SendGrid, etc.
-      console.log('Email would be sent:', {
-        from: emailData.from || this.fromEmail,
-        to: emailData.to,
-        subject: emailData.subject,
+      const toAddresses = Array.isArray(emailData.to) ? emailData.to : [emailData.to];
+      if (toAddresses.length === 0) {
+        console.warn('No recipients specified for email');
+        return false;
+      }
+
+      const command = new SendEmailCommand({
+        Source: emailData.from || this.fromEmail,
+        Destination: {
+          ToAddresses: toAddresses,
+        },
+        Message: {
+          Subject: { Data: emailData.subject, Charset: 'UTF-8' },
+          Body: {
+            Html: emailData.html ? { Data: emailData.html, Charset: 'UTF-8' } : undefined,
+            Text: emailData.body ? { Data: emailData.body, Charset: 'UTF-8' } : undefined,
+          },
+        },
       });
 
-      // TODO: Integrate with AWS SES or other email service
-      // const ses = new AWS.SES();
-      // await ses.sendEmail({...}).promise();
-
+      await this.sesClient.send(command);
       return true;
     } catch (error) {
-      console.error('Failed to send email:', error);
+      console.error('Failed to send email via SES:', error);
       return false;
     }
   }
 
   /**
    * Create a notification record
-   * In production, this would store in database and potentially push to client
    */
   private async createNotification(data: NotificationData): Promise<string> {
-    // For now, just log - in production this would insert into notifications table
-    const notificationId = `notif-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const query = `
+      INSERT INTO notifications (user_id, type, title, message, metadata, priority)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+      RETURNING id
+    `;
 
-    console.log('Notification created:', {
-      id: notificationId,
-      ...data,
-      createdAt: new Date().toISOString(),
-    });
+    const result = await this.pool.query(query, [
+      data.recipientId,
+      data.type,
+      data.title,
+      data.message,
+      JSON.stringify(data.metadata ?? {}),
+      data.priority ?? 'low',
+    ]);
 
-    // TODO: Store in database notifications table
-    // const query = `
-    //   INSERT INTO notifications (user_id, type, title, message, metadata, priority)
-    //   VALUES ($1, $2, $3, $4, $5, $6)
-    //   RETURNING id
-    // `;
-
-    return notificationId;
+    return result.rows[0].id;
   }
 
   /**

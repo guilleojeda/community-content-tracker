@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import DashboardHomeView from '@/app/dashboard/DashboardHomeView';
 
 const pushMock = jest.fn();
@@ -115,6 +115,18 @@ describe('DashboardHomeView', () => {
     await waitFor(() => expect(screen.getByText('timeout')).toBeInTheDocument());
   });
 
+  it('uses fallback message when badge service rejects with non-error payloads', async () => {
+    localStorage.setItem('accessToken', 'token');
+    mockedLoadAuthenticatedApiClient.mockResolvedValue({
+      getCurrentUser: jest.fn().mockResolvedValue(exampleUser),
+      getUserBadges: jest.fn().mockRejectedValue('bad-request'),
+      listContent: jest.fn(),
+    } as any);
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText('Failed to fetch badges')).toBeInTheDocument());
+  });
+
   it('renders metrics when data loads successfully', async () => {
     localStorage.setItem('accessToken', 'token');
     mockedLoadAuthenticatedApiClient.mockResolvedValue({
@@ -130,5 +142,73 @@ describe('DashboardHomeView', () => {
     expect(totalViewsCard).toBeTruthy();
     expect(totalViewsCard).toHaveTextContent('350');
     expect(screen.getAllByText(/Analytics/i).length).toBeGreaterThan(0);
+  });
+
+  it('shows network error when authenticated client cannot be loaded', async () => {
+    localStorage.setItem('accessToken', 'token');
+    mockedLoadAuthenticatedApiClient.mockRejectedValue('fatal');
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText('Network error')).toBeInTheDocument());
+  });
+
+  it('surfaces raw error message when authenticated client load rejects with Error', async () => {
+    localStorage.setItem('accessToken', 'token');
+    mockedLoadAuthenticatedApiClient.mockRejectedValue(new Error('client boom'));
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText('client boom')).toBeInTheDocument());
+  });
+
+  it('shows empty visibility panel state when no content exists', async () => {
+    localStorage.setItem('accessToken', 'token');
+    mockedLoadAuthenticatedApiClient.mockResolvedValue({
+      getCurrentUser: jest.fn().mockResolvedValue(exampleUser),
+      getUserBadges: jest.fn().mockResolvedValue(badges),
+      listContent: jest.fn().mockResolvedValue({ content: [] }),
+    } as any);
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText('Visibility Distribution')).toBeInTheDocument());
+    expect(screen.getByText('No data to display')).toBeInTheDocument();
+  });
+
+  it('ignores invalid metrics and sorts unknown metrics alphabetically', async () => {
+    localStorage.setItem('accessToken', 'token');
+    const quirkyContent = [
+      {
+        ...content[0],
+        metrics: {
+          views: 100,
+          applause: 4,
+          claps: 6,
+          downloads: Number.POSITIVE_INFINITY,
+          invalid: 'not-a-number',
+        },
+      },
+      {
+        ...content[1],
+        metrics: undefined,
+      },
+    ];
+
+    mockedLoadAuthenticatedApiClient.mockResolvedValue({
+      getCurrentUser: jest.fn().mockResolvedValue(exampleUser),
+      getUserBadges: jest.fn().mockResolvedValue([]),
+      listContent: jest.fn().mockResolvedValue({ content: quirkyContent }),
+    } as any);
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByTestId('total-engagement-card')).toBeInTheDocument());
+
+    const totalCard = screen.getByTestId('total-engagement-card');
+    expect(totalCard).toHaveTextContent('110');
+
+    const metricTerms = within(totalCard).getAllByRole('term');
+    expect(metricTerms[0]).toHaveTextContent('views');
+    expect(metricTerms[1]).toHaveTextContent('applause');
+    expect(metricTerms[2]).toHaveTextContent('claps');
+
+    expect(screen.queryByText(/invalid/i)).not.toBeInTheDocument();
   });
 });

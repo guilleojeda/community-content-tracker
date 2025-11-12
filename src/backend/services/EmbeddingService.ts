@@ -11,6 +11,11 @@ export interface CacheStats {
   misses: number;
 }
 
+export interface EmbeddingServiceOptions {
+  region?: string;
+  modelId?: string;
+}
+
 /**
  * Service for generating embeddings using Amazon Bedrock Titan
  * Implements caching and retry logic for optimal performance
@@ -18,7 +23,7 @@ export interface CacheStats {
 export class EmbeddingService {
   private readonly client: BedrockRuntimeClient;
   private readonly cloudwatch: CloudWatchClient;
-  private readonly modelId: string = 'amazon.titan-embed-text-v1';
+  private readonly modelId: string;
   private readonly maxRetries: number = 3;
   private readonly maxInputLength: number = 8000; // Titan's max input length
   private readonly embeddingCache: Map<string, number[]> = new Map();
@@ -27,8 +32,23 @@ export class EmbeddingService {
   private apiCalls: number = 0;
   private totalLatency: number = 0;
 
-  constructor(region?: string) {
-    const awsRegion = region || process.env.AWS_REGION || process.env.BEDROCK_REGION || 'us-east-1';
+  constructor(optionsOrRegion?: EmbeddingServiceOptions | string) {
+    const options: EmbeddingServiceOptions =
+      typeof optionsOrRegion === 'string'
+        ? { region: optionsOrRegion }
+        : optionsOrRegion ?? {};
+
+    const awsRegion =
+      options.region ||
+      process.env.AWS_REGION ||
+      process.env.BEDROCK_REGION ||
+      'us-east-1';
+
+    this.modelId =
+      options.modelId ||
+      process.env.BEDROCK_MODEL_ID ||
+      'amazon.titan-embed-text-v1';
+
     this.client = new BedrockRuntimeClient({ region: awsRegion });
     this.cloudwatch = new CloudWatchClient({ region: awsRegion });
   }

@@ -1,4 +1,4 @@
-import { handler } from '../../../../src/backend/lambdas/search/search';
+import { handler } from '@lambdas/search/searchHandler';
 import { getDatabasePool } from '../../../../src/backend/services/database';
 import { ContentType, Visibility, BadgeType } from '@aws-community-hub/shared';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
@@ -167,16 +167,25 @@ describe('GET /search Lambda handler', () => {
       mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
 
       // Act
-      const response = await handler(event) as APIGatewayProxyResult;
+    const response = await handler(event) as APIGatewayProxyResult;
 
-      // Assert
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.body);
-      expect(body.items).toHaveLength(1);
-      expect(body.total).toBe(1);
-      expect(body.items[0].title).toBe('AWS Lambda Guide');
-      expect(response.headers?.['X-RateLimit-Remaining']).toBeDefined();
-    });
+    // Assert
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.items).toHaveLength(1);
+    expect(body.total).toBe(1);
+    expect(body.items[0].title).toBe('AWS Lambda Guide');
+    expect(response.headers?.['X-RateLimit-Remaining']).toBeDefined();
+    expect(mockSearchService.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: 'AWS Lambda',
+        filters: undefined,
+      }),
+      false,
+      [],
+      false
+    );
+  });
 
     it('should return 400 for missing query parameter', async () => {
       // Arrange
@@ -455,6 +464,19 @@ describe('GET /search Lambda handler', () => {
       );
     });
 
+    it('returns validation error when startDate is after endDate', async () => {
+      const event = createEvent({
+        q: 'AWS',
+        startDate: '2024-02-01',
+        endDate: '2024-01-01'
+      });
+
+      const response = await handler(event) as APIGatewayProxyResult;
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.error.message).toContain('startDate must be before endDate');
+    });
+
     it('should filter by visibility', async () => {
       const event = createEvent({
         q: 'AWS',
@@ -591,6 +613,31 @@ describe('GET /search Lambda handler', () => {
         false
       );
     });
+
+    it('ignores malformed badge payloads in authorizer context', async () => {
+      const event = createEvent(
+        { q: 'AWS' },
+        { userId: 'user-123', badges: 'not-json' }
+      );
+
+      const mockResults = {
+        items: [],
+        total: 0,
+        limit: 10,
+        offset: 0
+      };
+
+      mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
+
+      await handler(event);
+
+      expect(mockSearchService.search).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'AWS' }),
+        true,
+        [],
+        false
+      );
+    });
   });
 
   describe('error handling', () => {
@@ -697,6 +744,33 @@ describe('GET /search Lambda handler', () => {
     });
   });
 
+  describe('rate limit configuration defaults', () => {
+    it('falls back to documented defaults when environment values are invalid', async () => {
+      process.env.RATE_LIMIT_ANONYMOUS = '-1';
+      process.env.RATE_LIMIT_AUTHENTICATED = '0';
+      process.env.RATE_LIMIT_WINDOW_MINUTES = '0';
+
+      const event = createEvent({ q: 'AWS' });
+      const mockResults = {
+        items: [],
+        total: 0,
+        limit: 10,
+        offset: 0
+      };
+
+      mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
+
+      await handler(event);
+
+      expect(mockConsumeRateLimit).toHaveBeenCalledWith(
+        expect.stringMatching(/^search:ip:/),
+        100,
+        60_000,
+        'anon'
+      );
+    });
+  });
+
   describe('CORS headers', () => {
     it('should include CORS headers in response', async () => {
       // Arrange
@@ -721,5 +795,22 @@ describe('GET /search Lambda handler', () => {
         Vary: 'Origin',
       });
     });
+  });
+
+  it('falls back to anonymous identifiers when request context is missing', async () => {
+    const event = createEvent({ q: 'AWS' }) as APIGatewayProxyEvent;
+    (event as any).requestContext = undefined;
+
+    const mockResults = { items: [], total: 0, limit: 10, offset: 0 };
+    mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
+
+    await handler(event);
+
+    expect(mockConsumeRateLimit).toHaveBeenCalledWith(
+      'search:ip:anonymous',
+      100,
+      60_000,
+      'anon'
+    );
   });
 });
