@@ -104,7 +104,6 @@ export async function handler(
 
     // Process claims
     const results: ClaimResult[] = [];
-    const errors: string[] = [];
 
     for (const contentId of contentIds) {
       try {

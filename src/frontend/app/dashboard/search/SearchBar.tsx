@@ -110,7 +110,7 @@ export default function SearchBar({
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [query, onFetchSuggestions]);
+  }, [query, onFetchSuggestions, skipNextSuggestionFetch, isTestEnvironment]);
 
   // Keyboard navigation for autocomplete
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

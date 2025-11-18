@@ -5,6 +5,7 @@
     "types": "dist/types/index.d.ts",
     "scripts": {
       "build": "tsc",
+      "lint": "eslint . --ext .ts --max-warnings=0",
       "typecheck": "tsc --noEmit"
     },
     "devDependencies": {

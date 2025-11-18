@@ -59,7 +59,7 @@ const databaseStack = new DatabaseStack(app, `CommunityContentHub-Database-${env
 });
 
 // Create Static Site Stack
-const staticSiteStack = new StaticSiteStack(app, `CommunityContentHub-StaticSite-${envCapitalized}`, {
+new StaticSiteStack(app, `CommunityContentHub-StaticSite-${envCapitalized}`, {
   ...commonProps,
   environment,
   domainName,

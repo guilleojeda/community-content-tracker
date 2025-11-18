@@ -237,7 +237,7 @@ export class ContentRepository extends BaseRepository {
 
     // First, replace $VISIBILITY_FILTER with the clause
     let query = baseQuery.replace('$VISIBILITY_FILTER', visibilityFilter.clause);
-    let currentParams = [...params];
+    const currentParams = [...params];
 
     // Then, replace $PARAM placeholders with actual parameter indices
     visibilityFilter.params.forEach(param => {

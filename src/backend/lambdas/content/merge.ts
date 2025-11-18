@@ -1,7 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { PoolClient } from 'pg';
 import { ContentRepository } from '../../repositories/ContentRepository';
-import { UserRepository } from '../../repositories/UserRepository';
 import { AuditLogService } from '../../services/AuditLogService';
 import { NotificationService } from '../../services/NotificationService';
 import {
@@ -75,7 +73,6 @@ export async function handler(
 
     const dbPool = await getDatabasePool();
     const contentRepository = new ContentRepository(dbPool);
-    const userRepository = new UserRepository(dbPool);
     const auditLogService = new AuditLogService(dbPool);
     const notificationService = new NotificationService(dbPool);
 

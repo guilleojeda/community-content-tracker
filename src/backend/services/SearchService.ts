@@ -1,4 +1,4 @@
-import { SearchRequest, Content, BadgeType, ContentType, Visibility } from '../../shared/types';
+import { SearchRequest, Content, BadgeType, Visibility } from '../../shared/types';
 import { ContentRepository } from '../repositories/ContentRepository';
 import { EmbeddingService } from './EmbeddingService';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
@@ -262,7 +262,7 @@ export class SearchService {
     // Apply pagination and remove scoring metadata
     return sortedResults
       .slice(offset, offset + limit)
-      .map(({ similarity, rank, combinedScore, ...content }) => content as Content);
+      .map(({ similarity: _similarity, rank: _rank, combinedScore: _combinedScore, ...content }) => content as Content);
   }
 
   /**

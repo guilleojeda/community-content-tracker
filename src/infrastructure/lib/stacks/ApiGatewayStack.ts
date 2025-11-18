@@ -362,7 +362,7 @@ export class ApiGatewayStack extends cdk.Stack {
     usagePlan.addApiKey(apiKey);
 
     // CloudWatch Logs for API Gateway
-    const logGroup = new logs.LogGroup(this, 'ApiGatewayLogGroup', {
+    new logs.LogGroup(this, 'ApiGatewayLogGroup', {
       logGroupName: `/aws/apigateway/community-content-tracker-${this.envName}`,
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -755,7 +755,7 @@ export class ApiGatewayStack extends cdk.Stack {
     path: string,
     lambdaFunction: lambda.IFunction,
     httpMethod: string = 'GET',
-    requireAdmin: boolean = false
+    _requireAdmin: boolean = false
   ): apigateway.Method {
     // Lazily create authorizer on first use to avoid validation error
     if (!this.authorizer) {

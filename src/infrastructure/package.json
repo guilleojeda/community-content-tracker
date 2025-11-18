@@ -18,7 +18,7 @@
     "deploy:prod": "npm run test:all && npm run build:frontend && cdk deploy --all --context environment=prod",
     "destroy:dev": "cdk destroy --all --context environment=dev",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint . --ext .ts --max-warnings=0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

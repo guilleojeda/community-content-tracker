@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { downloadBlob } from '@/utils/download';
@@ -102,29 +102,10 @@ export default function AuthenticatedSearchPage() {
     return parsed;
   }, []);
 
-  // Load initial search from URL params
+  const resultsRef = useRef<ApiSearchResponse | null>(null);
   useEffect(() => {
-    if (!searchParams) return;
-
-    const q = searchParams.get('q');
-    const urlFilters = parseFiltersFromUrl(searchParams);
-    const urlSort = searchParams.get('sortBy') as 'relevance' | 'date' | null;
-    const page = searchParams.get('page');
-    const mode = searchParams.get('mode');
-
-    // Set state from URL
-    if (q) setQuery(q);
-    if (Object.keys(urlFilters).length > 0) setFilters(urlFilters);
-    if (urlSort) setSortBy(urlSort);
-    if (page) setCurrentPage(parseInt(page, 10));
-    if (mode === 'advanced') setUseAdvanced(true);
-
-    // Perform search if query exists
-    if (q) {
-      const offset = page ? (parseInt(page, 10) - 1) * resultsPerPage : 0;
-      performSearch({ q, filters: urlFilters, sortBy: urlSort || 'relevance', offset });
-    }
-  }, []);
+    resultsRef.current = results;
+  }, [results]);
 
   const performSearch = useCallback(async (params: SearchParams) => {
     setLoading(true);
@@ -139,7 +120,7 @@ export default function AuthenticatedSearchPage() {
 
       if (useAdvanced || searchWithinResults) {
         const withinIds =
-          searchWithinResults && results ? results.items.map(item => item.id) : undefined;
+          searchWithinResults && resultsRef.current ? resultsRef.current.items.map(item => item.id) : undefined;
 
         const advanced = await client.advancedSearch({
           query: q,
@@ -288,7 +269,36 @@ export default function AuthenticatedSearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [addToHistory, filters, resultsPerPage, useAdvanced, searchWithinResults, results]);
+  }, [addToHistory, resultsPerPage, useAdvanced, searchWithinResults]);
+
+  const performSearchRef = useRef(performSearch);
+  useEffect(() => {
+    performSearchRef.current = performSearch;
+  }, [performSearch]);
+
+  // Load initial search from URL params
+  useEffect(() => {
+    if (!searchParams) return;
+
+    const q = searchParams.get('q');
+    const urlFilters = parseFiltersFromUrl(searchParams);
+    const urlSort = searchParams.get('sortBy') as 'relevance' | 'date' | null;
+    const page = searchParams.get('page');
+    const mode = searchParams.get('mode');
+
+    // Set state from URL
+    if (q) setQuery(q);
+    if (Object.keys(urlFilters).length > 0) setFilters(urlFilters);
+    if (urlSort) setSortBy(urlSort);
+    if (page) setCurrentPage(parseInt(page, 10));
+    if (mode === 'advanced') setUseAdvanced(true);
+
+    // Perform search if query exists
+    if (q) {
+      const offset = page ? (parseInt(page, 10) - 1) * resultsPerPage : 0;
+      performSearchRef.current?.({ q, filters: urlFilters, sortBy: urlSort || 'relevance', offset });
+    }
+  }, [parseFiltersFromUrl, resultsPerPage, searchParams]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -522,7 +532,7 @@ export default function AuthenticatedSearchPage() {
               </div>
               <p className="text-xs text-gray-500">
                 Use boolean operators (AND, OR, NOT), exact phrases with quotes, wildcards (*), and save reusable
-                queries. Enable "search within results" to refine using the current result set.
+                queries. Enable &quot;search within results&quot; to refine using the current result set.
               </p>
               {searchMessage && (
                 <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">

@@ -22,8 +22,8 @@ async function getApiClientModule() {
  * Lazily resolve the shared authenticated API client singleton.
  */
 export async function loadSharedApiClient(): Promise<ApiClient> {
-  const module = await getApiModule();
-  return module.apiClient;
+  const apiModule = await getApiModule();
+  return apiModule.apiClient;
 }
 
 /**
@@ -33,14 +33,14 @@ export async function loadSharedApiClient(): Promise<ApiClient> {
 export async function loadAuthenticatedApiClient(
   config?: ApiClientConfig
 ): Promise<ApiClient> {
-  const module = await getApiClientModule();
-  return module.getAuthenticatedApiClient(config);
+  const apiClientModule = await getApiClientModule();
+  return apiClientModule.getAuthenticatedApiClient(config);
 }
 
 /**
  * Lazily resolve the unauthenticated/public API client.
  */
 export async function loadPublicApiClient(config?: ApiClientConfig): Promise<ApiClient> {
-  const module = await getApiClientModule();
-  return module.getPublicApiClient(config);
+  const apiClientModule = await getApiClientModule();
+  return apiClientModule.getPublicApiClient(config);
 }

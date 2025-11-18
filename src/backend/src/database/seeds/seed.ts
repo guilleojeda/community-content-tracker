@@ -1,7 +1,7 @@
 /* istanbul ignore file */
 
 import { db } from '../config/database';
-import { User, Visibility, ContentType, BadgeType } from '@aws-community-hub/shared';
+import { Visibility, ContentType, BadgeType } from '@aws-community-hub/shared';
 
 /**
  * Development seed data script

@@ -4,7 +4,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { ChannelRepository } from '../../repositories/ChannelRepository';
 import { ChannelType, ContentType, ContentProcessorMessage } from '../../../shared/types';
 import { getDatabasePool } from '../../services/database';
-import { ExternalApiError, ThrottlingError, ValidationError, formatErrorForLogging } from '../../../shared/errors';
+import { ExternalApiError, ValidationError, formatErrorForLogging } from '../../../shared/errors';
 import { createSendMessageCommand } from '../../utils/sqs';
 
 const sqsClient = new SQSClient({ region: process.env.AWS_REGION || 'us-east-1' });
@@ -182,10 +182,10 @@ function extractChannelIdOrPlaylistId(url: string): ChannelInfo {
 
   // Support various YouTube channel URL formats
   const channelPatterns = [
-    /youtube\.com\/channel\/([^\/\?]+)/,
-    /youtube\.com\/c\/([^\/\?]+)/,
-    /youtube\.com\/user\/([^\/\?]+)/,
-    /youtube\.com\/@([^\/\?]+)/,
+    /youtube\.com\/channel\/([^/?]+)/,
+    /youtube\.com\/c\/([^/?]+)/,
+    /youtube\.com\/user\/([^/?]+)/,
+    /youtube\.com\/@([^/?]+)/,
   ];
 
   for (const pattern of channelPatterns) {
@@ -202,7 +202,6 @@ async function fetchChannelVideos(channelIdentifier: string, lastSyncAt?: Date):
   const apiKey = await getYouTubeApiKey();
 
   try {
-    let uploadsPlaylistId: string;
 
     // Step 1: Get channel ID if we have a username/handle
     let channelId = channelIdentifier;
@@ -257,7 +256,7 @@ async function fetchChannelVideos(channelIdentifier: string, lastSyncAt?: Date):
       throw notFoundError;
     }
 
-    uploadsPlaylistId = channelDetails.items[0].contentDetails.relatedPlaylists.uploads;
+    const uploadsPlaylistId = channelDetails.items[0].contentDetails.relatedPlaylists.uploads;
 
     // Rate limit protection between API calls
     await throttle(300);
@@ -392,7 +391,7 @@ async function sendToQueue(channelId: string, userId: string, video: YouTubeVide
 }
 
 export const handler = async (
-  event: ScheduledEvent,
+  _event: ScheduledEvent,
   context: Context
 ): Promise<void> => {
   console.log('Starting YouTube Channel scraper');

@@ -1,5 +1,4 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { ContentType, Visibility } from '@aws-community-hub/shared';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
@@ -52,7 +51,6 @@ export const handler = async (
 
     // Get database pool
     const dbPool = await getDatabasePool();
-    const contentRepo = new ContentRepository(dbPool);
     const userRepo = new UserRepository(dbPool);
 
     // Get user information for visibility filtering

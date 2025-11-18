@@ -3,7 +3,6 @@ import { CognitoIdentityProviderClient, ConfirmSignUpCommand } from '@aws-sdk/cl
 import { VerifyEmailRequest, VerifyEmailResponse } from '../../../shared/types';
 import {
   validateVerifyEmailInput,
-  parseQueryParams,
   createErrorResponse,
   createSuccessResponse,
   mapCognitoError,

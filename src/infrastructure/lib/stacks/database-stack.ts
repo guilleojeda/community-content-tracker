@@ -246,7 +246,7 @@ export class DatabaseStack extends cdk.Stack {
     });
 
     // Enable pgvector extension
-    const pgvectorEnabler = new PgVectorEnabler(this, 'PgVectorEnabler', {
+    new PgVectorEnabler(this, 'PgVectorEnabler', {
       cluster: this.cluster,
       databaseSecret: this.databaseSecret,
       vpc: this.vpc,

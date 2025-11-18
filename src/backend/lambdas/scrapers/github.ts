@@ -1,5 +1,4 @@
 import { ScheduledEvent, Context } from 'aws-lambda';
-import { Pool } from 'pg';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { ChannelRepository } from '../../repositories/ChannelRepository';
@@ -187,7 +186,7 @@ function filterReposByMetadata(repos: GitHubRepo[], metadata?: Record<string, an
 
 function extractOwnerAndRepo(url: string): { owner: string; repo: string } | null {
   // Support various GitHub URL formats
-  const pattern = /github\.com\/([^\/]+)\/([^\/\?#]+)/;
+  const pattern = /github\.com\/([^/]+)\/([^/?#]+)/;
   const match = url.match(pattern);
 
   if (match) {
@@ -280,7 +279,8 @@ async function fetchOrganizationRepos(org: string, lastSyncAt?: Date): Promise<G
   let page = 1;
   const perPage = 100;
 
-  while (true) {
+  let hasMore = true;
+  while (hasMore) {
     const response = await fetchWithGitHub(
       `https://api.github.com/orgs/${org}/repos?per_page=${perPage}&page=${page}&sort=updated`
     );
@@ -317,10 +317,10 @@ async function fetchOrganizationRepos(org: string, lastSyncAt?: Date): Promise<G
     }
 
     if (data.length < perPage) {
-      break;
+      hasMore = false;
+    } else {
+      page++;
     }
-
-    page++;
   }
 
   return repos;
@@ -384,7 +384,7 @@ async function sendToQueue(channelId: string, userId: string, repo: GitHubRepo):
 }
 
 export const handler = async (
-  event: ScheduledEvent,
+  _event: ScheduledEvent,
   context: Context
 ): Promise<void> => {
   if (process.env.NODE_ENV === 'test') {
@@ -423,7 +423,7 @@ export const handler = async (
         let repos: GitHubRepo[] = [];
 
         // Check if this is an organization (based on metadata or URL pattern)
-        const orgMatch = channel.url.match(/github\.com\/orgs\/([^\/\?#]+)/);
+        const orgMatch = channel.url.match(/github\.com\/orgs\/([^/?#]+)/);
         const metadataOrg = channel.metadata?.organization || channel.metadata?.org;
         let organization = orgMatch ? orgMatch[1] : metadataOrg;
         if (!organization && parsed.owner === 'orgs' && parsed.repo) {

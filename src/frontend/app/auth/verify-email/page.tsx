@@ -74,7 +74,7 @@ function VerifyEmailContent() {
         <h1 className="text-3xl font-bold text-center mb-6 text-aws-blue">Verify Email</h1>
 
         <p className="text-center text-gray-600 mb-6">
-          We've sent a verification code to <strong>{email}</strong>
+          We&rsquo;ve sent a verification code to <strong>{email}</strong>
         </p>
 
         {error && (
@@ -125,7 +125,7 @@ function VerifyEmailContent() {
         )}
 
         <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Didn't receive the code?</p>
+          <p>Didn&rsquo;t receive the code?</p>
           <button
             onClick={handleResend}
             disabled={resendLoading}

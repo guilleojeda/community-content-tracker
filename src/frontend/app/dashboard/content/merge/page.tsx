@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Content } from '@shared/types';
 import { loadSharedApiClient } from '@/lib/api/lazyClient';
@@ -43,15 +43,7 @@ export default function ContentMergePage() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (activeTab === 'duplicates') {
-      loadDuplicates();
-    } else {
-      loadMergeHistory();
-    }
-  }, [activeTab, dateFilter, historyPage]);
-
-  const loadDuplicates = async () => {
+  const loadDuplicates = useCallback(async () => {
     setLoading(true);
    setError(null);
     try {
@@ -77,9 +69,9 @@ export default function ContentMergePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadMergeHistory = async () => {
+  const loadMergeHistory = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -106,7 +98,15 @@ export default function ContentMergePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateFilter, historyPage]);
+
+  useEffect(() => {
+    if (activeTab === 'duplicates') {
+      loadDuplicates();
+    } else {
+      loadMergeHistory();
+    }
+  }, [activeTab, loadDuplicates, loadMergeHistory]);
 
   const handleCheckboxChange = (id: string) => {
     setSelectedIds(prev =>

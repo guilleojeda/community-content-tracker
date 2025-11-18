@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+.next
+out
+cdk.out
+src/frontend/.next
+src/frontend/out
+src/frontend/out-static

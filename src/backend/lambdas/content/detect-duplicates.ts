@@ -1,4 +1,4 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
+import { APIGatewayProxyEvent, APIGatewayProxyResult, Context, ScheduledEvent } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { normalizeUrl } from '../../utils/url-normalization';
@@ -206,22 +206,6 @@ async function detectDuplicatesForUser(pool: any, userId: string): Promise<any[]
   const embeddingResult = await pool.query(embeddingSimilarityQuery, [userId]);
   duplicates.push(...embeddingResult.rows);
 
-  // Remove duplicate pairs (same content pair detected by multiple methods)
-  const uniqueDuplicates = Array.from(
-    new Map(
-      duplicates.map((dup) => [
-        `${dup.id1}-${dup.id2}`,
-        {
-          content1: { id: dup.id1, title: dup.title1 },
-          content2: { id: dup.id2, title: dup.title2 },
-          similarity: parseFloat(dup.similarity),
-          similarityType: dup.similarity_type,
-          url: dup.url || undefined,
-        },
-      ])
-    ).values()
-  );
-
   return duplicates;
 }
 
@@ -233,14 +217,14 @@ async function detectDuplicatesForUser(pool: any, userId: string): Promise<any[]
  * Also supports EventBridge scheduled invocations for batch processing
  */
 export async function handler(
-  event: any,
+  event: APIGatewayProxyEvent | ScheduledEvent,
   context: Context
 ): Promise<APIGatewayProxyResult | void> {
   try {
     const pool = await getDatabasePool();
 
     // Check if this is a scheduled EventBridge invocation
-    const isScheduledEvent = event.source === 'aws.events';
+    const isScheduledEvent = 'source' in event && event.source === 'aws.events';
 
     if (isScheduledEvent) {
       // Scheduled mode: Process all users
@@ -282,7 +266,8 @@ export async function handler(
       return; // No response needed for scheduled events
     } else {
       // API Gateway mode: Process single user
-      const authorizer: any = event.requestContext?.authorizer;
+      const apiEvent = event as APIGatewayProxyEvent;
+      const authorizer: any = apiEvent.requestContext?.authorizer;
       if (!authorizer || !authorizer.userId) {
         return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
       }

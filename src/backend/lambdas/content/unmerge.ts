@@ -21,8 +21,6 @@ export async function handler(
   try {
     // Extract user ID from authorizer context
     const userId = event.requestContext.authorizer?.userId;
-    const isAdmin = event.requestContext.authorizer?.isAdmin === 'true' ||
-                    event.requestContext.authorizer?.isAdmin === true;
 
     if (!userId) {
       return createErrorResponse(

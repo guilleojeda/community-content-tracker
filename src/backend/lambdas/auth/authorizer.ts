@@ -7,8 +7,6 @@ import {
   getUserBadges,
   generatePolicyDocument,
   validateMethodArn,
-  parseMethodArn,
-  getContentAccessLevel,
   logSecurityEvent,
   detectSuspiciousActivity,
   PolicyDocument,

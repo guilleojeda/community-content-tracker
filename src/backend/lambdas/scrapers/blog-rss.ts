@@ -114,7 +114,7 @@ async function sendToQueue(channelId: string, userId: string, post: RSSItem): Pr
 }
 
 export const handler = async (
-  event: ScheduledEvent,
+  _event: ScheduledEvent,
   context: Context
 ): Promise<void> => {
   console.log('Starting Blog RSS scraper');

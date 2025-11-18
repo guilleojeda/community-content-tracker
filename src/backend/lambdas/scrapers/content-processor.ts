@@ -1,18 +1,11 @@
-import { SQSEvent, SQSRecord, Context } from 'aws-lambda';
-import { Pool } from 'pg';
+import { SQSEvent, Context } from 'aws-lambda';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { CloudWatchClient, PutMetricDataCommand, StandardUnit } from '@aws-sdk/client-cloudwatch';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { ContentProcessorMessage, Visibility } from '../../../shared/types';
 import { getDatabasePool } from '../../services/database';
-import {
-  InternalError,
-  ExternalApiError,
-  DatabaseError,
-  shouldRetry,
-  formatErrorForLogging
-} from '../../../shared/errors';
+import { ExternalApiError, shouldRetry, formatErrorForLogging } from '../../../shared/errors';
 
 const bedrockClient = new BedrockRuntimeClient({
   region: process.env.BEDROCK_REGION || 'us-east-1',

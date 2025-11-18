@@ -174,7 +174,7 @@ function ResetPasswordContent() {
         )}
 
         <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Didn't receive the code?</p>
+          <p>Didn&rsquo;t receive the code?</p>
           <a href="/auth/forgot-password" className="text-aws-orange hover:underline font-medium mt-2 inline-block">
             Request new code
           </a>

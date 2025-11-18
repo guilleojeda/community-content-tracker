@@ -275,7 +275,7 @@ export class CognitoStack extends cdk.Stack {
     });
   }
 
-  private createAdminGroup(config: EnvironmentConfig): cognito.CfnUserPoolGroup {
+  private createAdminGroup(_config: EnvironmentConfig): cognito.CfnUserPoolGroup {
     // Create IAM role for admin group
     const adminRole = new iam.Role(this, 'AdminGroupRole', {
       assumedBy: new iam.FederatedPrincipal(

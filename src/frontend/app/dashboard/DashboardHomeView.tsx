@@ -42,6 +42,8 @@ const QuickActionsPanel = dynamic(() => import('./components/QuickActionsPanel')
   loading: () => <div className="bg-white p-6 rounded-lg shadow animate-pulse h-40" />,
 });
 
+const PRIORITIZED_METRICS = ['views', 'likes', 'stars', 'downloads', 'comments', 'shares'];
+
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -135,14 +137,13 @@ export default function DashboardPage() {
     [content]
   );
 
-  const prioritizedMetrics = ['views', 'likes', 'stars', 'downloads', 'comments', 'shares'];
   const sortedEngagementEntries = useMemo(
     () =>
       Object.entries(engagementBreakdown).sort((a, b) => {
         const [metricA] = a;
         const [metricB] = b;
-        const priorityA = prioritizedMetrics.indexOf(metricA);
-        const priorityB = prioritizedMetrics.indexOf(metricB);
+        const priorityA = PRIORITIZED_METRICS.indexOf(metricA);
+        const priorityB = PRIORITIZED_METRICS.indexOf(metricB);
 
         if (priorityA !== -1 || priorityB !== -1) {
           if (priorityA === -1) return 1;

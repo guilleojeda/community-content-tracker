@@ -669,7 +669,7 @@ export default function ContentManagementPage() {
           <div className="bg-white rounded-lg max-w-md w-full p-6">
             <h3 className="text-xl font-bold mb-4">Confirm Deletion</h3>
             <p className="mb-6">
-              Are you sure you want to delete "{selectedContent.title}"? This action cannot be undone.
+              Are you sure you want to delete &ldquo;{selectedContent.title}&rdquo;? This action cannot be undone.
             </p>
 
             <div className="flex justify-end gap-3">

@@ -60,7 +60,7 @@ async function handleDashboardStats(event: APIGatewayProxyEvent): Promise<APIGat
       GROUP BY badge_type
     `;
     const badgeStatsResult = await pool.query(badgeStatsQuery);
-    const usersByBadgeType: Record<string, number> = {};
+    const usersByBadgeType: Partial<Record<BadgeType, number>> = {};
     badgeStatsResult.rows.forEach((row: any) => {
       usersByBadgeType[row.badge_type] = parseInt(row.count, 10);
     });

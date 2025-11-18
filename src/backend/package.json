@@ -4,6 +4,7 @@
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc",
+        "lint": "eslint . --ext .ts --max-warnings=0",
         "test": "jest --detectOpenHandles",
         "test:watch": "jest --watch",
         "test:coverage": "jest --coverage --detectOpenHandles",

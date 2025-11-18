@@ -5,7 +5,7 @@ import { CloudWatchClient, PutMetricDataCommand, StandardUnit } from '@aws-sdk/c
 import { ChannelRepository } from '../../repositories/ChannelRepository';
 import { ChannelType } from '../../../shared/types';
 import { getDatabasePool } from '../../services/database';
-import { ExternalApiError, ValidationError, formatErrorForLogging } from '../../../shared/errors';
+import { ExternalApiError, formatErrorForLogging } from '../../../shared/errors';
 
 const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const cloudWatchClient = new CloudWatchClient({ region: process.env.AWS_REGION || 'us-east-1' });

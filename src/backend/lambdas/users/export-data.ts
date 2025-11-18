@@ -13,7 +13,6 @@ import {
 } from '../../../shared/types';
 import {
   createErrorResponse,
-  createSuccessResponse,
   extractTokenFromHeader,
 } from '../auth/utils';
 import { verifyJwtToken, TokenVerifierConfig } from '../auth/tokenVerifier';

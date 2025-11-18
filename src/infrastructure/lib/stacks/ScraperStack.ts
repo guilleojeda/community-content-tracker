@@ -332,7 +332,7 @@ export class ScraperStack extends cdk.Stack {
       statistic: 'Sum',
     });
 
-    const orchestratorErrorAlarm = orchestratorErrorMetric.createAlarm(this, 'OrchestratorErrorAlarm', {
+    orchestratorErrorMetric.createAlarm(this, 'OrchestratorErrorAlarm', {
       alarmName: `scraper-orchestrator-errors-${environment}`,
       alarmDescription: 'Alert when orchestrator Lambda has errors',
       threshold: 3,
@@ -346,7 +346,7 @@ export class ScraperStack extends cdk.Stack {
       statistic: 'Sum',
     });
 
-    const processorErrorAlarm = processorErrorMetric.createAlarm(this, 'ProcessorErrorAlarm', {
+    processorErrorMetric.createAlarm(this, 'ProcessorErrorAlarm', {
       alarmName: `content-processor-errors-${environment}`,
       alarmDescription: 'Alert when content processor Lambda has errors',
       threshold: 10,

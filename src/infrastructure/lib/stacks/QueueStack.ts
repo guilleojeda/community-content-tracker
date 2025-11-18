@@ -62,7 +62,7 @@ export class QueueStack extends cdk.Stack {
     });
 
     // CloudWatch Alarm for DLQ messages
-    const dlqAlarm = new cloudwatch.Alarm(this, 'DLQAlarm', {
+    new cloudwatch.Alarm(this, 'DLQAlarm', {
       alarmName: `content-processing-dlq-alarm-${environment}`,
       alarmDescription: 'Alarm when messages appear in DLQ',
       metric: this.contentProcessingDLQ.metricApproximateNumberOfMessagesVisible(),
@@ -73,7 +73,7 @@ export class QueueStack extends cdk.Stack {
     });
 
     // CloudWatch Alarm for old messages in main queue
-    const oldMessagesAlarm = new cloudwatch.Alarm(this, 'OldMessagesAlarm', {
+    new cloudwatch.Alarm(this, 'OldMessagesAlarm', {
       alarmName: `content-processing-old-messages-${environment}`,
       alarmDescription: 'Alarm when messages are stuck in queue for too long',
       metric: this.contentProcessingQueue.metricApproximateAgeOfOldestMessage(),

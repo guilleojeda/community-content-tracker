@@ -5,9 +5,7 @@ import {
   VerifySoftwareTokenCommand,
   SetUserMFAPreferenceCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
-import { MfaSetupResponse } from '../../../shared/types';
 import {
-  parseRequestBody,
   createErrorResponse,
   createSuccessResponse,
   extractTokenFromHeader,

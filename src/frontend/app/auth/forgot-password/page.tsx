@@ -40,7 +40,7 @@ export default function ForgotPasswordPage() {
         </h1>
 
         <p className="text-center text-gray-600 mb-6">
-          Enter your email address and we'll send you a code to reset your password.
+          Enter your email address and we&rsquo;ll send you a code to reset your password.
         </p>
 
         {error && (
@@ -51,7 +51,7 @@ export default function ForgotPasswordPage() {
 
         {success && (
           <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
-            Reset code sent! Check your email and you'll be redirected to enter the code.
+            Reset code sent! Check your email and you&rsquo;ll be redirected to enter the code.
           </div>
         )}
 

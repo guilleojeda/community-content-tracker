@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { UserAnalyticsData, CsvDownload } from '@/api';
 import { downloadBlob } from '@/utils/download';
@@ -53,11 +53,21 @@ export default function AnalyticsDashboardPage(): JSX.Element {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyPagination, setHistoryPagination] = useState({ total: 0, limit: 10, offset: 0 });
 
-  const loadAnalytics = async (override?: Partial<typeof filters>) => {
+  const filtersRef = useRef(filters);
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+
+  const historyPaginationRef = useRef(historyPagination);
+  useEffect(() => {
+    historyPaginationRef.current = historyPagination;
+  }, [historyPagination]);
+
+  const loadAnalytics = useCallback(async (override?: Partial<typeof filters>) => {
     setLoading(true);
     setError(null);
     try {
-      const params = { ...filters, ...override };
+      const params = { ...filtersRef.current, ...override };
       const client = await loadSharedApiClient();
       const data = await client.getUserAnalytics({
         startDate: params.startDate,
@@ -81,15 +91,16 @@ export default function AnalyticsDashboardPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadExportHistory = async (override?: { limit?: number; offset?: number }) => {
+  const loadExportHistory = useCallback(async (override?: { limit?: number; offset?: number }) => {
     setHistoryLoading(true);
     setHistoryError(null);
 
     try {
-      const limit = override?.limit ?? historyPagination.limit ?? 10;
-      const offset = override?.offset ?? (override?.offset === 0 ? 0 : historyPagination.offset ?? 0);
+      const currentPagination = historyPaginationRef.current;
+      const limit = override?.limit ?? currentPagination.limit ?? 10;
+      const offset = override?.offset ?? (override?.offset === 0 ? 0 : currentPagination.offset ?? 0);
       const client = await loadSharedApiClient();
       const response = await client.getExportHistory({ limit, offset });
       setHistory(response.history);
@@ -103,13 +114,12 @@ export default function AnalyticsDashboardPage(): JSX.Element {
     } finally {
       setHistoryLoading(false);
     }
-  };
+  }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadAnalytics();
     loadExportHistory({ offset: 0 });
-  }, []);
+  }, [loadAnalytics, loadExportHistory]);
 
   const handleExportAnalytics = async () => {
     setExporting(true);
