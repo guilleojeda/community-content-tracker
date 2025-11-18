@@ -41,6 +41,7 @@ cdk.out/
 *.js
 !jest.config.js
 !next.config.js
+!src/frontend/config/validateEnv.js
 *.d.ts
 !*.config.d.ts
 !src/**/*.d.ts
