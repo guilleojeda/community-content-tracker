@@ -1,5 +1,9 @@
 name: Deploy to Development
 
+permissions:
+  contents: read
+  deployments: write
+
 on:
   push:
     branches: [main]
