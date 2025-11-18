@@ -19,7 +19,7 @@ module.exports = {
       statements: 90
     }
   },
-  setupFilesAfterEnv: ['<rootDir>/../../tests/infrastructure/setup-tests.ts'],
+  setupFiles: ['<rootDir>/../../tests/infrastructure/setup-tests.ts'],
   forceExit: true,
   maxWorkers: '50%'
 };
