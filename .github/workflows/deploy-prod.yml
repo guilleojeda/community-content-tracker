@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
   AWS_REGION: 'us-east-1'
   ENVIRONMENT: 'production'
   S3_BUCKET: ${{ secrets.PROD_ARTIFACTS_BUCKET }}
@@ -323,7 +323,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --omit=optional
 
       - name: Build production applications
         run: npm run build
@@ -405,7 +405,7 @@ jobs:
           key: deploy-prod-${{ needs.pre-production-validation.outputs.deploy-sha }}
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --omit=optional
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
