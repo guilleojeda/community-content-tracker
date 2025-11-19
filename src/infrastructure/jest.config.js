@@ -1,3 +1,5 @@
+const path = require('path');
+
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
@@ -19,8 +21,8 @@ module.exports = {
       statements: 90
     }
   },
-  setupFiles: ['<rootDir>/../../tests/infrastructure/setup-tests.ts'],
-  setupFilesAfterEnv: ['<rootDir>/../../tests/setup/consoleMock.js'],
+  setupFiles: [path.resolve(__dirname, '../../tests/infrastructure/setup-tests.ts')],
+  setupFilesAfterEnv: [path.resolve(__dirname, '../../tests/setup/consoleMock.js')],
   forceExit: true,
   maxWorkers: '50%'
 };

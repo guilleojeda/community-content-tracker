@@ -1,3 +1,5 @@
+const path = require('path');
+
 /** @type {import('jest').Config} */
 module.exports = {
   passWithNoTests: false,
@@ -25,7 +27,10 @@ module.exports = {
     '^@shared/(.*)$': '<rootDir>/../shared/$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy'
   },
-  setupFilesAfterEnv: ['<rootDir>/jest.setup.js', '<rootDir>/../../tests/setup/consoleMock.js'],
+  setupFilesAfterEnv: [
+    path.resolve(__dirname, 'jest.setup.js'),
+    path.resolve(__dirname, '../../tests/setup/consoleMock.js'),
+  ],
   collectCoverageFrom: [
     'app/**/*.{ts,tsx}',
     'src/**/*.{ts,tsx}',

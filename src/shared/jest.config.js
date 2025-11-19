@@ -1,3 +1,5 @@
+const path = require('path');
+
 /** @type {import('jest').Config} */
 module.exports = {
   passWithNoTests: true,
@@ -36,5 +38,5 @@ module.exports = {
       statements: 80
     }
   },
-  setupFilesAfterEnv: ['<rootDir>/../../tests/setup/consoleMock.js']
+  setupFilesAfterEnv: [path.resolve(__dirname, '../../tests/setup/consoleMock.js')]
 };

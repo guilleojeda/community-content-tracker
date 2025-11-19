@@ -1,4 +1,6 @@
 /** @type {import('jest').Config} */
+const path = require('path');
+
 module.exports = {
   passWithNoTests: true,
   preset: 'ts-jest',
@@ -50,7 +52,7 @@ module.exports = {
       statements: 90
     }
   },
-  setupFilesAfterEnv: ['<rootDir>/../../tests/setup/consoleMock.js'],
+  setupFilesAfterEnv: [path.resolve(__dirname, '../../tests/setup/consoleMock.js')],
   // globalSetup: '<rootDir>/tests/setup/global.setup.ts',
   // globalTeardown: '<rootDir>/tests/setup/global.teardown.ts',
   testTimeout: 30000,
