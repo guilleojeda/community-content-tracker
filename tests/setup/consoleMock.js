@@ -1,4 +1,5 @@
 const consoleMethods = ['log', 'info', 'warn', 'error', 'debug'];
+const shouldMockConsole = process.env.ALLOW_CONSOLE_OUTPUT !== '1';
 
 const originalConsole = consoleMethods.reduce((acc, method) => {
   acc[method] = console[method].bind(console);
@@ -7,48 +8,36 @@ const originalConsole = consoleMethods.reduce((acc, method) => {
 
 let capturedEntries = [];
 
-const formatArg = (arg) => {
-  if (typeof arg === 'string') {
-    return arg;
-  }
-  if (arg instanceof Error) {
-    return `${arg.name}: ${arg.message}`;
-  }
-  try {
-    return JSON.stringify(arg);
-  } catch {
-    return String(arg);
-  }
-};
+if (shouldMockConsole) {
+  consoleMethods.forEach(method => {
+    console[method] = (...args) => {
+      capturedEntries.push({ method, args });
+    };
+  });
+}
 
 beforeEach(() => {
-  if (process.env.ALLOW_CONSOLE_OUTPUT === '1') {
+  if (!shouldMockConsole) {
     return;
   }
-
   capturedEntries = [];
-
-  consoleMethods.forEach(method => {
-    jest.spyOn(console, method).mockImplementation((...args) => {
-      capturedEntries.push({ method, args });
-    });
-  });
 });
 
 afterEach(() => {
-  if (process.env.ALLOW_CONSOLE_OUTPUT === '1') {
+  if (!shouldMockConsole) {
+    return;
+  }
+  capturedEntries = [];
+});
+
+afterAll(() => {
+  if (!shouldMockConsole) {
     return;
   }
 
   consoleMethods.forEach(method => {
-    const spy = console[method];
-    if (spy && typeof spy.mockRestore === 'function') {
-      spy.mockRestore();
-    }
     console[method] = originalConsole[method];
   });
-
-  capturedEntries = [];
 });
 
 function getConsoleOutput() {
