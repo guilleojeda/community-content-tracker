@@ -43,6 +43,7 @@ cdk.out/
 !next.config.js
 !scripts/run-migrations.js
 !src/frontend/config/validateEnv.js
+!src/frontend/jest.setup.js
 !tests/setup/consoleMock.js
 *.d.ts
 !*.config.d.ts
