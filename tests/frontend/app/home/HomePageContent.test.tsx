@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import HomePageContent from '@/app/HomePageContent';
+import { consumeConsoleOutput } from '../../../setup/consoleMock';
 
 const mockApiClient = {
   getStats: jest.fn(),
@@ -65,6 +66,12 @@ describe('HomePageContent', () => {
       expect(mockApiClient.getStats).toHaveBeenCalled();
       expect(screen.getByText('Platform Features')).toBeInTheDocument();
     });
+    const logs = consumeConsoleOutput();
+    expect(
+      logs.some(
+        log => log.method === 'error' && log.args[0] === 'Failed to fetch stats:' && log.args[1] instanceof Error
+      )
+    ).toBe(true);
   });
 
   it('submits hero search form and navigates to search page', async () => {
@@ -82,10 +89,12 @@ describe('HomePageContent', () => {
     });
   });
 
-  it('shows call-to-action to register', () => {
+  it('shows call-to-action to register', async () => {
     mockApiClient.getStats.mockResolvedValueOnce(null);
     render(<HomePageContent />);
 
-    expect(screen.getByRole('link', { name: /create free account/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /create free account/i })).toBeInTheDocument();
+    });
   });
 });

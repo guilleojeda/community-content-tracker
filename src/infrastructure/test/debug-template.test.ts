@@ -15,11 +15,12 @@ describe('Debug Template Output', () => {
     const template = Template.fromStack(stack);
     const json = template.toJSON();
     
-    // Log the resources to see what's actually created
-    console.log('Resources created:', Object.keys(json.Resources || {}).map(key => ({
-      name: key,
-      type: json.Resources[key].Type
-    })));
+    if (process.env.DEBUG_TEMPLATE_OUTPUT === '1') {
+      console.log('Resources created:', Object.keys(json.Resources || {}).map(key => ({
+        name: key,
+        type: json.Resources[key].Type
+      })));
+    }
     
     expect(json.Resources).toBeDefined();
   });
@@ -34,11 +35,12 @@ describe('Debug Template Output', () => {
     const template = Template.fromStack(stack);
     const json = template.toJSON();
     
-    // Log the resources to see what's actually created
-    console.log('Database Resources:', Object.keys(json.Resources || {}).map(key => ({
-      name: key,
-      type: json.Resources[key].Type
-    })));
+    if (process.env.DEBUG_TEMPLATE_OUTPUT === '1') {
+      console.log('Database Resources:', Object.keys(json.Resources || {}).map(key => ({
+        name: key,
+        type: json.Resources[key].Type
+      })));
+    }
     
     expect(json.Resources).toBeDefined();
   });

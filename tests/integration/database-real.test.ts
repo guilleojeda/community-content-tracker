@@ -71,8 +71,9 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
           continue;
         }
       } catch (lookupError) {
+        const warning = lookupError instanceof Error ? lookupError.message : String(lookupError);
         // If pgmigrations table is missing, continue and let the migration run (initial setup case)
-        console.warn(`⚠️ Could not verify migration ${file} in pgmigrations:`, lookupError);
+        console.warn(`⚠️ Could not verify migration ${file} in pgmigrations: ${warning}`);
       }
 
       try {
@@ -85,7 +86,11 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
           console.log(`→ Migration ${file} already applied`);
           continue;
         }
-        console.error(`✗ Migration ${file} failed:`, error);
+        const details = error instanceof Error ? error.message : String(error);
+        console.error(`✗ Migration ${file} failed: ${details}`);
+        if (process.env.DEBUG_REAL_DB_TESTS === '1' && error instanceof Error && error.stack) {
+          console.error(error.stack);
+        }
         throw error;
       }
     }

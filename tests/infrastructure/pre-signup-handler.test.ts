@@ -34,9 +34,18 @@ function createHandler(): PreSignupHandler {
 
 describe('Pre-signup Lambda Handler (behavioural)', () => {
   let handler: PreSignupHandler;
+  let consoleLogSpy: jest.SpyInstance;
+  let consoleErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {
     handler = createHandler();
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
   });
 
   it('accepts valid username and visibility attributes', async () => {
@@ -57,6 +66,7 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
     expect(callback).toHaveBeenCalledWith(null, event);
     expect(event.response.autoConfirmUser).toBe(false);
     expect(event.response.autoVerifyEmail).toBe(true);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it('rejects invalid username formats', async () => {
@@ -76,6 +86,10 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
     const error = callback.mock.calls[0][0];
     expect(error?.name).toBe('InvalidParameterException');
     expect(error?.message).toContain('Username must be 3-50 characters');
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    const [message, loggedError] = consoleErrorSpy.mock.calls[0];
+    expect(message).toBe('Pre-signup validation failed:');
+    expect(loggedError).toBe(error);
   });
 
   it('rejects unsupported default visibility values', async () => {
@@ -95,6 +109,10 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
     const error = callback.mock.calls[0][0];
     expect(error?.name).toBe('InvalidParameterException');
     expect(error?.message).toContain('default_visibility must be one of');
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    const [message, loggedError] = consoleErrorSpy.mock.calls[0];
+    expect(message).toBe('Pre-signup validation failed:');
+    expect(loggedError).toBe(error);
   });
 
   it('rejects invalid is_admin flag values', async () => {
@@ -114,5 +132,9 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
     const error = callback.mock.calls[0][0];
     expect(error?.name).toBe('InvalidParameterException');
     expect(error?.message).toContain('is_admin must be either true or false');
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    const [message, loggedError] = consoleErrorSpy.mock.calls[0];
+    expect(message).toBe('Pre-signup validation failed:');
+    expect(loggedError).toBe(error);
   });
 });

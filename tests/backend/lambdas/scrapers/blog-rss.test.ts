@@ -2,6 +2,7 @@ import { ScheduledEvent, Context } from 'aws-lambda';
 import { ChannelRepository } from '../../../../src/backend/repositories/ChannelRepository';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import Parser from 'rss-parser';
+import { consumeConsoleOutput } from '../../../setup/consoleMock';
 
 // Create mock functions for SQS and Parser (these are external to jest.mock)
 const mockSend = jest.fn();
@@ -63,7 +64,6 @@ jest.mock('rss-parser', () => {
 
 // Import handler AFTER mocks are set up
 import { handler } from '../../../../src/backend/lambdas/scrapers/blog-rss';
-
 const mockChannelRepository = ChannelRepository as jest.MockedClass<typeof ChannelRepository>;
 const mockSQSClient = SQSClient as jest.MockedClass<typeof SQSClient>;
 const mockParser = Parser as jest.MockedClass<typeof Parser>;
@@ -74,7 +74,6 @@ const mockUpdateSyncStatus = (mockChannelRepository as any).mockUpdateSyncStatus
 
 describe('Blog RSS Scraper Lambda', () => {
   let mockContext: Context;
-
   beforeEach(() => {
     jest.clearAllMocks();
     mockContext = {} as Context;
@@ -102,6 +101,16 @@ describe('Blog RSS Scraper Lambda', () => {
     id: 'test-event-id',
     version: '0',
   });
+
+  const invokeHandler = async (event: ScheduledEvent, options: { drain?: boolean } = { drain: true }) => {
+    try {
+      return await handler(event, mockContext);
+    } finally {
+      if (options.drain !== false) {
+        consumeConsoleOutput();
+      }
+    }
+  };
 
   describe('Success Cases', () => {
     it('should process blog channels and send new posts to queue', async () => {
@@ -131,7 +140,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockUpdateSyncStatus.mockResolvedValue({});
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       expect(mockFindActiveByType).toHaveBeenCalledWith('blog');
       expect(mockParseURL).toHaveBeenCalledWith('https://example.com/feed');
@@ -169,7 +178,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockSend.mockResolvedValue({});
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       // Should only send 1 message (the new post)
       expect(mockSend).toHaveBeenCalledTimes(1);
@@ -197,7 +206,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockSend.mockResolvedValue({});
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       // Should send all posts on first sync
       expect(mockSend).toHaveBeenCalledTimes(2);
@@ -224,9 +233,15 @@ describe('Blog RSS Scraper Lambda', () => {
       mockSend.mockResolvedValue({});
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event, { drain: false });
 
       expect(mockSend).toHaveBeenCalledTimes(1);
+      const logs = consumeConsoleOutput();
+      expect(
+        logs.some(
+          log => log.method === 'warn' && log.args[0] === 'Skipping post without link in channel channel-1'
+        )
+      ).toBe(true);
     });
   });
 
@@ -246,7 +261,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockParseURL.mockRejectedValue(new Error('Invalid XML'));
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       expect(mockUpdateSyncStatus).toHaveBeenCalledWith(
         'channel-1',
@@ -275,7 +290,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockSend.mockRejectedValue(new Error('SQS Error'));
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       // Should still mark sync as attempted
       expect(mockUpdateSyncStatus).toHaveBeenCalled();
@@ -306,7 +321,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockSend.mockResolvedValue({});
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       expect(mockParseURL).toHaveBeenCalledTimes(2);
       expect(mockSend).toHaveBeenCalledTimes(1);
@@ -339,7 +354,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockSend.mockResolvedValue({});
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       expect(mockSend).toHaveBeenCalled();
       const sendCall = mockSend.mock.calls[0][0];
@@ -383,7 +398,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockParseURL.mockResolvedValue({ items: [] });
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       expect(mockSend).not.toHaveBeenCalled();
       expect(mockUpdateSyncStatus).toHaveBeenCalledWith('channel-1', 'success');
@@ -393,7 +408,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockFindActiveByType.mockResolvedValue([]);
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       expect(mockParseURL).not.toHaveBeenCalled();
       expect(mockSend).not.toHaveBeenCalled();
@@ -424,7 +439,7 @@ describe('Blog RSS Scraper Lambda', () => {
       mockSend.mockResolvedValue({});
 
       const event = createEvent();
-      await handler(event, mockContext);
+      await invokeHandler(event);
 
       expect(mockSend).toHaveBeenCalledTimes(1);
     });

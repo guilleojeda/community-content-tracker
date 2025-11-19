@@ -50,12 +50,11 @@ module.exports = {
       statements: 90
     }
   },
-  setupFilesAfterEnv: [],
+  setupFilesAfterEnv: ['<rootDir>/../../tests/setup/consoleMock.js'],
   // globalSetup: '<rootDir>/tests/setup/global.setup.ts',
   // globalTeardown: '<rootDir>/tests/setup/global.teardown.ts',
   testTimeout: 30000,
   maxWorkers: 1, // Serialize database tests
-  verbose: true,
   forceExit: true,
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',

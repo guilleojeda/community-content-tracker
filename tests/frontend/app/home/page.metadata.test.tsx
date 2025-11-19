@@ -23,8 +23,6 @@ afterEach(() => {
   mockPush.mockClear();
 });
 
-jest.mock('next/image', () => (props: any) => <img {...props} />);
-
 describe('Home page metadata', () => {
   it('defines SEO and social sharing fields', () => {
     expect(metadata.title).toContain('AWS Community Content Hub');

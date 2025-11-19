@@ -34,11 +34,12 @@ export default function SearchBar({
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [skipNextSuggestionFetch, setSkipNextSuggestionFetch] = useState(false);
   const historyRef = useRef<HTMLDivElement>(null);
   const savedRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const suppressAutocompleteRef = useRef(false);
+  const skipNextSuggestionFetchRef = useRef(false);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -65,35 +66,47 @@ export default function SearchBar({
     if (!onFetchSuggestions || !query.trim() || query.length < 2) {
       setSuggestions([]);
       setShowAutocomplete(false);
-      if (skipNextSuggestionFetch) {
-        setSkipNextSuggestionFetch(false);
-      }
+      skipNextSuggestionFetchRef.current = false;
       return;
     }
 
-    if (skipNextSuggestionFetch) {
-      setSkipNextSuggestionFetch(false);
+    if (skipNextSuggestionFetchRef.current) {
+      skipNextSuggestionFetchRef.current = false;
       return;
     }
+
+    let isActive = true;
 
     const executeFetch = async () => {
       setLoadingSuggestions(true);
       try {
         const results = await onFetchSuggestions(query);
+        if (!isActive) {
+          return;
+        }
         setSuggestions(results);
-        setShowAutocomplete(results.length > 0);
+        if (suppressAutocompleteRef.current) {
+          suppressAutocompleteRef.current = false;
+          setShowAutocomplete(false);
+        } else {
+          setShowAutocomplete(results.length > 0);
+        }
         setSelectedSuggestionIndex(-1);
       } catch (error) {
         console.error('Failed to fetch suggestions:', error);
         setSuggestions([]);
       } finally {
-        setLoadingSuggestions(false);
+        if (isActive) {
+          setLoadingSuggestions(false);
+        }
       }
     };
 
     if (isTestEnvironment) {
       executeFetch();
-      return;
+      return () => {
+        isActive = false;
+      };
     }
 
     // Clear existing timer
@@ -106,11 +119,12 @@ export default function SearchBar({
 
     // Cleanup
     return () => {
+      isActive = false;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [query, onFetchSuggestions, skipNextSuggestionFetch, isTestEnvironment]);
+  }, [query, onFetchSuggestions, isTestEnvironment]);
 
   // Keyboard navigation for autocomplete
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -132,10 +146,12 @@ export default function SearchBar({
       case 'Enter':
         if (selectedSuggestionIndex >= 0) {
           e.preventDefault();
-          onQueryChange(suggestions[selectedSuggestionIndex]);
+          const selectedValue = suggestions[selectedSuggestionIndex];
+          skipNextSuggestionFetchRef.current = true;
+          onQueryChange(selectedValue);
           setShowAutocomplete(false);
           setSelectedSuggestionIndex(-1);
-          setSkipNextSuggestionFetch(true);
+          suppressAutocompleteRef.current = true;
         }
         break;
       case 'Escape':
@@ -147,10 +163,11 @@ export default function SearchBar({
   };
 
   const handleSuggestionClick = (suggestion: string) => {
+    skipNextSuggestionFetchRef.current = true;
     onQueryChange(suggestion);
     setShowAutocomplete(false);
     setSelectedSuggestionIndex(-1);
-    setSkipNextSuggestionFetch(true);
+    suppressAutocompleteRef.current = true;
   };
 
   return (
@@ -160,7 +177,10 @@ export default function SearchBar({
           <input
             type="text"
             value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
+            onChange={(e) => {
+              skipNextSuggestionFetchRef.current = false;
+              onQueryChange(e.target.value);
+            }}
             onFocus={() => {
               if (query.length < 2) {
                 setShowHistory(searchHistory.length > 0);

@@ -10,6 +10,19 @@ import { resetDatabaseCache, setTestDatabasePool } from '../../../src/backend/se
 jest.setTimeout(120000);
 
 const INITIAL_SCHEMA_MIGRATION = '20240101000000000_initial_schema.sql';
+const isTestDbDebugEnabled = process.env.DEBUG_TEST_DB === '1';
+const testDbLog = (...args: Parameters<typeof console.log>) => {
+  if (isTestDbDebugEnabled) {
+    console.log(...args);
+  }
+};
+const testDbWarn = (...args: Parameters<typeof console.warn>) => {
+  if (isTestDbDebugEnabled) {
+    console.warn(...args);
+  }
+};
+const TEST_DB_USER = process.env.TEST_DB_USER ?? 'test_user';
+const TEST_DB_PASSWORD = process.env.TEST_DB_PASSWORD ?? 'test_password';
 
 export interface TestDatabaseSetup {
   container: StartedPostgreSqlContainer | null;
@@ -41,29 +54,41 @@ export class TestDatabase {
       const localConnection = process.env.LOCAL_PG_URL;
 
       if (localConnection) {
-        console.log('Using local PostgreSQL instance for tests.');
+        testDbLog('Using local PostgreSQL instance for tests.');
         this.container = null;
         this.pgMemDb = null;
         this.pool = new Pool({ connectionString: localConnection });
         process.env.TEST_DB_INMEMORY = 'false';
         this.localConnectionString = localConnection;
       } else {
-        console.log('Starting PostgreSQL test container...');
+        testDbLog('Starting PostgreSQL test container...');
 
         try {
           this.container = await new PostgreSqlContainer('pgvector/pgvector:pg15')
             .withDatabase('test_db')
-            .withUsername('test_user')
-            .withPassword('test_password')
+            .withUsername(TEST_DB_USER)
+            .withPassword(TEST_DB_PASSWORD)
             .withExposedPorts({ container: 5432, host: 0 })
             .start();
+
+          try {
+            await this.container.exec([
+              'psql',
+              '-U',
+              'postgres',
+              '-c',
+              `ALTER ROLE ${TEST_DB_USER} WITH SUPERUSER;`,
+            ]);
+          } catch (grantError) {
+            testDbWarn('Unable to grant superuser to test role automatically:', grantError);
+          }
 
           const connectionString = this.container.getConnectionUri();
           this.pool = new Pool({ connectionString });
           process.env.TEST_DB_INMEMORY = 'false';
           this.localConnectionString = null;
         } catch (error) {
-          console.warn('Testcontainers unavailable, falling back to in-memory PostgreSQL for tests.');
+          testDbWarn('Testcontainers unavailable, falling back to in-memory PostgreSQL for tests.');
 
           this.container = null;
           this.pgMemDb = newDb({ autoCreateForeignKeyIndices: true });
@@ -197,7 +222,7 @@ export class TestDatabase {
       throw new Error('Pool not initialized');
     }
 
-    console.log('Running database migrations...');
+    testDbLog('Running database migrations...');
 
     const useSimplifiedSchema = this.pgMemDb !== null || this.localConnectionString !== null;
     const connectionString = this.container
@@ -206,6 +231,7 @@ export class TestDatabase {
 
     if (!useSimplifiedSchema) {
       const backendDir = join(__dirname, '../../../src/backend');
+      const verboseMigrations = process.env.DEBUG_TEST_MIGRATIONS === '1';
 
       const result = spawnSync(
         'npx',
@@ -219,7 +245,7 @@ export class TestDatabase {
         ],
         {
           cwd: backendDir,
-          stdio: 'inherit',
+          stdio: verboseMigrations ? 'inherit' : ['ignore', 'pipe', 'pipe'],
           env: {
             ...process.env,
             DATABASE_URL: connectionString,
@@ -228,9 +254,22 @@ export class TestDatabase {
       );
 
       if (result.status !== 0) {
+        if (!verboseMigrations) {
+          const stdout = result.stdout?.toString().trim();
+          const stderr = result.stderr?.toString().trim();
+          if (stdout) {
+            console.error(stdout);
+          }
+          if (stderr) {
+            console.error(stderr);
+          }
+        }
         throw new Error('Failed to execute database migrations for tests');
       }
 
+      if (!verboseMigrations) {
+        testDbLog('Database migrations applied.');
+      }
       return;
     }
 
@@ -525,14 +564,14 @@ export class TestDatabase {
       if (beganTransaction) {
         await client.query('COMMIT');
       }
-      console.log('Database migrations completed.');
+      testDbLog('Database migrations completed.');
     } catch (error: any) {
       if (beganTransaction) {
         await client.query('ROLLBACK');
       }
       // If vector-related operation fails, that's okay for tests
       if (useSimplifiedSchema) {
-        console.warn('Migration step skipped during simplified migration:', error.message);
+        testDbWarn('Migration step skipped during simplified migration:', error.message);
       } else {
         console.error('Migration error:', error.message);
         throw error;
@@ -556,7 +595,7 @@ export class TestDatabase {
         await this.pool.end();
       } catch (error: any) {
         if (!error?.code || error.code !== '57P01') {
-          console.warn('Error while closing test database pool:', error);
+        testDbWarn('Error while closing test database pool:', error);
         }
       } finally {
         this.pool = null;
@@ -567,7 +606,7 @@ export class TestDatabase {
       try {
         await this.container.stop();
       } catch (error) {
-        console.warn('Error while stopping test database container:', (error as Error).message);
+        testDbWarn('Error while stopping test database container:', (error as Error).message);
       } finally {
         this.container = null;
       }
@@ -610,7 +649,7 @@ export class TestDatabase {
         // If table doesn't exist, skip it silently
         const message = typeof error?.message === 'string' ? error.message : '';
         if (error.code === '42P01' || message.includes('does not exist')) {  // undefined_table error code
-          console.log(`Table ${table} does not exist, skipping truncate`);
+          testDbLog(`Table ${table} does not exist, skipping truncate`);
         } else {
           throw error;
         }

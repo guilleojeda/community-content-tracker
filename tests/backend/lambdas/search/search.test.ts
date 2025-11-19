@@ -1,4 +1,4 @@
-import { handler } from '@lambdas/search/searchHandler';
+import * as searchHandlerModule from '@lambdas/search/searchHandler';
 import { getDatabasePool } from '../../../../src/backend/services/database';
 import { ContentType, Visibility, BadgeType } from '@aws-community-hub/shared';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
@@ -20,7 +20,20 @@ jest.mock('../../../../src/backend/services/rateLimiter', () => ({
   consumeRateLimit: jest.fn(),
 }));
 
+jest.mock('@aws-sdk/client-cloudwatch', () => {
+  const mockSend = jest.fn().mockResolvedValue({});
+  const MockClient = jest.fn().mockImplementation(() => ({
+    send: mockSend,
+  }));
+  const MockCommand = jest.fn().mockImplementation(input => ({ input }));
+  return {
+    CloudWatchClient: MockClient,
+    PutMetricDataCommand: MockCommand,
+  };
+});
+
 const originalEnv = process.env;
+const { handler } = searchHandlerModule;
 
 describe('GET /search Lambda handler', () => {
   let mockSearchService: any;
@@ -28,6 +41,7 @@ describe('GET /search Lambda handler', () => {
   let mockGetSearchService: jest.MockedFunction<any>;
   let mockGetDatabasePool: jest.MockedFunction<typeof getDatabasePool>;
   const mockConsumeRateLimit = consumeRateLimit as jest.MockedFunction<typeof consumeRateLimit>;
+  let logAnalyticsSpy: jest.SpyInstance;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
@@ -55,10 +69,15 @@ describe('GET /search Lambda handler', () => {
     mockGetSearchService = getSearchService as jest.MockedFunction<any>;
     mockGetSearchService.mockReturnValue(mockSearchService);
     mockConsumeRateLimit.mockResolvedValue({ allowed: true, remaining: 99, reset: Date.now() + 60000 });
+    logAnalyticsSpy = jest.spyOn(searchHandlerModule, 'logSearchAnalytics').mockResolvedValue();
   });
 
   afterAll(() => {
     process.env = originalEnv;
+  });
+
+  afterEach(() => {
+    logAnalyticsSpy.mockRestore();
   });
 
   const createEvent = (queryParams: Record<string, string> = {}, authorizer?: any): APIGatewayProxyEvent => ({

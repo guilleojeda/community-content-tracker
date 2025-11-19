@@ -20,6 +20,7 @@ module.exports = {
     }
   },
   setupFiles: ['<rootDir>/../../tests/infrastructure/setup-tests.ts'],
+  setupFilesAfterEnv: ['<rootDir>/../../tests/setup/consoleMock.js'],
   forceExit: true,
   maxWorkers: '50%'
 };
