@@ -1,7 +1,6 @@
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import HomePageContent from '@/app/HomePageContent';
-import { consumeConsoleOutput } from '../../../setup/consoleMock';
 
 const mockApiClient = {
   getStats: jest.fn(),
@@ -58,6 +57,7 @@ describe('HomePageContent', () => {
   });
 
   it('handles stats load failures gracefully', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockApiClient.getStats.mockRejectedValue(new Error('Network error'));
 
     render(<HomePageContent />);
@@ -66,12 +66,8 @@ describe('HomePageContent', () => {
       expect(mockApiClient.getStats).toHaveBeenCalled();
       expect(screen.getByText('Platform Features')).toBeInTheDocument();
     });
-    const logs = consumeConsoleOutput();
-    expect(
-      logs.some(
-        log => log.method === 'error' && log.args[0] === 'Failed to fetch stats:' && log.args[1] instanceof Error
-      )
-    ).toBe(true);
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to fetch stats:', expect.any(Error));
+    consoleErrorSpy.mockRestore();
   });
 
   it('submits hero search form and navigates to search page', async () => {
