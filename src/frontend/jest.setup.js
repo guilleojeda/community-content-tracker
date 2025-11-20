@@ -23,63 +23,6 @@ jest.mock('next/image', () => {
 // Mock Next.js environment variables
 process.env.NEXT_PUBLIC_API_URL = 'http://localhost:3001';
 
-const shouldSuppressErrorLog = (message) => {
-  if (!message) {
-    return false;
-  }
-  return (
-    message.includes('Warning: ReactDOM.render') ||
-    message.includes('Not implemented: HTMLFormElement.prototype.submit') ||
-    message.includes('Error: Not implemented') ||
-    (message.includes('Warning: An update to') && message.includes('inside a test was not wrapped in act')) ||
-    message.startsWith('Search error:') ||
-    message.includes('useAdminContext must be used within an AdminContextProvider') ||
-    message.includes('The above error occurred in the <TestComponent> component')
-  );
-};
-
-const shouldSuppressInfoLog = (message) => {
-  if (!message) {
-    return false;
-  }
-  return (
-    message.startsWith('Search Analytics:') ||
-    message.includes('Static placeholder exported')
-  );
-};
-
-// Suppress console noise during tests unless DEBUG is set
-if (!process.env.DEBUG) {
-  const originalError = console.error;
-  const originalLog = console.log;
-  beforeAll(() => {
-    console.error = (...args) => {
-      const message = args
-        .map((value) => (typeof value === 'string' ? value : String(value)))
-        .join(' ');
-      if (shouldSuppressErrorLog(message)) {
-        return;
-      }
-      originalError.call(console, ...args);
-    };
-
-    console.log = (...args) => {
-      const message = args
-        .map((value) => (typeof value === 'string' ? value : String(value)))
-        .join(' ');
-      if (shouldSuppressInfoLog(message)) {
-        return;
-      }
-      originalLog.call(console, ...args);
-    };
-  });
-
-  afterAll(() => {
-    console.error = originalError;
-    console.log = originalLog;
-  });
-}
-
 // Mock IntersectionObserver
 global.IntersectionObserver = class IntersectionObserver {
   constructor() {}
