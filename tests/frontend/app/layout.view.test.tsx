@@ -24,10 +24,19 @@ describe('RootLayout component', () => {
     mockIsBetaModeActive.mockReset();
   });
 
-  const renderLayoutToDocument = (element: React.ReactElement) => {
+  const renderLayout = (element: React.ReactElement) => {
     const markup = renderToStaticMarkup(element);
-    const parser = new window.DOMParser();
-    return parser.parseFromString(markup, 'text/html');
+    const bodyText = markup
+      .replace(/<script.*?>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style.*?>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return {
+      markup,
+      bodyText,
+    };
   };
 
   it('renders without beta affordances when feature flag disabled', async () => {
@@ -35,16 +44,16 @@ describe('RootLayout component', () => {
     const layoutModule = await loadLayoutModule();
     const RootLayout = layoutModule.default;
 
-    const doc = renderLayoutToDocument(
+    const { markup, bodyText } = renderLayout(
       <RootLayout>
         <div>Child content</div>
       </RootLayout>
     );
 
-    expect(doc.querySelector('body')?.textContent).toContain('Child content');
-    expect(doc.querySelector('body')?.textContent).not.toMatch(/Beta/i);
-    expect(doc.querySelector('body')?.textContent).not.toMatch(/Feedback/i);
-    expect(doc.querySelector('[data-testid="cookie-consent-stub"]')).not.toBeNull();
+    expect(bodyText).toContain('Child content');
+    expect(bodyText).not.toMatch(/Beta/i);
+    expect(bodyText).not.toMatch(/Feedback/i);
+    expect(markup).toMatch(/data-testid="cookie-consent-stub"/);
   });
 
   it('shows beta indicators and feedback entrypoints when feature flag active', async () => {
@@ -54,15 +63,15 @@ describe('RootLayout component', () => {
     const layoutModule = await loadLayoutModule();
     const RootLayout = layoutModule.default;
 
-    const doc = renderLayoutToDocument(
+    const { markup, bodyText } = renderLayout(
       <RootLayout>
         <p>Dashboard</p>
       </RootLayout>
     );
 
-    const bodyText = doc.querySelector('body')?.textContent ?? '';
     expect(bodyText).toMatch(/Beta/i);
     expect(bodyText.match(/Feedback/gi)?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(layoutModule.metadata.metadataBase?.href).toBe('https://community.aws/');
+    expect(markup).toMatch(/data-testid="cookie-consent-stub"/);
   });
 });
