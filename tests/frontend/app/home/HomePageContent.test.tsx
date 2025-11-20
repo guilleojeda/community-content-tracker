@@ -57,7 +57,6 @@ describe('HomePageContent', () => {
   });
 
   it('handles stats load failures gracefully', async () => {
-    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockApiClient.getStats.mockRejectedValue(new Error('Network error'));
 
     render(<HomePageContent />);
@@ -66,8 +65,7 @@ describe('HomePageContent', () => {
       expect(mockApiClient.getStats).toHaveBeenCalled();
       expect(screen.getByText('Platform Features')).toBeInTheDocument();
     });
-    expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to fetch stats:', expect.any(Error));
-    consoleErrorSpy.mockRestore();
+    expect(screen.queryByText(/platform stats/i)).not.toBeInTheDocument();
   });
 
   it('submits hero search form and navigates to search page', async () => {
