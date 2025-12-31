@@ -1,0 +1,1019 @@
+# WORKSHOP REFERENCE ONLY (NOT USED BY AWS ROADMAP INTELLIGENCE)
+# This template uses the Bedrock Agents Knowledge Bases APIs (`bedrock-agent`), which are forbidden in this project.
+# It is kept solely as upstream workshop reference material and is not deployed or referenced by our TypeScript/CDK stacks.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Knowledge Base stack with improved IAM propagation handling"
+
+Parameters:
+  ReturnPolicyBucketName:
+    Type: String
+    Description: S3 bucket name for return policy documents
+  
+  ProductInfoBucketName:
+    Type: String
+    Description: S3 bucket name for product info documents
+
+Resources:
+  # S3 Buckets for Knowledge Base documents
+  ReturnPolicyKnowledgeBaseDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Ref ReturnPolicyBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Application
+          Value: CustomerSupport
+
+  ProductInfoKnowledgeBaseDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Ref ProductInfoBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Application
+          Value: CustomerSupport
+
+  # IAM Role for Bedrock service
+  BedrockServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::AccountId}-${AWS::Region}-kb-bedrock-service-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "aws:SourceArn": !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/*"
+      Policies:
+        - PolicyName: BedrockS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ReturnPolicyKnowledgeBaseDataBucket.Arn
+                  - !Sub '${ReturnPolicyKnowledgeBaseDataBucket.Arn}/*'
+                  - !GetAtt ProductInfoKnowledgeBaseDataBucket.Arn
+                  - !Sub '${ProductInfoKnowledgeBaseDataBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: 
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+                  #- !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0'
+              - Effect: Allow
+                Action:
+                  - s3vectors:*
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::*-vectors-*/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::*-vectors-*'
+
+  # Knowledge Base Setup Lambda Function
+  KnowledgeBaseSetupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::AccountId}-${AWS::Region}-kb-setup-function'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt KnowledgeBaseSetupRole.Arn
+      Timeout: 900
+      MemorySize: 512
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          import time
+          import uuid
+          import traceback
+
+          def lambda_handler(event, context):
+              response_data = {
+                  'Status': 'UNKNOWN',
+                  'ReturnPolicyKnowledgeBaseId': 'not-created',
+                  'ProductInfoKnowledgeBaseId': 'not-created',
+                  'ReturnPolicyDataSourceId': 'not-created',
+                  'ProductInfoDataSourceId': 'not-created',
+                  'Error': 'No error'
+              }
+              
+              try:
+                  if event['RequestType'] == 'Delete':
+                      # Clean up Knowledge Bases and S3 Vectors resources
+                      try:
+                          bedrock = boto3.client('bedrock-agent')
+                          s3vectors = boto3.client('s3vectors')
+                          
+                          # List and delete Knowledge Bases with our naming pattern
+                          kb_list = bedrock.list_knowledge_bases()
+                          for kb in kb_list.get('knowledgeBaseSummaries', []):
+                              if kb['name'].startswith('customer-service-'):
+                                  print(f"Deleting Knowledge Base: {kb['knowledgeBaseId']}")
+                                  bedrock.delete_knowledge_base(knowledgeBaseId=kb['knowledgeBaseId'])
+                          
+                          # List and delete S3 Vector buckets with our naming pattern
+                          vector_buckets = s3vectors.list_vector_buckets()
+                          for bucket in vector_buckets.get('vectorBuckets', []):
+                              if 'customer-service-' in bucket['vectorBucketName']:
+                                  print(f"Deleting S3 Vector bucket: {bucket['vectorBucketName']}")
+                                  s3vectors.delete_vector_bucket(vectorBucketName=bucket['vectorBucketName'])
+                      except Exception as e:
+                          print(f"Cleanup error: {str(e)}")
+                      
+                      response_data.update({
+                          'Status': 'DELETED',
+                          'Error': 'Stack deleted successfully'
+                      })
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      return
+
+                  return_policy_bucket_name = event['ResourceProperties']['ReturnPolicyBucketName']
+                  product_info_bucket_name = event['ResourceProperties']['ProductInfoBucketName']
+                  execution_role_arn = event['ResourceProperties']['BedrockRoleArn']
+                  
+                  print(f"Starting Knowledge Base setup")
+                  print(f"Return Policy Bucket: {return_policy_bucket_name}")
+                  print(f"Product Info Bucket: {product_info_bucket_name}")
+                  
+                  # Initialize AWS clients
+                  try:
+                      bedrock = boto3.client('bedrock-agent')
+                      s3vectors = boto3.client('s3vectors')
+                      s3_client = boto3.client('s3')
+                      ssm_client = boto3.client('ssm')
+                  except Exception as e:
+                      response_data.update({
+                          'Status': 'FAILED',
+                          'Error': f'Client initialization failed: {str(e)}'
+                      })
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      return
+                  
+                  account_id = context.invoked_function_arn.split(':')[4]
+                  region = context.invoked_function_arn.split(':')[3]
+                  
+                  def create_knowledge_base_with_retry(kb_name, kb_description, bucket_name, execution_role_arn, max_retries=5):
+                      """Create Knowledge Base with retry logic for IAM propagation"""
+                      
+                      # Wait for IAM propagation
+                      print(f"Waiting for IAM propagation before creating {kb_name}...")
+                      time.sleep(20)
+                      
+                      for attempt in range(max_retries):
+                          try:
+                              print(f"Creating Knowledge Base {kb_name} (attempt {attempt + 1}/{max_retries})")
+                              
+                              # Create S3 Vectors bucket and index
+                              vector_bucket_name = f"{kb_name}-vectors-{str(uuid.uuid4())[:8]}"
+                              index_name = f"{kb_name}-index"
+                              
+                              # Create S3 Vectors bucket
+                              try:
+                                  s3vectors.create_vector_bucket(
+                                      vectorBucketName=vector_bucket_name,
+                                      encryptionConfiguration={'sseType': 'AES256'}
+                                  )
+                                  print(f"Created S3 Vectors bucket: {vector_bucket_name}")
+                              except Exception as e:
+                                  if 'ConflictException' not in str(e):
+                                      raise e
+                                  print(f"S3 Vectors bucket {vector_bucket_name} already exists")
+                              
+                              # Get bucket ARN
+                              print("Get bucket ARN")
+                              vector_bucket_response = s3vectors.get_vector_bucket(vectorBucketName=vector_bucket_name)
+                              vector_bucket_arn = vector_bucket_response['vectorBucket']['vectorBucketArn']
+                              print(f"vector_bucket_response: {vector_bucket_response}")
+                              print(f"vector_bucket_arn: {vector_bucket_arn}")
+
+                              # Create vector index
+                              print("Create vector index")
+                              try:
+                                  index_response = s3vectors.create_index(
+                                      vectorBucketName=vector_bucket_name,
+                                      indexName=index_name,
+                                      dataType='float32',
+                                      dimension=1024,
+                                      distanceMetric='cosine'
+                                  )
+
+                                  print(f"index_response: {index_response}")
+                                  account_id = context.invoked_function_arn.split(":")[4]
+                                  print(f"account_id: {account_id}")
+                                  index_arn = f"arn:aws:s3vectors:{region}:{account_id}:bucket/{vector_bucket_name}/index/{index_name}"
+                                  print(f"index_arn: {index_arn}")
+                                  #index_arn = index_response['index']['indexArn']
+                                  print(f"Created S3 Vectors index: {index_name}")
+                              except Exception as e:
+                                  if 'ConflictException' not in str(e):
+                                      raise e
+                                  # Get existing index ARN
+                                  index_response = s3vectors.get_index(vectorBucketName=vector_bucket_name, indexName=index_name)
+                                  #index_arn = index_response['index']['indexArn']
+                                  print(f"S3 Vectors index {index_name} already exists")
+                              
+                              # Create Knowledge Base
+                              print("Create Knowledge Base")
+                              kb_response = bedrock.create_knowledge_base(
+                                  name=kb_name,
+                                  description=kb_description,
+                                  roleArn=execution_role_arn,
+                                  knowledgeBaseConfiguration={
+                                      'type': 'VECTOR',
+                                      'vectorKnowledgeBaseConfiguration': {
+                                          'embeddingModelArn': f'arn:aws:bedrock:{region}::foundation-model/amazon.titan-embed-text-v2:0'
+                                      }
+                                  },
+                                  storageConfiguration={
+                                      'type': 'S3_VECTORS',
+                                      's3VectorsConfiguration': {
+                                          'vectorBucketArn': vector_bucket_arn,
+                                          'indexArn': index_arn
+                                      }
+                                  }
+                              )
+                              
+                              kb_id = kb_response['knowledgeBase']['knowledgeBaseId']
+                              print(f"[WHITE HEAVY CHECK MARK] Created Knowledge Base: {kb_id}")
+                              
+                              # Create Data Source
+                              ds_response = bedrock.create_data_source(
+                                  name=kb_name,
+                                  description=kb_description,
+                                  knowledgeBaseId=kb_id,
+                                  dataDeletionPolicy='RETAIN',
+                                  dataSourceConfiguration={
+                                      'type': 'S3',
+                                      's3Configuration': {
+                                          'bucketArn': f'arn:aws:s3:::{bucket_name}'
+                                      }
+                                  },
+                                  vectorIngestionConfiguration={
+                                      'chunkingConfiguration': {
+                                          'chunkingStrategy': 'FIXED_SIZE',
+                                          'fixedSizeChunkingConfiguration': {
+                                              'maxTokens': 200,
+                                              'overlapPercentage': 5
+                                          }
+                                      }
+                                  }
+                              )
+                              
+                              ds_id = ds_response['dataSource']['dataSourceId']
+                              print(f"[WHITE HEAVY CHECK MARK] Created Data Source: {ds_id}")
+                              
+                              return kb_id, ds_id
+                              
+                          except Exception as e:
+                              error_msg = str(e)
+                              if 'is not authorized to perform' in error_msg or 'ValidationException' in error_msg:
+                                  if attempt < max_retries - 1:
+                                      wait_time = (attempt + 1) * 10
+                                      print(f"IAM permission error, waiting {wait_time}s before retry...")
+                                      time.sleep(wait_time)
+                                      continue
+                              raise e
+                      
+                      raise Exception(f"Failed to create Knowledge Base {kb_name} after {max_retries} attempts")
+                  
+                  # Create Return Policy Knowledge Base
+                  try:
+                      return_policy_kb_id, return_policy_ds_id = create_knowledge_base_with_retry(
+                          'customer-service-return-policy',
+                          'Knowledge base for customer service return policies and procedures',
+                          return_policy_bucket_name,
+                          execution_role_arn
+                      )
+                      response_data['ReturnPolicyKnowledgeBaseId'] = return_policy_kb_id
+                      response_data['ReturnPolicyDataSourceId'] = return_policy_ds_id
+                  except Exception as e:
+                      print(f"[CROSS MARK] Failed to create Return Policy Knowledge Base: {str(e)}")
+                      print(f"Full traceback: {traceback.format_exc()}")
+                      response_data['ReturnPolicyKnowledgeBaseId'] = 'creation-failed'
+                      response_data['ReturnPolicyDataSourceId'] = 'creation-failed'
+                  
+                  # Create Product Info Knowledge Base
+                  try:
+                      product_info_kb_id, product_info_ds_id = create_knowledge_base_with_retry(
+                          'customer-service-product-info',
+                          'Knowledge base for product information and specifications',
+                          product_info_bucket_name,
+                          execution_role_arn
+                      )
+                      response_data['ProductInfoKnowledgeBaseId'] = product_info_kb_id
+                      response_data['ProductInfoDataSourceId'] = product_info_ds_id
+                  except Exception as e:
+                      print(f"[CROSS MARK] Failed to create Product Info Knowledge Base: {str(e)}")
+                      print(f"Full traceback: {traceback.format_exc()}")
+                      response_data['ProductInfoKnowledgeBaseId'] = 'creation-failed'
+                      response_data['ProductInfoDataSourceId'] = 'creation-failed'
+                  
+                  # Store Knowledge Base IDs in SSM Parameter Store
+                  try:
+                      if response_data['ReturnPolicyKnowledgeBaseId'] != 'creation-failed':
+                          ssm_client.put_parameter(
+                              Name='/app/customersupport/kb/return-policy-kb-id',
+                              Value=response_data['ReturnPolicyKnowledgeBaseId'],
+                              Type='String',
+                              Overwrite=True
+                          )
+                      
+                      if response_data['ProductInfoKnowledgeBaseId'] != 'creation-failed':
+                          ssm_client.put_parameter(
+                              Name='/app/customersupport/kb/product-info-kb-id',
+                              Value=response_data['ProductInfoKnowledgeBaseId'],
+                              Type='String',
+                              Overwrite=True
+                          )
+                  except Exception as e:
+                      print(f"[WARNING SIGN] Failed to store parameters in SSM: {str(e)}")
+                  
+                  response_data.update({
+                      'Status': 'SUCCESS',
+                      'Error': 'Knowledge Bases created successfully'
+                  })
+                  
+                  print("Knowledge Base setup completed!")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      
+              except Exception as e:
+                  print(f"Critical error: {str(e)}")
+                  response_data.update({
+                      'Status': 'FAILED',
+                      'Error': f"Critical error: {str(e)}"
+                  })
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+
+  # IAM Role for Knowledge Base Setup Lambda
+  KnowledgeBaseSetupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::AccountId}-${AWS::Region}-kb-setup-function-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KnowledgeBaseSetupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ReturnPolicyKnowledgeBaseDataBucket.Arn
+                  - !Sub '${ReturnPolicyKnowledgeBaseDataBucket.Arn}/*'
+                  - !GetAtt ProductInfoKnowledgeBaseDataBucket.Arn
+                  - !Sub '${ProductInfoKnowledgeBaseDataBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - s3vectors:CreateVectorBucket
+                  - s3vectors:CreateIndex
+                  - s3vectors:GetVectorBucket
+                  - s3vectors:GetIndex
+                  - s3vectors:DeleteVectorBucket
+                  - s3vectors:DeleteIndex
+                  - s3vectors:ListVectorBuckets
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - bedrock:CreateKnowledgeBase
+                  - bedrock:CreateDataSource
+                  - bedrock:GetKnowledgeBase
+                  - bedrock:GetDataSource
+                  - bedrock:StartIngestionJob
+                  - bedrock:DeleteKnowledgeBase
+                  - bedrock:DeleteDataSource
+                  - bedrock:ListKnowledgeBases
+                  - bedrock-agent:CreateKnowledgeBase
+                  - bedrock-agent:CreateDataSource
+                  - bedrock-agent:GetKnowledgeBase
+                  - bedrock-agent:GetDataSource
+                  - bedrock-agent:StartIngestionJob
+                  - bedrock-agent:DeleteKnowledgeBase
+                  - bedrock-agent:DeleteDataSource
+                  - bedrock-agent:ListKnowledgeBases
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt BedrockServiceRole.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:GetParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*'
+
+  # Lambda function to upload sample files and sync knowledge bases
+  KnowledgeBaseDataUploadFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::AccountId}-${AWS::Region}-kb-data-upload-function'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt KnowledgeBaseDataUploadRole.Arn
+      Timeout: 900
+      MemorySize: 512
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          import time
+
+          def lambda_handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+
+                  return_policy_bucket = event['ResourceProperties']['ReturnPolicyBucketName']
+                  product_info_bucket = event['ResourceProperties']['ProductInfoBucketName']
+                  return_policy_kb_id = event['ResourceProperties']['ReturnPolicyKnowledgeBaseId']
+                  product_info_kb_id = event['ResourceProperties']['ProductInfoKnowledgeBaseId']
+                  return_policy_ds_id = event['ResourceProperties']['ReturnPolicyDataSourceId']
+                  product_info_ds_id = event['ResourceProperties']['ProductInfoDataSourceId']
+                  
+                  # Skip if Knowledge Bases failed to create
+                  if (return_policy_kb_id == 'creation-failed' or return_policy_kb_id == 'not-created') and (product_info_kb_id == 'creation-failed' or product_info_kb_id == 'not-created'):
+                      print("Both Knowledge Bases failed to create, skipping data upload")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Status': 'SKIPPED'})
+                      return
+                  
+                  s3_client = boto3.client('s3')
+                  bedrock_client = boto3.client('bedrock-agent')
+                  ssm_client = boto3.client('ssm')
+                  
+                  # Sample return policy content as JSON
+                  return_policy_json = {
+                      "title": "General Return Policy Guidelines",
+                      "sections": {
+                        "universal_principles": {
+                          "title": "UNIVERSAL RETURN PRINCIPLES",
+                          "items": [
+                            "30-day return window applies to most products",
+                            "Original condition with all included components required",
+                            "Proof of purchase required for all returns",
+                            "Returns processed in order received"
+                          ]
+                        },
+                        "standard_process": {
+                          "title": "STANDARD RETURN PROCESS",
+                          "steps": [
+                            "Contact customer service or use online return portal",
+                            "Receive return authorization number (RMA)",
+                            "Package item securely with all components",
+                            "Ship using provided prepaid label or approved carrier",
+                            "Track return status through online portal"
+                          ]
+                        },
+                        "refund_methods": {
+                          "title": "REFUND METHODS",
+                          "options": [
+                            "Original payment method preferred",
+                            "Store credit available for immediate use",
+                            "Gift card refunds for gift purchases",
+                            "Cash refunds for cash purchases (in-store only)"
+                          ]
+                        },
+                        "return_shipping": {
+                          "title": "RETURN SHIPPING",
+                          "policies": [
+                            "Free return shipping for defective items",
+                            "Customer pays shipping for change of mind returns under $50",
+                            "Free return shipping for orders over $50",
+                            "Express return processing available for additional fee"
+                          ]
+                        },
+                        "inspection_process": {
+                          "title": "INSPECTION PROCESS",
+                          "details": [
+                            "All returns subject to inspection upon receipt",
+                            "Functional testing performed on electronic items",
+                            "Cosmetic condition assessment",
+                            "Completeness verification (accessories, documentation)",
+                            "Processing time: 3-10 business days depending on product type"
+                          ]
+                        },
+                        "refund_timeline": {
+                          "title": "REFUND TIMELINE",
+                          "timeframes": [
+                            "Simple accessories: 3-5 business days",
+                            "Smartphones: 5-7 business days",
+                            "Laptops and complex electronics: 7-10 business days",
+                            "Custom or configured items: 10-14 business days"
+                          ]
+                        },
+                        "partial_refunds": {
+                          "title": "PARTIAL REFUNDS",
+                          "reductions": [
+                            "Missing accessories: 10-25% reduction",
+                            "Damaged packaging: 5-15% reduction",
+                            "Cosmetic damage: 15-35% reduction",
+                            "Missing documentation: 5% reduction"
+                          ]
+                        },
+                        "restocking_fees": {
+                          "title": "RESTOCKING FEES",
+                          "fees": [
+                            "Standard returns: No restocking fee",
+                            "Custom orders: 15-35% restocking fee",
+                            "Opened software: 25% restocking fee",
+                            "Special orders: 20% restocking fee"
+                          ]
+                        },
+                        "exchange_policy": {
+                          "title": "EXCHANGE POLICY",
+                          "terms": [
+                            "Direct exchanges available for same product category",
+                            "Price differences handled separately",
+                            "Exchanges count toward original return window",
+                            "No additional shipping charges for exchanges"
+                          ]
+                        },
+                        "gift_returns": {
+                          "title": "GIFT RETURNS",
+                          "requirements": [
+                            "Gift receipt required for returns without original receipt",
+                            "Returns processed as store credit",
+                            "Gift giver can provide purchase information for full refund",
+                            "Holiday gift returns extended until January 31st"
+                          ]
+                        },
+                        "business_returns": {
+                          "title": "BUSINESS AND EDUCATIONAL RETURNS",
+                          "benefits": [
+                            "Extended return windows available",
+                            "Volume return processing",
+                            "Account manager assistance",
+                            "Custom return terms for large orders"
+                          ]
+                        },
+                        "international_returns": {
+                          "title": "INTERNATIONAL RETURNS",
+                          "considerations": [
+                            "Additional shipping time and costs may apply",
+                            "Customs and duty fees customer responsibility",
+                            "Local return centers available in select countries",
+                            "Currency conversion at current exchange rates"
+                          ]
+                        },
+                        "warranty_vs_returns": {
+                          "title": "WARRANTY VS. RETURNS",
+                          "distinctions": [
+                            "Manufacturing defects covered under warranty",
+                            "Returns are for change of mind or dissatisfaction",
+                            "Warranty repairs may be faster than returns",
+                            "Extended warranty available for most products"
+                          ]
+                        },
+                        "exceptions": {
+                          "title": "EXCEPTIONS AND RESTRICTIONS",
+                          "restrictions": [
+                            "Personalized items cannot be returned",
+                            "Consumable products (batteries, ink) final sale",
+                            "Software licenses non-refundable",
+                            "Items damaged by misuse not eligible",
+                            "Health and safety items (earbuds, VR headsets) restrictions apply"
+                          ]
+                        },
+                        "customer_support": {
+                          "title": "CUSTOMER SUPPORT",
+                          "channels": [
+                            "Return specialists available during business hours",
+                            "Online chat support for return questions",
+                            "Email support with 24-hour response time",
+                            "Video call support for complex return issues"
+                          ]
+                        }
+                      }
+                    }
+                  
+                  return_policy_content = json.dumps(return_policy_json, indent=2)
+
+                  # Sample product info content as JSON
+                  product_info_json = {
+                      "title": "General Electronics Product Information",
+                      "sections": {
+                        "product_categories": {
+                          "title": "PRODUCT CATEGORIES OVERVIEW",
+                          "description": "Our electronics catalog includes smartphones, laptops, headphones, monitors, tablets, smart watches, gaming consoles, and various accessories. Each category offers multiple brands, price points, and feature sets to meet diverse customer needs."
+                        },
+                        "warranty_info": {
+                          "title": "WARRANTY INFORMATION",
+                          "items": [
+                            "Standard manufacturer warranty: 1-3 years depending on product category",
+                            "Extended warranty options available for most products",
+                            "International warranty coverage varies by manufacturer",
+                            "Accidental damage protection plans available",
+                            "Warranty registration recommended but not required",
+                            "Warranty covers manufacturing defects, not user damage"
+                          ]
+                        },
+                        "technical_support": {
+                          "title": "TECHNICAL SUPPORT SERVICES",
+                          "services": [
+                            "Free technical support during warranty period",
+                            "Phone, chat, and email support channels available",
+                            "Video troubleshooting sessions for complex issues",
+                            "Remote diagnostic tools for compatible devices",
+                            "On-site service available for business customers",
+                            "Community forums and knowledge base resources"
+                          ]
+                        },
+                        "compatibility": {
+                          "title": "COMPATIBILITY CONSIDERATIONS",
+                          "considerations": [
+                            "Cross-platform compatibility information provided for each product",
+                            "System requirements clearly listed for software-dependent devices",
+                            "Accessory compatibility verified before purchase",
+                            "Legacy device support information available",
+                            "Regional variations in features and connectivity",
+                            "Carrier compatibility for mobile devices"
+                          ]
+                        },
+                        "performance": {
+                          "title": "PERFORMANCE SPECIFICATIONS",
+                          "specs": [
+                            "Benchmark scores and real-world performance data",
+                            "Battery life estimates based on typical usage patterns",
+                            "Processing power comparisons across product lines",
+                            "Graphics performance ratings for gaming and creative work",
+                            "Network performance specifications (Wi-Fi, cellular, Bluetooth)",
+                            "Storage performance metrics (read/write speeds)"
+                          ]
+                        },
+                        "design_quality": {
+                          "title": "DESIGN AND BUILD QUALITY",
+                          "features": [
+                            "Materials used in construction (aluminum, plastic, glass, carbon fiber)",
+                            "Durability testing results and certifications",
+                            "Water and dust resistance ratings (IP ratings)",
+                            "Drop test and stress test results",
+                            "Ergonomic design considerations",
+                            "Aesthetic design philosophy and color options"
+                          ]
+                        },
+                        "sustainability": {
+                          "title": "ENVIRONMENTAL AND SUSTAINABILITY",
+                          "initiatives": [
+                            "Energy efficiency ratings and certifications",
+                            "Recycled materials content in products and packaging",
+                            "Carbon footprint information for manufacturing and shipping",
+                            "End-of-life recycling programs and trade-in options",
+                            "Sustainable packaging initiatives",
+                            "Conflict-free mineral sourcing policies"
+                          ]
+                        },
+                        "pricing": {
+                          "title": "PRICING AND VALUE",
+                          "aspects": [
+                            "Competitive pricing analysis across similar products",
+                            "Value proposition explanations for different price tiers",
+                            "Total cost of ownership considerations",
+                            "Financing options and payment plans available",
+                            "Trade-in credit programs for device upgrades",
+                            "Price matching policies and guarantees"
+                          ]
+                        },
+                        "security": {
+                          "title": "SECURITY AND PRIVACY",
+                          "measures": [
+                            "Built-in security features and encryption standards",
+                            "Privacy policy information for connected devices",
+                            "Data collection and usage transparency",
+                            "Parental controls and family safety features",
+                            "Enterprise security features for business customers",
+                            "Regular security update policies"
+                          ]
+                        },
+                        "accessibility": {
+                          "title": "ACCESSIBILITY FEATURES",
+                          "options": [
+                            "Universal design principles in product development",
+                            "Assistive technology compatibility",
+                            "Visual, auditory, and motor accessibility options",
+                            "Voice control and hands-free operation capabilities",
+                            "Large text and high contrast display options",
+                            "Hearing aid compatibility ratings"
+                          ]
+                        },
+                        "support_resources": {
+                          "title": "CUSTOMER SUPPORT RESOURCES",
+                          "resources": [
+                            "Product setup and installation guides",
+                            "Troubleshooting documentation and FAQs",
+                            "Video tutorials and how-to guides",
+                            "Community forums and user groups",
+                            "Live chat support during business hours",
+                            "Callback scheduling for complex issues"
+                          ]
+                        },
+                        "lifecycle": {
+                          "title": "PRODUCT LIFECYCLE MANAGEMENT",
+                          "management": [
+                            "Regular firmware and software updates",
+                            "Feature enhancement through updates",
+                            "End-of-support timelines and migration paths",
+                            "Backward compatibility maintenance",
+                            "Legacy product support policies",
+                            "Upgrade and trade-in programs"
+                          ]
+                        },
+                        "quality_assurance": {
+                          "title": "QUALITY ASSURANCE",
+                          "processes": [
+                            "Manufacturing quality control processes",
+                            "Pre-shipment testing and inspection",
+                            "Quality certifications (ISO, FCC, CE marking)",
+                            "Defect rate statistics and improvement initiatives",
+                            "Customer feedback integration into product development",
+                            "Continuous improvement programs"
+                          ]
+                        },
+                        "shipping": {
+                          "title": "SHIPPING AND DELIVERY",
+                          "options": [
+                            "Standard and expedited shipping options",
+                            "International shipping capabilities and restrictions",
+                            "Package tracking and delivery notifications",
+                            "Secure packaging to prevent damage",
+                            "Signature requirements for high-value items",
+                            "Delivery scheduling and special instructions"
+                          ]
+                        },
+                        "enterprise": {
+                          "title": "BUSINESS AND ENTERPRISE SOLUTIONS",
+                          "solutions": [
+                            "Volume pricing for bulk purchases",
+                            "Custom configuration services",
+                            "Asset management and deployment services",
+                            "Extended warranty and support packages",
+                            "Account management and dedicated support",
+                            "Integration services and professional consulting"
+                          ]
+                        },
+                        "innovation": {
+                          "title": "INNOVATION AND FUTURE TECHNOLOGY",
+                          "areas": [
+                            "Research and development investment information",
+                            "Upcoming technology trends and adoption timelines",
+                            "Beta testing programs for early adopters",
+                            "Technology roadmaps and future product previews",
+                            "Partnership announcements and collaborations",
+                            "Industry leadership and innovation awards"
+                          ]
+                        },
+                        "satisfaction": {
+                          "title": "CUSTOMER SATISFACTION",
+                          "metrics": [
+                            "Customer review aggregation and analysis",
+                            "Satisfaction survey results and improvements",
+                            "Return and exchange rate statistics",
+                            "Customer loyalty programs and benefits",
+                            "Referral programs and incentives",
+                            "Customer success stories and case studies"
+                          ]
+                        }
+                      }
+                    }
+                  
+                  product_info_content = json.dumps(product_info_json, indent=2)
+
+                  # Upload return policy file
+                  s3_client.put_object(
+                      Bucket=return_policy_bucket,
+                      Key='general-return-policy.json',
+                      Body=json.dumps(return_policy_json, indent=2).encode('utf-8'),
+                      ContentType='application/json'
+                  )
+                  print(f"Uploaded return policy file to {return_policy_bucket}")
+
+                  # Upload product info file
+                  s3_client.put_object(
+                      Bucket=product_info_bucket,
+                      Key='general-product-info.txt',
+                      Body=product_info_content.encode('utf-8'),
+                      ContentType='text/plain'
+                  )
+                  print(f"Uploaded product info file to {product_info_bucket}")
+
+                  # Store data source IDs in SSM Parameter Store
+                  ssm_client.put_parameter(
+                      Name='/app/customersupport/kb/return-policy-ds-id',
+                      Value=return_policy_ds_id,
+                      Type='String',
+                      Overwrite=True
+                  )
+                  
+                  ssm_client.put_parameter(
+                      Name='/app/customersupport/kb/product-info-ds-id',
+                      Value=product_info_ds_id,
+                      Type='String',
+                      Overwrite=True
+                  )
+
+                  # Start ingestion jobs for both knowledge bases
+                  def start_ingestion_job(kb_id, ds_id, kb_name):
+                      try:
+                          # Wait a bit more for data source to be ready
+                          time.sleep(5)
+                          response = bedrock_client.start_ingestion_job(
+                              knowledgeBaseId=kb_id,
+                              dataSourceId=ds_id,
+                              description=f"Initial sync for {kb_name}"
+                          )
+                          job_id = response['ingestionJob']['ingestionJobId']
+                          print(f"[WHITE HEAVY CHECK MARK] Started ingestion job for {kb_name}: {job_id}")
+                          return job_id
+                      except Exception as e:
+                          print(f"[CROSS MARK] Failed to start ingestion job for {kb_name}: {str(e)}")
+                          return None
+
+                  # Wait and check Knowledge Base status before starting ingestion
+                  def wait_for_kb_ready(kb_id, kb_name, max_wait=300):
+                      """Wait for Knowledge Base to be in ACTIVE state"""
+                      if kb_id in ['creation-failed', 'not-created', None]:
+                          return False
+                      
+                      for i in range(max_wait // 10):
+                          try:
+                              kb_response = bedrock_client.get_knowledge_base(knowledgeBaseId=kb_id)
+                              status = kb_response['knowledgeBase']['status']
+                              print(f"{kb_name} status: {status}")
+                              
+                              if status == 'ACTIVE':
+                                  return True
+                              elif status in ['FAILED', 'DELETE_UNSUCCESSFUL']:
+                                  print(f"[CROSS MARK] {kb_name} failed with status: {status}")
+                                  return False
+                              
+                              time.sleep(10)
+                          except Exception as e:
+                              print(f"Error checking {kb_name} status: {str(e)}")
+                              time.sleep(10)
+                      
+                      print(f"Timeout waiting for {kb_name} to be ready")
+                      return False
+                  
+                  # Start ingestion jobs only for successfully created Knowledge Bases
+                  return_policy_job_id = None
+                  product_info_job_id = None
+                  
+                  # Wait for Return Policy KB and start ingestion
+                  if wait_for_kb_ready(return_policy_kb_id, "Return Policy KB"):
+                      if return_policy_ds_id not in ['creation-failed', 'not-created', None]:
+                          return_policy_job_id = start_ingestion_job(return_policy_kb_id, return_policy_ds_id, "Return Policy KB")
+                  
+                  # Wait for Product Info KB and start ingestion
+                  if wait_for_kb_ready(product_info_kb_id, "Product Info KB"):
+                      if product_info_ds_id not in ['creation-failed', 'not-created', None]:
+                          product_info_job_id = start_ingestion_job(product_info_kb_id, product_info_ds_id, "Product Info KB")
+
+                  response_data = {
+                      'Status': 'SUCCESS',
+                      'ReturnPolicyJobId': return_policy_job_id or 'failed',
+                      'ProductInfoJobId': product_info_job_id or 'failed'
+                  }
+
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  # IAM Role for Knowledge Base Data Upload Lambda
+  KnowledgeBaseDataUploadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::AccountId}-${AWS::Region}-kb-data-upload-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KnowledgeBaseDataUploadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource:
+                  - !Sub '${ReturnPolicyKnowledgeBaseDataBucket.Arn}/*'
+                  - !Sub '${ProductInfoKnowledgeBaseDataBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:StartIngestionJob
+                  - bedrock:GetKnowledgeBase
+                  - bedrock-agent:StartIngestionJob
+                  - bedrock-agent:GetKnowledgeBase
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*'
+
+  # Trigger the Knowledge Base setup
+  KnowledgeBaseSetup:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt KnowledgeBaseSetupFunction.Arn
+      ReturnPolicyBucketName: !Ref ReturnPolicyBucketName
+      ProductInfoBucketName: !Ref ProductInfoBucketName
+      BedrockRoleArn: !GetAtt BedrockServiceRole.Arn
+
+  # Trigger the data upload and sync after knowledge bases are created
+  KnowledgeBaseDataUpload:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt KnowledgeBaseDataUploadFunction.Arn
+      ReturnPolicyBucketName: !Ref ReturnPolicyBucketName
+      ProductInfoBucketName: !Ref ProductInfoBucketName
+      ReturnPolicyKnowledgeBaseId: !GetAtt KnowledgeBaseSetup.ReturnPolicyKnowledgeBaseId
+      ProductInfoKnowledgeBaseId: !GetAtt KnowledgeBaseSetup.ProductInfoKnowledgeBaseId
+      ReturnPolicyDataSourceId: !GetAtt KnowledgeBaseSetup.ReturnPolicyDataSourceId
+      ProductInfoDataSourceId: !GetAtt KnowledgeBaseSetup.ProductInfoDataSourceId
+    DependsOn: KnowledgeBaseSetup
+
+Outputs:
+  ReturnPolicyKnowledgeBaseId:
+    Description: 'Return Policy Knowledge Base ID'
+    Value: !GetAtt KnowledgeBaseSetup.ReturnPolicyKnowledgeBaseId
+    Export:
+      Name: !Sub "${AWS::StackName}-ReturnPolicyKnowledgeBaseId"
+
+  ProductInfoKnowledgeBaseId:
+    Description: 'Product Information Knowledge Base ID'
+    Value: !GetAtt KnowledgeBaseSetup.ProductInfoKnowledgeBaseId
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductInfoKnowledgeBaseId"
+
+  ReturnPolicyDataSourceId:
+    Description: 'Return Policy Data Source ID'
+    Value: !GetAtt KnowledgeBaseSetup.ReturnPolicyDataSourceId
+    Export:
+      Name: !Sub "${AWS::StackName}-ReturnPolicyDataSourceId"
+
+  ProductInfoDataSourceId:
+    Description: 'Product Information Data Source ID'
+    Value: !GetAtt KnowledgeBaseSetup.ProductInfoDataSourceId
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductInfoDataSourceId"
+
+  ReturnPolicyS3BucketName:
+    Description: 'S3 bucket containing return policy documentation'
+    Value: !Ref ReturnPolicyKnowledgeBaseDataBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-ReturnPolicyS3BucketName"
+
+  ProductInfoS3BucketName:
+    Description: 'S3 bucket containing product information documentation'
+    Value: !Ref ProductInfoKnowledgeBaseDataBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductInfoS3BucketName"

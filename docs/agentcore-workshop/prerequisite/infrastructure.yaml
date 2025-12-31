@@ -1,0 +1,849 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudFormation template for Customer Support System with DynamoDB tables, SSM parameters, and synthetic data"
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Lambda Code Configuration
+        Parameters:
+          - LambdaS3Bucket
+          - LambdaS3Key
+
+Parameters:
+  LambdaS3Bucket:
+    Description: The name of S3 bucket which contains lambda code
+    Type: String
+    MinLength: 1
+
+  LambdaS3Key:
+    Description: The S3 object key which contains customer support assistant code in zip format
+    Type: String
+    MinLength: 1
+
+Resources:
+  RuntimeAgentCoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock-agentcore.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAgentPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ECRImageAccess
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/bedrock-agentcore-customersupport*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*
+              - Sid: ECRTokenAccess
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: bedrock-agentcore
+              - Sid: GetAgentAccessToken
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+                Resource:
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/customersupport*
+              - Sid: ProvisionedThroughputModelInvocation
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - "arn:aws:bedrock:*::foundation-model/*"
+                  - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:*
+              - Sid: SSMGetparam
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/app/customersupport/*
+              - Sid: Identity
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetResourceOauth2Token
+                Resource:
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/oauth2credentialprovider/customersupport*
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/customersupport*
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
+              - Sid: SecretManager
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/oauth2/customersupport*
+              - Sid: AgentCoreMemory
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:ListMemories
+                  - bedrock-agentcore:ListMemoryRecords
+                  - bedrock-agentcore:RetrieveMemoryRecords
+                  - bedrock-agentcore:GetMemory
+                  - bedrock-agentcore:GetMemoryRecord
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:GetEvent
+                  - bedrock-agentcore:ListEvents
+                Resource:
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/customersupport*
+              - Sid: CognitoAccess
+                Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPoolClient
+                Resource:
+                  - !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+              - Sid: AgentCoreGateway
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetGateway
+                  - bedrock-agentcore:InvokeGateway
+                Resource:
+                  - !Sub arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/customersupport*
+
+  GatewayAgentCoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock-agentcore.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAgentPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokeFunction
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt CustomerSupportLambda.Arn
+
+  # DynamoDB Table for Order Tracking Information
+  OrderTrackingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: order_id
+          AttributeType: S
+        - AttributeName: customer_id
+          AttributeType: S
+        - AttributeName: tracking_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: order_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: customer-index
+          KeySchema:
+            - AttributeName: customer_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: tracking-index
+          KeySchema:
+            - AttributeName: tracking_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Application
+          Value: CustomerSupport
+        - Key: CostCenter
+          Value: CustomerSupport
+
+  # DynamoDB Table for Customer Profiles
+  CustomerProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: customer_id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: phone
+          AttributeType: S
+      KeySchema:
+        - AttributeName: customer_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: email-index
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: phone-index
+          KeySchema:
+            - AttributeName: phone
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Application
+          Value: CustomerSupport
+        - Key: CostCenter
+          Value: CustomerSupport
+
+  # Lambda function to populate synthetic data
+  PopulateDataFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt PopulateDataRole.Arn
+      Timeout: 120
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          from datetime import datetime, timedelta
+          import random
+          import uuid
+          from decimal import Decimal
+
+          def lambda_handler(event, context):
+              try:
+                  if event['RequestType'] == 'Create':
+                      dynamodb = boto3.resource('dynamodb')
+                      order_table_name = event['ResourceProperties']['OrderTrackingTableName']
+                      customer_table_name = event['ResourceProperties']['CustomerTableName']
+
+                      order_table = dynamodb.Table(order_table_name)
+                      customer_table = dynamodb.Table(customer_table_name)
+
+                      # Customer profile data
+                      customer_data = [
+                          {
+                              'customer_id': 'CUST001',
+                              'first_name': 'John',
+                              'last_name': 'Smith',
+                              'email': 'john.smith@email.com',
+                              'phone': '+1-555-0101',
+                              'address': {
+                                  'street': '123 Main Street',
+                                  'city': 'New York',
+                                  'state': 'NY',
+                                  'zip_code': '10001',
+                                  'country': 'USA'
+                              },
+                              'date_of_birth': '1985-03-15',
+                              'registration_date': '2022-11-20',
+                              'tier': 'Premium',
+                              'communication_preferences': {
+                                  'email': True,
+                                  'sms': True,
+                                  'phone': False
+                              },
+                              'support_cases_count': 2,
+                              'total_purchases': 3,
+                              'lifetime_value': 2850.00,
+                              'notes': 'VIP customer, prefers email communication'
+                          },
+                          {
+                              'customer_id': 'CUST002',
+                              'first_name': 'Sarah',
+                              'last_name': 'Johnson',
+                              'email': 'sarah.johnson@email.com',
+                              'phone': '+1-555-0102',
+                              'address': {
+                                  'street': '456 Oak Avenue',
+                                  'city': 'Los Angeles',
+                                  'state': 'CA',
+                                  'zip_code': '90210',
+                                  'country': 'USA'
+                              },
+                              'date_of_birth': '1990-07-22',
+                              'registration_date': '2023-03-15',
+                              'tier': 'Standard',
+                              'communication_preferences': {
+                                  'email': True,
+                                  'sms': False,
+                                  'phone': True
+                              },
+                              'support_cases_count': 1,
+                              'total_purchases': 1,
+                              'lifetime_value': 1299.99,
+                              'notes': 'Tech-savvy customer, quick to resolve issues'
+                          },
+                          {
+                              'customer_id': 'CUST003',
+                              'first_name': 'Mike',
+                              'last_name': 'Davis',
+                              'email': 'mike.davis@email.com',
+                              'phone': '+1-555-0103',
+                              'address': {
+                                  'street': '789 Pine Street',
+                                  'city': 'Chicago',
+                                  'state': 'IL',
+                                  'zip_code': '60601',
+                                  'country': 'USA'
+                              },
+                              'date_of_birth': '1988-12-03',
+                              'registration_date': '2023-08-10',
+                              'tier': 'Gold',
+                              'communication_preferences': {
+                                  'email': True,
+                                  'sms': True,
+                                  'phone': True
+                              },
+                              'support_cases_count': 0,
+                              'total_purchases': 2,
+                              'lifetime_value': 549.98,
+                              'notes': 'Audio enthusiast, interested in premium products'
+                          },
+                          {
+                              'customer_id': 'CUST004',
+                              'first_name': 'Emily',
+                              'last_name': 'Brown',
+                              'email': 'emily.brown@email.com',
+                              'phone': '+1-555-0104',
+                              'address': {
+                                  'street': '321 Elm Drive',
+                                  'city': 'Houston',
+                                  'state': 'TX',
+                                  'zip_code': '77001',
+                                  'country': 'USA'
+                              },
+                              'date_of_birth': '1992-04-18',
+                              'registration_date': '2022-09-05',
+                              'tier': 'Standard',
+                              'communication_preferences': {
+                                  'email': True,
+                                  'sms': False,
+                                  'phone': False
+                              },
+                              'support_cases_count': 3,
+                              'total_purchases': 1,
+                              'lifetime_value': 399.99,
+                              'notes': 'Fitness enthusiast, uses wearables frequently'
+                          },
+                          {
+                              'customer_id': 'CUST005',
+                              'first_name': 'Robert',
+                              'last_name': 'Wilson',
+                              'email': 'robert.wilson@email.com',
+                              'phone': '+1-555-0105',
+                              'address': {
+                                  'street': '654 Maple Lane',
+                                  'city': 'Phoenix',
+                                  'state': 'AZ',
+                                  'zip_code': '85001',
+                                  'country': 'USA'
+                              },
+                              'date_of_birth': '1983-09-11',
+                              'registration_date': '2023-10-12',
+                              'tier': 'Premium',
+                              'communication_preferences': {
+                                  'email': False,
+                                  'sms': True,
+                                  'phone': True
+                              },
+                              'support_cases_count': 1,
+                              'total_purchases': 1,
+                              'lifetime_value': 699.99,
+                              'notes': 'Gaming enthusiast, prefers phone support'
+                          }
+                      ]
+
+                      # Order tracking data with customer_id references
+                      order_data = [
+                          {
+                              'order_id': 'ORD-2025-001234',
+                              'customer_id': 'CUST001',
+                              'tracking_id': '1Z999AA1234567890',
+                              'product_name': 'iPhone 15 Pro Max 256GB',
+                              'order_date': '2024-01-15',
+                              'status': 'delivered',
+                              'estimated_delivery': '2024-01-18',
+                              'shipping_address': {
+                                  'street': '123 Main Street',
+                                  'city': 'New York',
+                                  'state': 'NY',
+                                  'zip_code': '10001'
+                              },
+                              'order_total': 1299.99,
+                              'items': [
+                                  {
+                                      'product_id': 'IPHONE15PM256',
+                                      'quantity': 1,
+                                      'price': 1199.99
+                                  },
+                                  {
+                                      'product_id': 'CASE-LEATHER',
+                                      'quantity': 1,
+                                      'price': 99.99
+                                  }
+                              ]
+                          },
+                          {
+                              'order_id': 'ORD-2024-001235',
+                              'customer_id': 'CUST002',
+                              'tracking_id': '1Z999AA1234567891',
+                              'product_name': 'MacBook Pro 14" M3',
+                              'order_date': '2024-06-20',
+                              'status': 'shipped',
+                              'estimated_delivery': '2024-06-23',
+                              'shipping_address': {
+                                  'street': '456 Oak Avenue',
+                                  'city': 'Los Angeles',
+                                  'state': 'CA',
+                                  'zip_code': '90210'
+                              },
+                              'order_total': 1999.99,
+                              'items': [
+                                  {
+                                      'product_id': 'MBP14M3',
+                                      'quantity': 1,
+                                      'price': 1999.99
+                                  }
+                              ]
+                          },
+                          {
+                              'order_id': 'ORD-2024-001236',
+                              'customer_id': 'CUST003',
+                              'tracking_id': '1Z999AA1234567892',
+                              'product_name': 'AirPods Pro 2nd Gen',
+                              'order_date': '2024-02-10',
+                              'status': 'processing',
+                              'estimated_delivery': '2024-02-15',
+                              'shipping_address': {
+                                  'street': '789 Pine Street',
+                                  'city': 'Chicago',
+                                  'state': 'IL',
+                                  'zip_code': '60601'
+                              },
+                              'order_total': 249.99,
+                              'items': [
+                                  {
+                                      'product_id': 'AIRPODS-PRO2',
+                                      'quantity': 1,
+                                      'price': 249.99
+                                  }
+                              ]
+                          },
+                          {
+                              'order_id': 'ORD-2024-001237',
+                              'customer_id': 'CUST004',
+                              'tracking_id': '1Z999AA1234567893',
+                              'product_name': 'Apple Watch Series 9',
+                              'order_date': '2022-12-05',
+                              'status': 'delivered',
+                              'estimated_delivery': '2022-12-08',
+                              'shipping_address': {
+                                  'street': '321 Elm Drive',
+                                  'city': 'Houston',
+                                  'state': 'TX',
+                                  'zip_code': '77001'
+                              },
+                              'order_total': 399.99,
+                              'items': [
+                                  {
+                                      'product_id': 'WATCH-S9',
+                                      'quantity': 1,
+                                      'price': 399.99
+                                  }
+                              ]
+                          },
+                          {
+                              'order_id': 'ORD-2024-001238',
+                              'customer_id': 'CUST005',
+                              'tracking_id': '1Z999AA1234567894',
+                              'product_name': 'PlayStation 5 Pro',
+                              'order_date': '2023-11-25',
+                              'status': 'shipped',
+                              'estimated_delivery': '2023-11-28',
+                              'shipping_address': {
+                                  'street': '654 Maple Lane',
+                                  'city': 'Phoenix',
+                                  'state': 'AZ',
+                                  'zip_code': '85001'
+                              },
+                              'order_total': 699.99,
+                              'items': [
+                                  {
+                                      'product_id': 'PS5-PRO',
+                                      'quantity': 1,
+                                      'price': 699.99
+                                  }
+                              ]
+                          },
+                          {
+                              'order_id': 'ORD-2024-001239',
+                              'customer_id': 'CUST001',
+                              'tracking_id': '1Z999AA1234567895',
+                              'product_name': 'iPad Air 11"',
+                              'order_date': '2024-03-12',
+                              'status': 'cancelled',
+                              'estimated_delivery': '2024-03-15',
+                              'shipping_address': {
+                                  'street': '123 Main Street',
+                                  'city': 'New York',
+                                  'state': 'NY',
+                                  'zip_code': '10001'
+                              },
+                              'order_total': 599.99,
+                              'items': [
+                                  {
+                                      'product_id': 'IPAD-AIR11',
+                                      'quantity': 1,
+                                      'price': 599.99
+                                  }
+                              ]
+                          },
+                          {
+                              'order_id': 'ORD-2024-001240',
+                              'customer_id': 'CUST001',
+                              'tracking_id': '1Z999AA1234567896',
+                              'product_name': 'Samsung 65" OLED TV',
+                              'order_date': '2023-08-30',
+                              'status': 'delivered',
+                              'estimated_delivery': '2023-09-02',
+                              'shipping_address': {
+                                  'street': '123 Main Street',
+                                  'city': 'New York',
+                                  'state': 'NY',
+                                  'zip_code': '10001'
+                              },
+                              'order_total': 1999.99,
+                              'items': [
+                                  {
+                                      'product_id': 'SAMSUNG-OLED65',
+                                      'quantity': 1,
+                                      'price': 1999.99
+                                  }
+                              ]
+                          },
+                          {
+                              'order_id': 'ORD-2024-001241',
+                              'customer_id': 'CUST003',
+                              'tracking_id': '1Z999AA1234567897',
+                              'product_name': 'Bose QuietComfort Headphones',
+                              'order_date': '2024-01-08',
+                              'status': 'processing',
+                              'estimated_delivery': '2024-01-12',
+                              'shipping_address': {
+                                  'street': '789 Pine Street',
+                                  'city': 'Chicago',
+                                  'state': 'IL',
+                                  'zip_code': '60601'
+                              },
+                              'order_total': 329.99,
+                              'items': [
+                                  {
+                                      'product_id': 'BOSE-QC',
+                                      'quantity': 1,
+                                      'price': 329.99
+                                  }
+                              ]
+                          }
+                      ]
+
+                      # Insert customer data
+                      with customer_table.batch_writer() as batch:
+                          for item in customer_data:
+                              item = json.loads(json.dumps(item), parse_float=Decimal)
+                              batch.put_item(Item=item)
+
+                      # Insert order data
+                      with order_table.batch_writer() as batch:
+                          for item in order_data:
+                              item = json.loads(json.dumps(item), parse_float=Decimal)
+                              batch.put_item(Item=item)
+
+                      print(f"Successfully populated {len(customer_data)} customer profiles")
+                      print(f"Successfully populated {len(order_data)} order records")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  # IAM Role for Lambda function
+  PopulateDataRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBWritePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt OrderTrackingTable.Arn
+                  - !GetAtt CustomerProfileTable.Arn
+        - PolicyName: AllowBasicLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+  # Custom resource to trigger Lambda function
+  PopulateData:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt PopulateDataFunction.Arn
+      OrderTrackingTableName: !Ref OrderTrackingTable
+      CustomerTableName: !Ref CustomerProfileTable
+    DependsOn:
+      - OrderTrackingTable
+      - CustomerProfileTable
+
+  # Lambda target
+  CustomerSupportLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /service-role/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      Policies:
+        - PolicyName: CustomerProfileAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowReadCustomerTableNameFromSSM
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${CustomerProfileTableNameParameter}
+
+              - Sid: AllowReadCustomerProfileTable
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${CustomerProfileTable}
+
+              - Sid: AllowReadCustomerTableIndexes
+                Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${CustomerProfileTable}/index/*
+
+        - PolicyName: OrderTrackingAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowReadOrderTrackingTableNameFromSSM
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OrderTrackingTableNameParameter}
+
+              - Sid: AllowReadOrderTrackingTable
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${OrderTrackingTable}
+
+              - Sid: AllowReadOrderTrackingTableIndexes
+                Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${OrderTrackingTable}/index/*
+
+  CustomerSupportLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "Lambda function for Customer Support Assistant"
+      Handler: lambda_function.lambda_handler
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Role: !GetAtt CustomerSupportLambdaRole.Arn
+      Runtime: python3.12
+      PackageType: Zip
+      Architectures:
+        - x86_64
+
+  # SSM Parameter to store order tracking table name
+  OrderTrackingTableNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/dynamodb/order_tracking_table_name
+      Type: String
+      Value: !Ref OrderTrackingTable
+      Description: DynamoDB table name for order tracking information
+      Tags:
+        Application: CustomerSupport
+
+  # SSM Parameter to store customer profile table name
+  CustomerProfileTableNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/dynamodb/customer_profile_table_name
+      Type: String
+      Value: !Ref CustomerProfileTable
+      Description: DynamoDB table name for customer profiles
+      Tags:
+        Application: CustomerSupport
+
+  GatewayAgentcoreIAMRoleParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/gateway_iam_role
+      Type: String
+      Value: !GetAtt GatewayAgentCoreRole.Arn
+      Description: agentcore IAM role to assume
+      Tags:
+        Application: CustomerSupport
+
+  RuntimeAgentcoreIAMRoleParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/runtime_iam_role
+      Type: String
+      Value: !GetAtt RuntimeAgentCoreRole.Arn
+      Description: agentcore IAM role to assume
+      Tags:
+        Application: CustomerSupport
+
+  LambdaArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/lambda_arn
+      Type: String
+      Value: !GetAtt CustomerSupportLambda.Arn
+      Description: ARN of the lambda that integrates with agentcore
+      Tags:
+        Application: CustomerSupport
+
+  # Knowledge Base Nested Stack
+  KnowledgeBaseStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${LambdaS3Bucket}/knowledge-base-stack.yaml'
+      Parameters:
+        ReturnPolicyBucketName: !Sub 'customer-service-return-policy-${AWS::AccountId}-${AWS::Region}'
+        ProductInfoBucketName: !Sub 'customer-service-product-info-${AWS::AccountId}-${AWS::Region}'
+      Tags:
+        - Key: Application
+          Value: CustomerSupport
+
+
+
+Outputs:
+  OrderTrackingTableName:
+    Description: 'DynamoDB table name for order tracking'
+    Value: !Ref OrderTrackingTable
+    Export:
+      Name: !Sub "${AWS::StackName}-OrderTrackingTableName"
+
+  CustomerProfileTableName:
+    Description: 'DynamoDB table name for customer profiles'
+    Value: !Ref CustomerProfileTable
+    Export:
+      Name: !Sub "${AWS::StackName}-CustomerProfileTableName"
+
+  CustomerSupportLambdaArn:
+    Description: 'Lambda function ARN for customer support'
+    Value: !GetAtt CustomerSupportLambda.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-CustomerSupportLambdaArn"
+
+  ReturnPolicyKnowledgeBaseId:
+    Description: 'Return Policy Knowledge Base ID'
+    Value: !GetAtt KnowledgeBaseStack.Outputs.ReturnPolicyKnowledgeBaseId
+    Export:
+      Name: !Sub "${AWS::StackName}-ReturnPolicyKnowledgeBaseId"
+
+  ProductInfoKnowledgeBaseId:
+    Description: 'Product Information Knowledge Base ID'
+    Value: !GetAtt KnowledgeBaseStack.Outputs.ProductInfoKnowledgeBaseId
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductInfoKnowledgeBaseId"
+
+  ReturnPolicyS3BucketName:
+    Description: 'S3 bucket containing return policy documentation'
+    Value: !GetAtt KnowledgeBaseStack.Outputs.ReturnPolicyS3BucketName
+    Export:
+      Name: !Sub "${AWS::StackName}-ReturnPolicyS3BucketName"
+
+  ProductInfoS3BucketName:
+    Description: 'S3 bucket containing product information documentation'
+    Value: !GetAtt KnowledgeBaseStack.Outputs.ProductInfoS3BucketName
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductInfoS3BucketName"

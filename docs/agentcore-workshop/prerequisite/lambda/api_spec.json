@@ -1,0 +1,49 @@
+[
+    {
+        "name": "get_customer_profile",
+        "description": "Retrieve customer profile using customer ID, email, or phone number",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "customer_id": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "customer_id"
+            ]
+        }
+    },
+    {
+        "name": "track_order",
+        "description": "Track order status using order ID, tracking ID, customer ID, or natural language query about the order",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "order_id": {
+                    "type": "string",
+                    "description": "Specific order ID to look up"
+                },
+                "tracking_id": {
+                    "type": "string",
+                    "description": "Tracking ID to look up"
+                },
+                "customer_id": {
+                    "type": "string",
+                    "description": "Customer ID to filter orders"
+                },
+                "natural_query": {
+                    "type": "string",
+                    "description": "Natural language description of the order (e.g., 'my iPhone order from last Friday')"
+                }
+            },
+            "required": []
+        }
+    }
+]

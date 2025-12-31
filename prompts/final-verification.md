@@ -24,11 +24,12 @@ For each task:
 5. Implementation is in src/ directories
 6. Verify whether acceptance criteria are followed exactly
 7. Verify that the code uses types from src/shared/types/index.ts without modification
-8. Verify that the code is real and working
+8. Verify that the code is real and working, that it's not a mock, a stub, a placeholder, work in progress, a sample, or anything like that
+9. Verify that the code is readable, maintainable, and of good quality
 
 ## Critical Project Rules (AWS Roadmaps Specific) that you must verify are adhered to
 
-1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel only
+1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel, or use Bedrock AgentCore (which is not the same as Bedrock Agents, it's a new feature, you can find code samples in docs/agentcore-workshop). Sprint 7 is about AgentCore. Previous sprints might have resolved things without AgentCore and then Sprint 7 added AgentCore on top of those features, making changes to earlier decisions. That's fine, the expected end results uses AgentCore
 4. ENFORCE visibility rules at query level
 5. USE exact types from src/shared/types/index.ts - no alternatives
 6. FOLLOW error format from docs/api-errors.md exactly
@@ -61,10 +62,14 @@ The project is complete when:
 - If infrastructure tasks are present, npm run build and cdk synth (ran from the src/infrastructure folder) succeed without errors
 - Database migrations work locally
 - All tests are passing
+- Tests effectively test behavior, and are not coupled to implementation details
+- Behavior is effectively tested by our tests
 
 ## Your Assignment
 
 Every sprint is supposed to be already fully implemented, and at this point we've been told the project is finished and can be delivered to utmost satisfaction. Your task is to verify whether that assertion is true, and that the implementation meets all of our quality criteria and rules. This applies to all Sprints, you're verifying the entire project.
+
+Evaluate every single angle and criteria you can think of.
 
 You must produce a single, complete report detailing everything that is completed and your assessment on whether it meets our quality standards and rules. If you find something lacking, do not make any changes, instead include in that document instructions for the changes that are needed. Be ruthless, we're trying to catch any problems.
 
@@ -72,4 +77,8 @@ You must produce a single, complete report detailing everything that is complete
 
 DO NOT MAKE ANY CHANGES TO THE CODE. Do not attempt to fix anything. You are just a verifier, your only job is to assess and verify. The only file you and any subagents related to you are allowed to write to is the report.
 
-ultrathink in order to understand everything better.
+ultrathink in order to understand everything better. Take as long as you need, and use as many tokens and perform as many actions as necessary.
+
+Note: The CLI you have access to doesn't have AWS credentials. You don't need them, and if some success criteria require them, ignore that success criteria for the purpose of this verification. After we're satisfied with what we can review and test locally, we'll deploy the code to AWS using the CI pipeline and test there.
+ 
+It's possible the git working tree is dirty. If that's the case, it's because we're actively fixing issues. That's not a problem.

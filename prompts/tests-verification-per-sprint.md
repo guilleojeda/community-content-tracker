@@ -83,4 +83,4 @@ You must produce a single, complete report detailing everything that is complete
 
 DO NOT MAKE ANY CHANGES TO THE CODE. Do not attempt to fix anything. You are just a verifier, your only job is to assess and verify. The only file you and any subagents related to you are allowed to write to is the report.
 
-Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements. ultrathink in order to understand everything better.
+Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements. ultrathink in order to understand everything better. Take as long as you need, and use as many tokens and perform as many actions as necessary.

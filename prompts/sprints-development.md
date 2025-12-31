@@ -9,7 +9,7 @@ You are implementing Sprint [X] of the AWS Community Content Hub.
 4. src/shared/types/index.ts - Type definitions (USE THESE EXACTLY)
 5. docs/api-errors.md - Error handling standards
 6. docs/implementation-notes.md - Critical patterns and AWS-specific rules
-8. .env.development - Local development configuration
+7. .env.development - Local development configuration
 
 ## Sprint [X] Implementation
 
@@ -31,7 +31,7 @@ For each task in the sprint:
 
 ## Critical Project Rules (AWS Community Content Hub Specific)
 
-1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel only
+1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel or use Bedrock AgentCore, as appropriate
 2. NEVER deploy to AWS - Write CDK code but do not run cdk deploy
 3. USE LOCAL PostgreSQL at localhost:5432 (connection string in .env.development)
 4. ENFORCE visibility rules at query level: private, aws_only, aws_community, public
@@ -80,4 +80,4 @@ Sprint [X] is complete when:
 
 Implement all tasks in Sprint [X] following TDD methodology. Ensure each task's acceptance criteria are fully met before moving to the next. Document any assumptions or decisions made. Only implement Sprint [X], not any other Sprints. When you've completed all tasks, verify that every single criteria listed in # Success Criteria is met. If the success criteria requires executing commands, you must execute those commands and verify their output before asserting that the success criteria is met.
 
-Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements. ultrathink in order to understand everything better.
+Begin by thoroughly reading docs/plan/sprint_[X].md to understand all tasks and their requirements. ultrathink in order to understand everything better. Take as long as you need, and use as many tokens and perform as many actions as necessary.

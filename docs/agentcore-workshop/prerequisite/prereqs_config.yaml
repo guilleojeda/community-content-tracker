@@ -1,0 +1,9 @@
+return_policy_kb:
+  name: 'customer-service-return-policy'
+  description: 'Knowledge base for customer service return policies and procedures'
+  files_path: "sample-knowledge-base-files/return-policy"
+
+product_info_kb:
+  name: 'customer-service-product-info'
+  description: 'Knowledge base for product information and specifications'
+  files_path: "sample-knowledge-base-files/product-info"

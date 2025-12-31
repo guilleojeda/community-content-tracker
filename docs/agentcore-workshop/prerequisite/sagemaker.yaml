@@ -1,0 +1,744 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Comprehensive deployment creating a SageMaker Studio Domain with all required AgentCore workshop infrastructure including DynamoDB tables, Lambda functions, Cognito resources, and IAM roles.
+
+Parameters:
+  UserProfileName:
+    Type: String
+    Description: The user profile name for the SageMaker workshop
+    Default: 'csuser'
+  DomainName:
+    Type: String
+    Description: The domain name of the Sagemaker studio instance
+    Default: 'cs-workshop'
+  SpaceName:
+    Type: String
+    Description: The space name of the Sagemaker studio JupyterLab instance
+    Default: 'cs-workshop-space'
+  WorkshopAssetsS3Bucket:
+    Type: String
+    Description: The name of the S3 bucket with the workshop assets
+  WorkshopAssetsS3Key:
+    Type: String
+    Description: The S3 key for the workshop assets
+
+Mappings: 
+  RegionMap:
+    us-east-1: 
+      jupyter: "arn:aws:sagemaker:us-east-1:081325390199:image/jupyter-server-3"
+      instance: "ml.m5.2xlarge"
+    us-west-2: 
+      jupyter: "arn:aws:sagemaker:us-west-2:236514542706:image/jupyter-server-3"
+      instance: "ml.m5.2xlarge"
+
+Resources:
+
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies: 
+        - PolicyName: s3-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                  - s3:ListMultipartUploadParts
+                  - s3:AbortMultipartUpload
+                Resource: arn:aws:s3:::*
+        - PolicyName: iam-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                Resource: '*'
+        - PolicyName: ec2-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                Resource: '*'
+        - PolicyName: sagemaker-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:CreateStudioLifecycleConfig
+                  - sagemaker:DeleteStudioLifecycleConfig
+                  - sagemaker:UpdateUserProfile
+                Resource: '*'
+
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: 
+              Service: 
+                - sagemaker.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+          - Effect: Allow
+            Principal: 
+              Service: 
+                - bedrock.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+          - Effect: Allow
+            Principal: 
+              Service: 
+                - bedrock-agentcore.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Sub "${AWS::AccountId}"
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:bedrock-agentcore:*:${AWS::AccountId}:*"
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AdministratorAccess"
+        - "arn:aws:iam::aws:policy/AmazonSageMakerReadOnly"
+        - "arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess"
+        - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+        - "arn:aws:iam::aws:policy/AmazonBedrockReadOnly"
+        - "arn:aws:iam::aws:policy/AmazonQDeveloperAccess"
+      Policies: 
+        - PolicyName: sm-studio-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:UpdateSpace
+                  - sagemaker:DeleteSpace
+                  - sagemaker:DeleteApp
+                  - sagemaker:CreatePresignedNotebookInstanceUrl
+                  - sagemaker:UpdateAppImageConfig
+                  - sagemaker:CreateSpace
+                  - sagemaker:CreateStudioLifecycleConfig
+                  - sagemaker:DeleteStudioLifecycleConfig
+                  - sagemaker:CreatePresignedDomainUrl
+                  - sagemaker:DeleteAppImageConfig
+                  - sagemaker:CreateApp
+                  - sagemaker:AddTags
+                Resource: arn:aws:sagemaker:*:*:*
+        - PolicyName: s3-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                  - s3:DeleteBucket
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:PutBucketVersioning
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketPolicy
+                Resource: arn:aws:s3:::*
+        - PolicyName: s3-create-bucket-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                Resource:
+                  - arn:aws:s3:::*
+        - PolicyName: iam-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:CreatePolicy
+                  - iam:AttachRolePolicy
+                  - iam:CreateServiceLinkedRole
+                  - iam:DeleteRole
+                  - iam:DeletePolicy
+                  - iam:PassRole
+                  - iam:GetPolicy
+                  - iam:DetachRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:ListRolePolicies
+                Resource: '*'
+        - PolicyName: bedrock-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:TagResource
+                  - bedrock:UntagResource
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:StartIngestionJob
+                  - bedrock:Retrieve
+                Resource: "arn:aws:bedrock:*:*:*"
+        - PolicyName: bedrock-deny
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Deny
+                Action:
+                  - bedrock:CreateModelCustomizationJob
+                  - bedrock:StopModelCustomizationJob
+                  - bedrock:GetModelCustomizationJob
+                  - bedrock:ListModelCustomizationJobs
+                Resource: "*"
+        - PolicyName: lambda-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:AddPermission
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:InvokeFunction
+                  - lambda:CreateEventSourceMapping
+                  - lambda:GetEventSourceMapping
+                Resource: "*"
+        - PolicyName: dynamodb-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:ListTables
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Scan
+                Resource: "arn:aws:dynamodb:*:*:table/*"
+        - PolicyName: cfn-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DeleteStack
+                  - cloudformation:ListStacks
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateStack
+                Resource: "arn:aws:cloudformation:*:*:stack/*"
+        - PolicyName: ssm-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter                  
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                  - ssm:DeleteParameter
+                  - "sns:*"
+                Resource: "*"
+        - PolicyName: ecr-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:PutLifecyclePolicy
+                  - ecr:SetRepositoryPolicy
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:DeleteRepository
+                  - ecr:CreateRepository
+                Resource: "arn:aws:ecr:*:*:repository/*"
+        - PolicyName: sns-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "sns:*"
+                Resource: "*"
+        - PolicyName: codebuild-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateProject
+                  - codebuild:StartBuild
+                  - codebuild:UpdateProject
+                  - codebuild:BatchGetBuilds
+                Resource: "*"
+        - PolicyName: cognito-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeResourceServer
+                  - cognito-idp:CreateResourceServer
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:CreateUserPoolDomain
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:ListUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:DeleteUserPoolClient
+                Resource: "*"
+        - PolicyName: secret-manager
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DeleteSecret
+                Resource: "*"
+        - PolicyName: agentcore-runtime-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateAgentRuntime
+                  - bedrock-agentcore:UpdateAgentRuntime
+                  - bedrock-agentcore:GetAgentRuntime
+                  - bedrock-agentcore:ListAgentRuntimes
+                  - bedrock-agentcore:CreateAgentRuntimeEndpoint
+                  - bedrock-agentcore:UpdateAgentRuntimeEndpoint
+                  - bedrock-agentcore:GetAgentRuntimeEndpoint
+                  - bedrock-agentcore:ListAgentRuntimeEndpoints
+                  - bedrock-agentcore:ListAgentRuntimeVersions
+                  - bedrock-agentcore:CreateWorkloadIdentity
+                  - bedrock-agentcore:UploadWorkloadIdentity
+                  - bedrock-agentcore:GetWorkloadIdentity
+                  - bedrock-agentcore:ListWorkloadIdentities
+                  - bedrock-agentcore:InvokeAgentRuntime
+                  - bedrock-agentcore:DeleteAgentRuntime
+                  - bedrock-agentcore:DeleteAgentRuntimeEndpoint
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                Resource: "*"
+        - PolicyName: agentcore-gateway-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateGateway
+                  - bedrock-agentcore:UpdateGateway
+                  - bedrock-agentcore:DeleteGateway
+                  - bedrock-agentcore:GetGateway
+                  - bedrock-agentcore:ListGateways
+                  - bedrock-agentcore:CreateGatewayTarget
+                  - bedrock-agentcore:UpdateGatewayTarget
+                  - bedrock-agentcore:DeleteGatewayTarget
+                  - bedrock-agentcore:GetGatewayTarget
+                  - bedrock-agentcore:ListGatewayTargets
+                  - bedrock-agentcore:DeleteWorkloadIdentity
+                  - bedrock-agentcore:CreateApiKeyCredentialProvider
+                  - bedrock-agentcore:CreateTokenVault
+                  - bedrock-agentcore:SynchronizeGatewayTargets
+                  - bedrock-agentcore:GetGateway
+                  - bedrock-agentcore:*
+                Resource: "*"
+        - PolicyName: agentcore-memory-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateMemory
+                  - bedrock-agentcore:GetMemory
+                  - bedrock-agentcore:ListMemories
+                  - bedrock-agentcore:ListEvents
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:DeleteMemory
+                Resource: "*"
+        - PolicyName: agentcore-observability-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - application-signals:StartDiscovery
+                  - logs:PutLogEvents
+                  - logs:FilterLogEvents                  
+                  - logs:DescribeLogGroups
+                  - logs:PutDestination
+                  - logs:GetLogEvents
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutResourcePolicy
+                  - logs:PutRetentionPolicy
+                  - logs:DescribeLogStreams
+                  - logs:DeleteLogGroup
+                  - logs:DeleteLogStream
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                  - xray:GetSamplingTargets
+                  - xray:GetSamplingStatisticSummaries
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                Resource: "*"
+        - PolicyName: agentcore-identity-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateApiKeyCredentialProvider
+                  - bedrock-agentcore:DeleteApiKeyCredentialProvider
+                  - bedrock-agentcore:GetApiKeyCredentialProvider
+                  - bedrock-agentcore:ListApiKeyCredentialProviders
+                  - bedrock-agentcore:UpdateApiKeyCredentialProvider
+                  - bedrock-agentcore:CreateOAuth2CredentialProvider
+                  - bedrock-agentcore:DeleteOAuth2CredentialProvider
+                  - bedrock-agentcore:GetOAuth2CredentialProvider
+                  - bedrock-agentcore:ListOAuth2CredentialProviders
+                  - bedrock-agentcore:UpdateOAuth2CredentialProvider
+                  - bedrock-agentcore:CreateTokenVault
+                  - bedrock-agentcore:GetTokenVault
+                  - bedrock-agentcore:SetTokenVaultCmk
+                  - bedrock-agentcore:GetResourceApiKey
+                Resource: "*"
+        - PolicyName: secretsmanager-access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:DeleteSecret
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:PutSecretValue
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:TagResource
+                  - secretsmanager:UntagResource
+                Resource: "*"
+
+
+  DefaultVpcLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CFGetDefaultVpcId
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import cfnresponse
+
+          ec2 = boto3.client('ec2')
+
+          def lambda_handler(event, context):              
+              if 'RequestType' in event and event['RequestType'] == 'Create':
+                  vpc_id = get_default_vpc_id()
+                  subnets = get_subnets_for_vpc(vpc_id)
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'VpcId': vpc_id, 'Subnets': subnets}, '')
+              else:
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, '')
+
+          def get_default_vpc_id():
+              vpcs = ec2.describe_vpcs(Filters=[{'Name': 'is-default', 'Values': ['true']}])
+              vpc_id = vpcs['Vpcs'][0]['VpcId']
+              return vpc_id
+
+          def get_subnets_for_vpc(vpcId):
+              response = ec2.describe_subnets(Filters=[{'Name': 'vpc-id', 'Values': [vpcId]}])
+              subnet_ids = [subnet['SubnetId'] for subnet in response['Subnets']]
+              return subnet_ids 
+      Description: Return default VPC ID and Subnets
+      Handler: index.lambda_handler
+      MemorySize: 512
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 5
+
+  DefaultVpcFinder:
+    Type: Custom::ResourceForFindingDefaultVpc
+    Properties:
+      ServiceToken: !GetAtt DefaultVpcLambda.Arn
+      ServiceTimeout: 5
+
+  StudioDomain:
+    Type: AWS::SageMaker::Domain
+    DeletionPolicy: Retain
+    Properties: 
+      AppNetworkAccessType: PublicInternetOnly
+      AuthMode: IAM
+      DefaultUserSettings: 
+        ExecutionRole: !GetAtt SageMakerExecutionRole.Arn
+        StudioWebPortal: ENABLED
+        StudioWebPortalSettings:
+          HiddenAppTypes:
+            - Canvas
+            - JupyterServer # Studio Classic
+            - RStudioServerPro
+            - TensorBoard
+            - DetailedProfiler
+          HiddenMlTools:
+            - FeatureStore
+            - EmrClusters
+      DomainName: !Ref DomainName
+      SubnetIds: !GetAtt DefaultVpcFinder.Subnets
+      VpcId: !GetAtt DefaultVpcFinder.VpcId
+      DefaultSpaceSettings: 
+        ExecutionRole: !GetAtt SageMakerExecutionRole.Arn
+      DomainSettings:
+        DockerSettings:
+          EnableDockerAccess: ENABLED
+      Tags:
+        - Key: 'env'
+          Value: 'aws-agentcore-workshop'
+        - Key: 'version'
+          Value: '1.0'
+
+  UserProfile:
+    Type: AWS::SageMaker::UserProfile
+    Properties: 
+      DomainId: !GetAtt StudioDomain.DomainId
+      UserProfileName: !Ref UserProfileName
+      UserSettings:
+        ExecutionRole: !GetAtt SageMakerExecutionRole.Arn
+      Tags:
+        - Key: 'env'
+          Value: 'aws-agentcore-workshop'
+        - Key: 'version'
+          Value: '1.0'
+        - Key: 'user'
+          Value: !Ref UserProfileName
+
+  JupyterLabSpace:
+    Type: AWS::SageMaker::Space
+    DependsOn:
+      - UserProfile
+    Properties:
+      DomainId: !GetAtt StudioDomain.DomainId
+      SpaceName: !Ref SpaceName
+      SpaceSettings:
+        AppType: JupyterLab
+        SpaceStorageSettings:
+          EbsStorageSettings: 
+             EbsVolumeSizeInGb: 100
+        JupyterLabAppSettings:
+          DefaultResourceSpec: 
+            InstanceType: !FindInMap
+              - RegionMap
+              - !Ref "AWS::Region"
+              - instance
+      SpaceSharingSettings:
+        SharingType: Private
+      OwnershipSettings:
+        OwnerUserProfileName: !Ref UserProfileName
+
+  LifeCycleConfigLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import base64
+          import cfnresponse
+          
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      try:
+                          sm = boto3.client('sagemaker')
+                          sm.delete_studio_lifecycle_config(StudioLifecycleConfigName=event['ResourceProperties']['LCCName'])
+                      except:
+                          pass
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  s3_bucket = event['ResourceProperties']['S3Bucket']
+                  s3_key = event['ResourceProperties']['S3Key']
+                  lcc_name = event['ResourceProperties']['LCCName']
+                  domain_id = event['ResourceProperties']['DomainId']
+                  user_profile = event['ResourceProperties']['UserProfileName']
+                  
+                  script = '#!/bin/bash\nset -eux\ncd /home/sagemaker-user\naws s3 cp s3://{}/{} assets.zip\npython3 -m zipfile -e assets.zip bedrock-agentcore-workshop\necho Done\n'.format(s3_bucket, s3_key)
+                  
+                  script_b64 = base64.b64encode(script.encode('utf-8')).decode('utf-8')
+                  
+                  sm = boto3.client('sagemaker')
+                  resp = sm.create_studio_lifecycle_config(
+                      StudioLifecycleConfigName=lcc_name,
+                      StudioLifecycleConfigContent=script_b64,
+                      StudioLifecycleConfigAppType='JupyterLab'
+                  )
+                  
+                  sm.update_user_profile(
+                      DomainId=domain_id,
+                      UserProfileName=user_profile,
+                      UserSettings={
+                          'JupyterLabAppSettings': {
+                              'DefaultResourceSpec': {'LifecycleConfigArn': resp['StudioLifecycleConfigArn']},
+                              'LifecycleConfigArns': [resp['StudioLifecycleConfigArn']]
+                          }
+                      }
+                  )
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print(f'Error: {e}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  LifeCycleConfigInvoke:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: UserProfile
+    Properties:
+      ServiceToken: !GetAtt LifeCycleConfigLambda.Arn
+      S3Bucket: !Ref WorkshopAssetsS3Bucket
+      S3Key: !Ref WorkshopAssetsS3Key
+      LCCName: !Sub '${AWS::StackName}-copy-notebooks'
+      DomainId: !GetAtt StudioDomain.DomainId
+      UserProfileName: !Ref UserProfileName
+
+
+  # Lambda Layer with latest boto3
+  Boto3Layer:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt Boto3LayerCreator.Arn
+
+  Boto3LayerCreator:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::AccountId}-${AWS::Region}-kb-boto3-layer-creator'
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt Boto3LayerCreatorRole.Arn
+      Timeout: 900
+      MemorySize: 1024
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import zipfile
+          import tempfile
+          import os
+          import subprocess
+          import sys
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  with tempfile.TemporaryDirectory() as temp_dir:
+                      python_dir = os.path.join(temp_dir, 'python')
+                      os.makedirs(python_dir)
+                      
+                      subprocess.check_call([
+                          sys.executable, '-m', 'pip', 'install', 
+                          'boto3>=1.34.0', 'botocore>=1.34.0',
+                          '--target', python_dir, '--upgrade', '--no-cache-dir'
+                      ])
+                      
+                      zip_path = os.path.join(temp_dir, 'boto3-layer.zip')
+                      with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                          for root, dirs, files in os.walk(python_dir):
+                              for file in files:
+                                  if not file.startswith('.'):
+                                      file_path = os.path.join(root, file)
+                                      arcname = os.path.relpath(file_path, temp_dir)
+                                      zipf.write(file_path, arcname)
+                      
+                      lambda_client = boto3.client('lambda')
+                      with open(zip_path, 'rb') as f:
+                          account_id = context.invoked_function_arn.split(':')[4]
+                          region = context.invoked_function_arn.split(':')[3]
+                          response = lambda_client.publish_layer_version(
+                              LayerName=f"{account_id}-{region}-kb-boto3-layer",
+                              Content={'ZipFile': f.read()},
+                              CompatibleRuntimes=['python3.9', 'python3.10', 'python3.11'],
+                              CompatibleArchitectures=['x86_64']
+                          )
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'LayerVersionArn': response['LayerVersionArn']
+                      })
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  Boto3LayerCreatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::AccountId}-${AWS::Region}-kb-boto3-layer-creator-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LayerCreatorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:PublishLayerVersion
+                  - lambda:DeleteLayerVersion
+                Resource: '*'
+
