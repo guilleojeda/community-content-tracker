@@ -29,7 +29,7 @@ For each task:
 
 ## Critical Project Rules (AWS Roadmaps Specific) that you must verify are adhered to
 
-1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel, or use Bedrock AgentCore (which is not the same as Bedrock Agents, it's a new feature, you can find code samples in docs/agentcore-workshop). Sprint 7 is about AgentCore. Previous sprints might have resolved things without AgentCore and then Sprint 7 added AgentCore on top of those features, making changes to earlier decisions. That's fine, the expected end results uses AgentCore
+1. NEVER use Bedrock Agents - Use Bedrock Runtime with InvokeModel, or use Bedrock AgentCore (which is not the same as Bedrock Agents, it's a new feature, you can research it with an internet search or using an MCP, and you can find code samples in docs/agentcore-workshop). The decision will come from the tasks in the sprints
 4. ENFORCE visibility rules at query level
 5. USE exact types from src/shared/types/index.ts - no alternatives
 6. FOLLOW error format from docs/api-errors.md exactly
