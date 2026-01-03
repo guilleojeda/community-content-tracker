@@ -7,19 +7,52 @@ import { ContentProcessorMessage, Visibility } from '../../../shared/types';
 import { getDatabasePool } from '../../services/database';
 import { ExternalApiError, shouldRetry, formatErrorForLogging } from '../../../shared/errors';
 
-const bedrockClient = new BedrockRuntimeClient({
-  region: process.env.BEDROCK_REGION || 'us-east-1',
-});
+let bedrockClient: BedrockRuntimeClient | null = null;
+let cloudWatchClient: CloudWatchClient | null = null;
 
-const cloudWatchClient = new CloudWatchClient({
-  region: process.env.AWS_REGION || 'us-east-1',
-});
+const requireEnv = (name: string): string => {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`${name} must be set`);
+  }
+  return value;
+};
 
-const BEDROCK_MODEL_ID = process.env.BEDROCK_MODEL_ID || 'amazon.titan-embed-text-v1';
-const ENVIRONMENT = process.env.ENVIRONMENT || 'dev';
+const resolveBedrockRegion = (): string => {
+  return process.env.BEDROCK_REGION || process.env.AWS_REGION || requireEnv('BEDROCK_REGION');
+};
+
+const resolveAwsRegion = (): string => {
+  return process.env.AWS_REGION || process.env.BEDROCK_REGION || requireEnv('AWS_REGION');
+};
+
+const resolveEnvironment = (): string => {
+  return process.env.ENVIRONMENT || process.env.NODE_ENV || requireEnv('ENVIRONMENT');
+};
+
+const getBedrockModelId = (): string => requireEnv('BEDROCK_MODEL_ID');
+
+const getBedrockClient = (): BedrockRuntimeClient => {
+  if (!bedrockClient) {
+    bedrockClient = new BedrockRuntimeClient({
+      region: resolveBedrockRegion(),
+    });
+  }
+  return bedrockClient;
+};
+
+const getCloudWatchClient = (): CloudWatchClient => {
+  if (!cloudWatchClient) {
+    cloudWatchClient = new CloudWatchClient({
+      region: resolveAwsRegion(),
+    });
+  }
+  return cloudWatchClient;
+};
 
 async function publishMetric(metricName: string, value: number, unit: StandardUnit = StandardUnit.Count): Promise<void> {
   try {
+    const environment = resolveEnvironment();
     const commandInput = {
       Namespace: 'CommunityContentHub/ContentProcessor',
       MetricData: [
@@ -31,7 +64,7 @@ async function publishMetric(metricName: string, value: number, unit: StandardUn
           Dimensions: [
             {
               Name: 'Environment',
-              Value: ENVIRONMENT,
+              Value: environment,
             },
           ],
         },
@@ -41,7 +74,7 @@ async function publishMetric(metricName: string, value: number, unit: StandardUn
     if (!(command as any).input) {
       (command as any).input = commandInput;
     }
-    await cloudWatchClient.send(command);
+    await getCloudWatchClient().send(command);
   } catch (error: any) {
     console.error(formatErrorForLogging(error, { metricName, context: 'publishMetric' }));
     // Don't fail the main process if metrics fail
@@ -50,8 +83,9 @@ async function publishMetric(metricName: string, value: number, unit: StandardUn
 
 async function generateEmbedding(text: string): Promise<number[]> {
   try {
+    const modelId = getBedrockModelId();
     const commandInput = {
-      modelId: BEDROCK_MODEL_ID,
+      modelId,
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify({
@@ -62,22 +96,23 @@ async function generateEmbedding(text: string): Promise<number[]> {
     if (!(command as any).input) {
       (command as any).input = commandInput;
     }
-    const response = await bedrockClient.send(command);
+    const response = await getBedrockClient().send(command);
 
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
     return responseBody.embedding;
   } catch (error: any) {
+    const modelId = process.env.BEDROCK_MODEL_ID || 'unknown';
     const bedrockError = new ExternalApiError(
       'Bedrock',
       `Failed to generate embedding: ${error.message}`,
       error.$metadata?.httpStatusCode || 500,
       {
-        modelId: BEDROCK_MODEL_ID,
+        modelId,
         textLength: text.length,
         originalError: error.message,
       }
     );
-    console.error(formatErrorForLogging(bedrockError, { modelId: BEDROCK_MODEL_ID }));
+    console.error(formatErrorForLogging(bedrockError, { modelId }));
     // Return empty embedding on error to allow content to still be stored
     return [];
   }

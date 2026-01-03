@@ -794,7 +794,7 @@ export class ContentRepository extends BaseRepository {
   }
 
   /**
-   * Find similar content (placeholder for AI-based similarity)
+   * Find similar content using shared tags to surface related items.
    */
   async findSimilarContent(contentId: string, limit: number = 5): Promise<Content[]> {
     // For now, find content with similar tags
@@ -1287,6 +1287,8 @@ export class ContentRepository extends BaseRepository {
     queryEmbedding: number[],
     options: {
       visibilityLevels: Visibility[];
+      ownerVisibilityLevels?: Visibility[];
+      viewerId?: string;
       contentTypes?: ContentType[];
       tags?: string[];
       badges?: import('@aws-community-hub/shared').BadgeType[];
@@ -1296,7 +1298,24 @@ export class ContentRepository extends BaseRepository {
       offset?: number;
     }
   ): Promise<Array<Content & { similarity?: number }>> {
-    const { visibilityLevels, contentTypes, tags, badges, dateRange, ownerId, limit = 20, offset = 0 } = options;
+    const {
+      visibilityLevels,
+      ownerVisibilityLevels,
+      viewerId,
+      contentTypes,
+      tags,
+      badges,
+      dateRange,
+      ownerId,
+      limit = 20,
+      offset = 0,
+    } = options;
+
+    const baseVisibility = visibilityLevels.filter((visibility) => visibility !== Visibility.PRIVATE);
+    const ownerVisibility =
+      viewerId && ownerVisibilityLevels && ownerVisibilityLevels.length > 0
+        ? ownerVisibilityLevels
+        : undefined;
 
     let query = `
       SELECT
@@ -1304,11 +1323,19 @@ export class ContentRepository extends BaseRepository {
         1 - (c.embedding <=> $1::vector) as similarity
       FROM content c
       WHERE c.embedding IS NOT NULL
-        AND c.visibility = ANY($2::visibility_enum[])
+        AND (
+          c.visibility = ANY($2::visibility_enum[])
+          ${ownerVisibility ? 'OR (c.user_id = $3 AND c.visibility = ANY($4::visibility_enum[]))' : ''}
+        )
     `;
 
-    const params: any[] = [`[${queryEmbedding.join(',')}]`, visibilityLevels];
+    const params: any[] = [`[${queryEmbedding.join(',')}]`, baseVisibility];
     let paramIndex = 3;
+
+    if (ownerVisibility) {
+      params.push(viewerId as string, ownerVisibility);
+      paramIndex = 5;
+    }
 
     // Filter by content types
     if (contentTypes && contentTypes.length > 0) {
@@ -1374,6 +1401,8 @@ export class ContentRepository extends BaseRepository {
     searchQuery: string,
     options: {
       visibilityLevels: Visibility[];
+      ownerVisibilityLevels?: Visibility[];
+      viewerId?: string;
       contentTypes?: ContentType[];
       tags?: string[];
       badges?: import('@aws-community-hub/shared').BadgeType[];
@@ -1383,8 +1412,24 @@ export class ContentRepository extends BaseRepository {
       offset?: number;
     }
   ): Promise<Array<Content & { rank?: number }>> {
-    const { visibilityLevels, contentTypes, tags, badges, dateRange, ownerId, limit = 20, offset = 0 } = options;
+    const {
+      visibilityLevels,
+      ownerVisibilityLevels,
+      viewerId,
+      contentTypes,
+      tags,
+      badges,
+      dateRange,
+      ownerId,
+      limit = 20,
+      offset = 0,
+    } = options;
 
+    const baseVisibility = visibilityLevels.filter((visibility) => visibility !== Visibility.PRIVATE);
+    const ownerVisibility =
+      viewerId && ownerVisibilityLevels && ownerVisibilityLevels.length > 0
+        ? ownerVisibilityLevels
+        : undefined;
     const isInMemory = process.env.TEST_DB_INMEMORY === 'true';
 
     if (isInMemory) {
@@ -1455,9 +1500,14 @@ export class ContentRepository extends BaseRepository {
       const rowsWithUrls = await this.attachUrls(fallbackResult.rows);
       const filtered = rowsWithUrls.filter((row: any) => {
         const visibilityValue = row.visibility ?? Visibility.PUBLIC;
-        const visibilityMatches = visibilityLevels.includes(visibilityValue as Visibility);
+        const visibilityMatches = baseVisibility.includes(visibilityValue as Visibility);
         const ownerMatches = ownerId ? row.user_id === ownerId : false;
-        return visibilityMatches || ownerMatches;
+        const viewerMatches =
+          viewerId &&
+          ownerVisibilityLevels &&
+          row.user_id === viewerId &&
+          ownerVisibilityLevels.includes(visibilityValue as Visibility);
+        return visibilityMatches || ownerMatches || viewerMatches;
       });
 
       const paginated = filtered.slice(offset, offset + limit);
@@ -1478,11 +1528,19 @@ export class ContentRepository extends BaseRepository {
       FROM content c
       WHERE to_tsvector('english', c.title || ' ' || COALESCE(c.description, ''))
             @@ plainto_tsquery('english', $1)
-        AND c.visibility = ANY($2::visibility_enum[])
+        AND (
+          c.visibility = ANY($2::visibility_enum[])
+          ${ownerVisibility ? 'OR (c.user_id = $3 AND c.visibility = ANY($4::visibility_enum[]))' : ''}
+        )
     `;
 
-    const params: any[] = [searchQuery, visibilityLevels];
+    const params: any[] = [searchQuery, baseVisibility];
     let paramIndex = 3;
+
+    if (ownerVisibility) {
+      params.push(viewerId as string, ownerVisibility);
+      paramIndex = 5;
+    }
 
     // Filter by content types
     if (contentTypes && contentTypes.length > 0) {
@@ -1547,6 +1605,8 @@ export class ContentRepository extends BaseRepository {
   async countSearchResults(
     options: {
       visibilityLevels: Visibility[];
+      ownerVisibilityLevels?: Visibility[];
+      viewerId?: string;
       contentTypes?: ContentType[];
       tags?: string[];
       badges?: import('@aws-community-hub/shared').BadgeType[];
@@ -1554,16 +1614,30 @@ export class ContentRepository extends BaseRepository {
       ownerId?: string;
     }
   ): Promise<number> {
-    const { visibilityLevels, contentTypes, tags, badges, dateRange, ownerId } = options;
+    const { visibilityLevels, ownerVisibilityLevels, viewerId, contentTypes, tags, badges, dateRange, ownerId } = options;
+
+    const baseVisibility = visibilityLevels.filter((visibility) => visibility !== Visibility.PRIVATE);
+    const ownerVisibility =
+      viewerId && ownerVisibilityLevels && ownerVisibilityLevels.length > 0
+        ? ownerVisibilityLevels
+        : undefined;
 
     let query = `
       SELECT COUNT(DISTINCT c.id) as total
       FROM content c
-      WHERE c.visibility = ANY($1::visibility_enum[])
+      WHERE (
+        c.visibility = ANY($1::visibility_enum[])
+        ${ownerVisibility ? 'OR (c.user_id = $2 AND c.visibility = ANY($3::visibility_enum[]))' : ''}
+      )
     `;
 
-    const params: any[] = [visibilityLevels];
+    const params: any[] = [baseVisibility];
     let paramIndex = 2;
+
+    if (ownerVisibility) {
+      params.push(viewerId as string, ownerVisibility);
+      paramIndex = 4;
+    }
 
     // Filter by content types
     if (contentTypes && contentTypes.length > 0) {

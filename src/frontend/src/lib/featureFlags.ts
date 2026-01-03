@@ -1,11 +1,17 @@
-export const appEnvironment =
-  process.env.NEXT_PUBLIC_ENVIRONMENT?.toLowerCase() ?? 'development';
+const requireEnv = (name: string): string => {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`${name} must be set`);
+  }
+  return value.trim();
+};
+
+export const appEnvironment = requireEnv('NEXT_PUBLIC_ENVIRONMENT').toLowerCase();
 
 export const betaFeaturesEnabled =
-  (process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES ?? 'false').toLowerCase() === 'true';
+  requireEnv('NEXT_PUBLIC_ENABLE_BETA_FEATURES').toLowerCase() === 'true';
 
-export const feedbackUrl =
-  process.env.NEXT_PUBLIC_FEEDBACK_URL ?? 'https://awscommunityhub.org/beta-feedback';
+export const feedbackUrl = requireEnv('NEXT_PUBLIC_FEEDBACK_URL');
 
 export const isBetaEnvironment = appEnvironment === 'beta';
 

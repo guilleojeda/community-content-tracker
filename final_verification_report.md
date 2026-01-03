@@ -1,77 +1,158 @@
-# Final Verification Report — 12 Nov 2025
+# Final Verification Report — 2025-02-14
 
-## Scope & Inputs
-- Revalidated the product requirements, architecture decisions, and sprint backlog to confirm every acceptance criterion and dependency (docs/PRD.md:1, docs/ADRs.md:1, docs/plan/sprint_1.md:1, docs/plan/sprint_8.md:1, docs/plan/sprint_6.5.md:4).
-- Cross-checked the canonical contracts, API error standard, and AWS-specific implementation guardrails before code review (src/shared/types/index.ts:1, docs/api-errors.md:1, docs/implementation-notes.md:1).
-- Reviewed production readiness material—deployment guide, security hardening summary, data-retention policy, beta/launch playbooks, and operator runbooks/training collateral (docs/AWS_DEPLOYMENT_GUIDE.md:1, docs/security-hardening.md:1, docs/data-retention-policy.md:1, docs/launch/go-live-checklist.md:1, docs/launch/beta-recruitment-plan.md:1, docs/launch/beta-feedback.md:1, docs/operations/rollback-procedure.md:1, docs/operations/api-key-rotation.md:1, docs/training/user-guide.md:1, docs/training/admin-guide.md:1, docs/training/faq.md:1, docs/training/video-tutorials.md:1).
+## Scope & Sources Reviewed
+- Product/architecture: `docs/PRD.md`, `docs/ADRs.md`
+- Sprint plans: `docs/plan/sprint_1.md`, `docs/plan/sprint_2.md`, `docs/plan/sprint_3.md`, `docs/plan/sprint_4.md`, `docs/plan/sprint_5.md`, `docs/plan/sprint_6.md`, `docs/plan/sprint_6.5.md`, `docs/plan/sprint_7.md`, `docs/plan/sprint_8.md`
+- Shared contracts: `src/shared/types/index.ts`
+- Error standards: `docs/api-errors.md`
+- Implementation rules: `docs/implementation-notes.md`
+- Tests: `tests/**`, workspace Jest configs, Playwright config
+- Implementation: `src/backend/**`, `src/frontend/**`, `src/infrastructure/**`
 
-## Sprint Verification
-### Sprint 1 – Foundation Setup
-- Repository scaffolding tests assert all mandated files, directory structure, environment docs, and branch protection rules, satisfying Task 1.1 and developer onboarding documentation (tests/ci/repository-scaffolding.test.ts:23).
-- CI workflow enforces lint, typecheck, unit/integration tests, security scan, and caching on every PR, covering Task 1.3 ( .github/workflows/ci.yml:1).
-- CDK entrypoint wires the database, static site, Cognito, queue, API, and monitoring stacks per Task 1.2/1.5, with stage-specific contexts (src/infrastructure/bin/infrastructure.ts:1, src/infrastructure/lib/stacks/database-stack.ts:69, src/infrastructure/lib/stacks/static-site-stack.ts:69).
+## Command Verification (Required)
+- `npm test` — PASS (backend + frontend + infrastructure Jest suites, Playwright smoke suite)
+- `npm run typecheck` — PASS
+- `npm run build` — PASS (backend, frontend static export, infrastructure)
+- `npm run synth` — PASS (CDK synth in `src/infrastructure`)
+- `npm run db:migrate:local` — PASS (all migrations applied locally)
+- `npm run audit` — FAIL (10 vulnerabilities: 9 high, 1 moderate)
 
-### Sprint 2 – Authentication & Data Layer
-- Cognito stack provisions email sign-in, custom attributes, MFA defaults, and the pre-signup Lambda, while tests exercise username/default-visibility validation (src/infrastructure/lib/stacks/CognitoStack.ts:63, tests/infrastructure/pre-signup-handler.test.ts:42).
-- Initial migrations create enums/tables matching shared types, delivering the schema, indexes, and audit tables mandated in Task 2.2 (src/backend/migrations/20240101000000000_initial_schema.sql:6).
-- Repository layer sits on the pooled `pg` helper so Lambda handlers never open per-request connections, and visibility filtering happens in SQL (src/backend/repositories/ContentRepository.ts:200, src/backend/services/database.ts:115).
-- Auth lambdas (register/login/refresh/verify, authorizer) plus bootstrap CLI fulfill Task 2.5/2.6; the Jest suites cover success/edge cases (src/backend/lambdas/auth/register.ts:1, tests/backend/lambdas/auth/register.test.ts:1, src/backend/scripts/bootstrap-admin.ts:1).
+## Coverage Verification
+- Backend (`npm run test --workspace=src/backend -- --coverage`):
+  - Statements 97.3%, Branches 92.05%, Functions 100%, Lines 97.23%
+- Frontend (`npm run test --workspace=src/frontend -- --coverage`):
+  - Statements 96.63%, Branches 90.57%, Functions 93.58%, Lines 97.41%
 
-### Sprint 3 – Content Management Core
-- Content CRUD handlers enforce validation, duplicate URL checks, optimistic updates, and authorisation; create/update/delete/claim tests cover owners/admin overrides and error envelopes (src/backend/lambdas/content/create.ts:1, tests/backend/lambdas/content/claim.test.ts:1).
-- Claiming/merge APIs honour original-author heuristics and merge audit trails with corresponding tests (src/backend/lambdas/content/merge.ts:1, tests/backend/lambdas/content/merge.test.ts:1).
-- Badge management, AWS-employee toggles, and admin badge tests ensure Task 3.6 is implemented with audit logging (src/backend/lambdas/admin/admin-dashboard.ts:1, tests/backend/lambdas/admin/badges.test.ts:1).
+## Sprint Verification Summary
+### Sprint 1 — Foundation Setup
+- Repo scaffolding, docs, and CI validated by `tests/ci/repository-scaffolding.test.ts` and `tests/ci/pipeline.test.ts`.
+- Infrastructure stacks cover database, static site, monitoring, API, and queue expectations via `tests/infrastructure/*`.
+- Local setup and first-time scripts validated in Sprint 1 doc tests.
 
-### Sprint 4 – Content Ingestion Pipeline
-- Queue stack provisions the processing queue, DLQ, and CloudWatch alarms demanded by Task 4.1 (src/infrastructure/lib/stacks/QueueStack.ts:45).
-- Scraper Lambdas for RSS, YouTube, and GitHub feed channels, with dependency-injected tests validating SQS payloads and sync-status handling (src/backend/lambdas/scrapers/blog-rss.ts:1, tests/backend/lambdas/scrapers/blog-rss.test.ts:1).
-- The orchestrator applied rate limiting per channel type and reuses warm DB pools, while the content processor dedupes URLs, generates Titan embeddings via Bedrock InvokeModel, and enforces default visibility (src/backend/lambdas/scrapers/orchestrator.ts:1, src/backend/lambdas/scrapers/content-processor.ts:1).
-- Channel CRUD Lambda plus unit tests cover URL validation, type detection, manual sync trigger, and duplicate prevention per Task 4.6 (src/backend/lambdas/channels/create.ts:1, tests/backend/lambdas/channels/create.test.ts:1).
+### Sprint 2 — Auth & Data Layer
+- Cognito stack requirements validated by `tests/infrastructure/CognitoStack.test.ts`.
+- Schema/migrations align with shared types and ADRs (see `src/backend/migrations/20240101000000000_initial_schema.sql`).
+- Repository layer, auth lambdas, and bootstrap script have comprehensive tests under `tests/backend/repositories/**` and `tests/backend/lambdas/auth/**`.
 
-### Sprint 5 – Search & Frontend Foundation
-- Bedrock embedding service only uses `BedrockRuntimeClient` + `InvokeModel`, with caching, retries, and metrics; search service blends pgvector + FTS w/ visibility-aware filters (src/backend/services/EmbeddingService.ts:1, src/backend/services/SearchService.ts:30, src/backend/lambdas/search/searchHandler.ts:1).
-- API client generation script keeps the Next.js app in sync with OpenAPI and enforces typed calls; tsconfig path aliases force both tiers to consume shared contracts (src/frontend/generate-api-client.sh:1, tsconfig.json:2).
-- Public marketing/home/search pages and metadata exist under the app router (src/frontend/app/page.tsx:4, src/frontend/app/search/page.tsx:1). Playwright smoke tests ensure `/`, `/dashboard/`, `/search/`, and the cookie banner render statically (tests/e2e/ui/ui.smoke.spec.ts:5).
+### Sprint 3 — Content Management Core
+- Content CRUD, claiming, merge/unmerge, badge management are implemented and covered by `tests/backend/lambdas/content/**` and `tests/backend/lambdas/admin/**`.
+- Soft delete and optimistic locking verified via migrations and integration tests.
 
-### Sprint 6 – Dashboards, Profiles & Authenticated UX
-- Dashboard view aggregates content counts, engagement, quick actions, and handles empty/error states; Jest verifies redirects, calculations, and skeletons (src/frontend/app/dashboard/DashboardHomeView.tsx:45, tests/frontend/app/dashboard/DashboardHomeView.test.tsx:70).
-- Content, channel, claiming, merge, and settings UIs rely on the authenticated API client; shared forms validate input and support bulk actions, with behavioural tests for channel and search flows (src/frontend/app/dashboard/channels/AddChannelForm.tsx:98, tests/frontend/app/dashboard/channels/AddChannelForm.test.tsx:1, tests/frontend/app/dashboard/search/page.test.tsx:1).
-- Public profiles query the API client, honour 404s, and expose visibility-aware content lists to satisfy Task 6.3 (src/frontend/app/profile/[username]/page.tsx:1).
+### Sprint 4 — Ingestion Pipeline
+- Queue + scraper stacks validated by `tests/infrastructure/QueueStack.test.ts` and `tests/infrastructure/ScraperStack.test.ts`.
+- RSS/YouTube/GitHub scrapers and content processor covered by `tests/backend/lambdas/scrapers/**`.
+- Channel CRUD and sync endpoints covered by `tests/backend/lambdas/channels/**`.
 
-### Sprint 7 – Admin, Analytics & Advanced Search
-- Admin dashboard Lambda plus React surface expose platform stats, badge candidates, moderation counts, and system health; tests cover loading states and degraded paths (src/backend/lambdas/admin/admin-dashboard.ts:1, tests/frontend/app/admin/AdminDashboardView.test.tsx:1).
-- Analytics tracking Lambda enforces consent, anonymises IPs, and supports batch inserts; user dashboard analytics page renders charts/export actions backed by dedicated tests (src/backend/lambdas/analytics/track-event.ts:1, tests/frontend/app/dashboard/analytics/page.test.tsx:1).
-- Program-specific CSV export, duplicate detection, advanced search endpoints, and saved-search tests satisfy Tasks 7.5–7.7 (tests/backend/lambdas/export/csv-export.test.ts:1, tests/backend/lambdas/content/detect-duplicates.test.ts:1, tests/backend/lambdas/search/search.test.ts:1).
+### Sprint 5 — Search & Frontend Foundation
+- Embeddings implemented via Bedrock Runtime (no Agents) in `src/backend/services/EmbeddingService.ts` with tests.
+- Search service implemented and unit-tested; public pages and metadata tests exist for home/search.
+- API client generation validated in frontend build and tests.
 
-### Sprint 8 – Production Readiness & Polish
-- GDPR export/deletion Lambdas, user consent management, cookie banner, and privacy page align with the retention policy and UI flows (src/backend/lambdas/users/export-data.ts:1, src/backend/lambdas/maintenance/data-retention.ts:1, src/frontend/src/components/CookieConsentBanner.tsx:1, src/frontend/app/privacy/page.tsx:1).
-- Security hardening was validated through the rate limiter + cache helpers, sqlmap regression script, CSP headers, and monitoring stack alarms (src/backend/services/rateLimiter.ts:1, src/backend/services/cache/cache.ts:1, scripts/security/run-sqlmap-scan.js:1, docs/security-hardening.md:1, src/infrastructure/lib/stacks/MonitoringStack.ts:39).
-- Performance optimisations include bundle caps, preact swap, CDN cache headers, and documented capacity/load plans (src/frontend/next.config.js:1, docs/performance/capacity-planning.md:1, docs/performance/load-testing-report.md:1, load-tests/reports/latest-summary.json:1).
-- Production go-live/beta collateral, operator playbooks, deployment guide, and feedback loops meet the documentation/training requirements (docs/launch/go-live-checklist.md:1, docs/launch/beta-feedback.md:1, docs/AWS_DEPLOYMENT_GUIDE.md:1, docs/training/video-tutorials.md:1).
+### Sprint 6 — Dashboards & Authenticated UX
+- Dashboard, channels, settings, claim/merge, search UI covered by frontend tests in `tests/frontend/app/dashboard/**`.
+- Authenticated API client & search history/saved searches tests in `tests/frontend/src/api/client.test.ts` and dashboard hooks.
 
-### Sprint 6.5 – Hardening Bridge
-- Auth client hardening serialises nested filters and injects tokens, with regression tests proving error propagation and saved search persistence (src/frontend/src/api/client.ts:260, tests/frontend/api/apiClient.test.ts:1).
-- Dashboard metrics calculations ignore invalid data and provide skeleton states, satisfying 6.5.2 (src/frontend/app/dashboard/DashboardHomeView.tsx:118, tests/frontend/app/dashboard/DashboardHomeView.test.tsx:176).
-- Backend auth/channel/content services were backfilled with pooled DB access and end-to-end tests; queue/scraper Lambdas gained env guards + structured logging (src/backend/lambdas/channels/update.ts:5, tests/backend/lambdas/channels/list.test.ts:1, src/backend/lambdas/scrapers/content-processor.ts:1).
-- CI workflow, migrations script, and docs checklist capture the global acceptance criteria ( .github/workflows/ci.yml:1, scripts/run-local-migrations.sh:1, docs/plan/sprint_6.5.md:4).
+### Sprint 6.5 — Stabilization & Backfills
+- Backend auth, channel/content backfills, and scraper hardening covered by existing backend tests.
+- CI/pipeline tests validate updated workflow.
 
-## Architecture & Rule Compliance
-- Shared types are consumed everywhere via path aliases and the generated OpenAPI client, preventing ad-hoc models (tsconfig.json:19, src/frontend/generate-api-client.sh:1).
-- Database usage goes through the cached pool + RDS proxy, while repositories add SQL-level visibility filters; no handlers open raw clients (src/backend/services/database.ts:115, src/backend/repositories/ContentRepository.ts:200).
-- All Lambda responses pin to the documented error envelope, and the shared CORS helper centralises origin rules so no handler hardcodes hostnames (src/backend/lambdas/auth/utils.ts:612, src/shared/cors.ts:1).
-- Bedrock usage sticks to Titan embeddings through `InvokeModel` (no Agents) with retries/caching (src/backend/services/EmbeddingService.ts:1).
-- Rate limiting + Redis/no-op cache enforce security rules, and security automation includes the sqlmap runner and hardening playbook (src/backend/services/rateLimiter.ts:1, src/backend/services/cache/cache.ts:1, scripts/security/run-sqlmap-scan.js:1, docs/security-hardening.md:1).
-- Config is sourced from env validators on both tiers (src/frontend/src/config/environment.ts:1, src/backend/lambdas/analytics/track-event.ts:73).
-- Data-retention procedures are codified in code + documentation (src/backend/lambdas/maintenance/data-retention.ts:17, docs/data-retention-policy.md:1).
-- Repository-wide TODO searches only surface a historical checklist note—no runtime placeholders remain (docs/sprint-7-100-percent-completion-report.md:576).
+### Sprint 7 — Admin, Analytics & Advanced Search
+- Admin lambdas, analytics, exports, duplicate detection, and advanced search covered by backend tests.
+- Admin UI and analytics dashboard validated by frontend tests.
 
-## Success Criteria & Quality Gates
-- `npm test` (12 Nov 2025 16:05 ART) executed every workspace suite plus Playwright smoke tests; all 44 k lines of logs were clean.
-- `npm run typecheck`, `npm run build`, `npm run synth`, and `npm run audit` succeeded without warnings (CLI runs on 12 Nov 2025).
-- Local migrations ran via `npm run db:migrate:local`, exercising the embedded Postgres harness and full up migrations (scripts/run-local-migrations.sh:1).
-- Coverage after the dedicated backend and frontend runs stays ≥90% across every metric (src/backend/coverage/coverage-summary.json:1, src/frontend/coverage/coverage-summary.json:1). Infrastructure tests retain 97%+ per existing report (`src/infrastructure/coverage/coverage-summary.json`—unchanged since last run).
-- `load-tests/run-loadtest.js` latest summary confirms 40,500 successful requests at ~320 rps with 0 failures, satisfying load/capacity goals (load-tests/reports/latest-summary.json:1, docs/performance/load-testing-report.md:1).
-- CDK synth enumerated every stack (database/static site/Cognito/queue/API/monitoring), matching the deployment plan (src/infrastructure/bin/infrastructure.ts:1, src/infrastructure/lib/stacks/MonitoringStack.ts:39).
+### Sprint 8 — Production Readiness & Polish
+- GDPR export/delete, consent flows, privacy/terms pages covered by backend + frontend tests.
+- Security hardening: rate limiter + SQLi tests are present.
+- Load tests present under `load-tests/`, but report does not explicitly show required concurrency or dataset sizes.
+- E2E browser coverage limited to Playwright smoke tests; core user journeys are covered at lambda-level in Jest but not in browser automation.
 
-## Outstanding Issues
-- None. All acceptance criteria, quality gates, and AWS Roadmaps rules are satisfied. No blocking defects or documentation gaps were discovered during verification.
+## Critical Rules Compliance
+- Bedrock Agents: PASS (Bedrock Runtime + InvokeModel used; see `src/backend/services/EmbeddingService.ts`, `src/backend/lambdas/scrapers/content-processor.ts`).
+- Visibility enforced at query level: PARTIAL (repository-level enforcement is present, but search visibility filtering is not wired from request).
+- Shared types usage: PASS (imports from `@aws-community-hub/shared` across backend/frontend).
+- Error format: FAIL (non-standard error codes returned by multiple lambdas).
+- No placeholders/stubs: WARN (placeholder language in repository method).
+- No hardcoded configuration: WARN (default fallbacks for region/origin/URLs exist).
+- DB connection pooling: PASS (`getDatabasePool` shared across lambdas).
+- No emojis: WARN (emojis found in `.claude/**` scripts; none in `src/**`).
+
+## Findings & Required Remediation
+### 1) Security gate failure — npm audit
+- **Issue:** `npm run audit` fails with 10 vulnerabilities (9 high, 1 moderate).
+- **Impact:** Success criteria “No security vulnerabilities (npm audit)” not met.
+- **Evidence:** `npm run audit` output (high severity issues in `next`, `qs`, `glob`, `jws`, `body-parser`, `js-yaml`).
+- **Fix:** Update dependencies to patched versions. Confirm `npm run audit` passes at `--audit-level=high`.
+
+### 2) API error code standard violations
+- **Issue:** Several handlers return error codes not listed in `docs/api-errors.md`.
+- **Evidence:**
+  - `src/backend/lambdas/content/delete.ts` returns `GONE` (410).
+  - `src/backend/lambdas/content/unmerge.ts` returns `UNMERGE_FAILED`, `MERGE_EXPIRED`, `MERGE_NOT_FOUND`.
+  - `src/backend/lambdas/feedback/ingest.ts` returns `CONFIGURATION_ERROR`.
+- **Impact:** Violates error standard requirement; clients may depend on canonical codes only.
+- **Fix:** Map these to approved codes (e.g., `NOT_FOUND`, `VALIDATION_ERROR`, `INTERNAL_ERROR`, `PERMISSION_DENIED`) and include details fields if needed. Update tests to align with the standard.
+
+### 3) Search visibility filter not implemented
+- **Issue:** `/search` accepts `visibility` per OpenAPI, frontend sends it, but backend ignores it.
+- **Evidence:**
+  - API spec: `src/backend/openapi.yaml` includes `visibility` query param.
+  - Frontend: `src/frontend/src/api/client.ts` serializes `visibility` and `src/frontend/app/dashboard/search/FilterSidebar.tsx` exposes the filter.
+  - Backend: `src/backend/lambdas/search/searchHandler.ts` does not parse or pass `visibility` into filters.
+- **Impact:** Authenticated search filters don’t behave as specified; users cannot narrow results by visibility.
+- **Fix:** Parse `visibility` in `searchHandler` and pass to `SearchService.search`. Validate against `Visibility` enum.
+
+### 4) Search sort option not implemented (UI/API mismatch)
+- **Issue:** Dashboard search UI sends `sortBy` (date/relevance), but `/search` ignores it and OpenAPI does not define it.
+- **Evidence:**
+  - Frontend: `src/frontend/app/dashboard/search/page.tsx` sends `sortBy` to `client.search`.
+  - Backend: `src/backend/lambdas/search/searchHandler.ts` does not parse `sortBy`.
+  - OpenAPI: `src/backend/openapi.yaml` has no `sortBy` parameter.
+- **Impact:** UI control is non-functional; requirements for “Sort options (relevance, date)” in Sprint 6 are not met.
+- **Fix:** Either implement sorting in backend + OpenAPI or remove/disable the UI option and tests expecting it.
+
+### 5) Private visibility option cannot return results
+- **Issue:** Authenticated search UI allows `private` visibility, but backend search never includes private in allowed visibility.
+- **Evidence:**
+  - UI exposes `Visibility.PRIVATE` in `src/frontend/app/dashboard/search/FilterSidebar.tsx`.
+  - Backend: `src/backend/services/SearchService.ts` never includes `Visibility.PRIVATE` in allowed visibility; `/search` does not pass viewer ID to allow owner-only private results.
+- **Impact:** Private filter yields empty or incomplete results; visibility model is inconsistent with UX.
+- **Fix:** Pass viewer ID to search service/repository and include private for the owner, or remove private from UI if not supported.
+
+### 6) Hardcoded defaults conflict with “no hardcoded configuration” rule
+- **Issue:** Multiple services fall back to hardcoded defaults when env vars are missing.
+- **Evidence:**
+  - `src/backend/services/EmbeddingService.ts` defaults to `us-east-1` and `amazon.titan-embed-text-v1`.
+  - `src/shared/cors.ts` defaults CORS origin to `http://localhost:3000`.
+  - `src/frontend/src/config/environment.ts` defaults AWS region and test API URL.
+- **Impact:** Violates strict “no hardcoded configuration” rule; behavior differs between environments.
+- **Fix:** Require env vars explicitly in runtime (allow defaults only in test mode) and document required values in `.env.example`.
+
+### 7) Placeholder language in repository method
+- **Issue:** Repository method advertises a placeholder implementation.
+- **Evidence:** `src/backend/repositories/ContentRepository.ts` comment: “placeholder for AI-based similarity”.
+- **Impact:** Violates “no placeholders” rule and indicates incomplete intent.
+- **Fix:** Replace with production-grade similarity (embedding-based) or remove the placeholder language if the tag-based approach is final.
+
+### 8) Emoji usage in repo utilities
+- **Issue:** Emojis appear in `.claude/**` helper scripts and logs.
+- **Evidence:** e.g., `.claude/helpers/standard-checkpoint-hooks.sh`.
+- **Impact:** If “NEVER use emojis” applies repo-wide, this violates the rule.
+- **Fix:** Remove emojis from repo scripts/docs or clarify that the rule applies only to product code (`src/**`).
+
+### 9) Sprint 8 E2E acceptance criteria only partially met
+- **Issue:** Browser automation covers only smoke checks; full user journeys are not covered by Playwright.
+- **Evidence:** Playwright runs `tests/e2e/ui/ui.smoke.spec.ts` only; full flows are in Jest (`tests/e2e/platform-flow.test.ts`) but not browser-level.
+- **Impact:** Sprint 8 acceptance criteria for E2E flows (registration, content creation, channel sync, search, export, etc.) are not fully validated.
+- **Fix:** Add Playwright flows for required journeys, or document why API-level E2E is considered sufficient.
+
+### 10) Load testing evidence incomplete
+- **Issue:** `load-tests/reports/latest-summary.json` does not document 1000 concurrent users or 50,000 content items.
+- **Impact:** Sprint 8 load-testing acceptance criteria cannot be verified.
+- **Fix:** Re-run load tests with required parameters and publish a report documenting concurrency, dataset size, bottlenecks, and scaling triggers.
+
+## Unverified / AWS-Only Items
+- CDK bootstrap, actual AWS resource deployment, and Bedrock runtime integration cannot be fully verified without AWS credentials; local synth/testing completed.
+- Lighthouse score >90% not validated locally (no report artifact found). Run `npm run lighthouse` and archive the report if required by acceptance criteria.
+
+## Conclusion
+The codebase is close to completion but **does not meet the delivery bar** due to security vulnerabilities, search/filter mismatches, and error-standard violations. Fix the issues listed above, re-run the verification commands, and update evidence for Sprint 8 performance/E2E requirements before release.

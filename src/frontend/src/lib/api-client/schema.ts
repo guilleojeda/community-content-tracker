@@ -584,6 +584,8 @@ export interface operations {
                 limit?: number;
                 /** @description Pagination offset */
                 offset?: number;
+                /** @description Sort order for search results */
+                sortBy?: "relevance" | "date";
                 /** @description Filter by content types (comma-separated) */
                 type?: string;
                 /** @description Filter by tags (comma-separated) */

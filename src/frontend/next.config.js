@@ -1,7 +1,13 @@
+const path = require('path');
+const dotenv = require('dotenv');
 const { loadEnv } = require('./config/validateEnv');
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 const withBundleAnalyzer = require('@next/bundle-analyzer')({
   enabled: process.env.ANALYZE === 'true',
 });
+const usePreact = process.env.NEXT_PUBLIC_USE_PREACT === 'true';
 
 const publicEnv = loadEnv();
 
@@ -46,7 +52,7 @@ const nextConfig = {
     if (!isServer && config.optimization && config.optimization.splitChunks) {
       config.optimization.splitChunks.maxSize = 200000;
       config.optimization.splitChunks.minSize = 10000;
-      if (process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV === 'production' && usePreact) {
         // Swap React with Preact in production client builds to slim bundle size.
         config.resolve = config.resolve || {};
         config.resolve.alias = config.resolve.alias || {};

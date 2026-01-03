@@ -45,6 +45,7 @@ describe('GET /search Lambda handler', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    process.env.CORS_ORIGIN = 'http://localhost:3000';
     jest.clearAllMocks();
 
     // Create mock pool
@@ -202,7 +203,8 @@ describe('GET /search Lambda handler', () => {
       }),
       false,
       [],
-      false
+      false,
+      expect.any(Object)
     );
   });
 
@@ -261,7 +263,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -277,7 +280,8 @@ describe('GET /search Lambda handler', () => {
         expect.objectContaining({ query: "1' OR '1'='1" }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -316,7 +320,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
   });
@@ -350,7 +355,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -382,7 +388,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -411,7 +418,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -443,7 +451,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -479,7 +488,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -525,7 +535,8 @@ describe('GET /search Lambda handler', () => {
         }),
         true,
         [],
-        true
+        true,
+        expect.objectContaining({ viewerId: 'user-123' })
       );
     });
 
@@ -568,7 +579,8 @@ describe('GET /search Lambda handler', () => {
         }),
         false,
         [],
-        false
+        false,
+        expect.any(Object)
       );
     });
 
@@ -597,7 +609,8 @@ describe('GET /search Lambda handler', () => {
         }),
         true,
         [],
-        false
+        false,
+        expect.objectContaining({ viewerId: 'user-123' })
       );
     });
 
@@ -629,7 +642,8 @@ describe('GET /search Lambda handler', () => {
         }),
         true,
         [BadgeType.HERO],
-        false
+        false,
+        expect.objectContaining({ viewerId: 'user-123' })
       );
     });
 
@@ -654,7 +668,8 @@ describe('GET /search Lambda handler', () => {
         expect.objectContaining({ query: 'AWS' }),
         true,
         [],
-        false
+        false,
+        expect.objectContaining({ viewerId: 'user-123' })
       );
     });
   });

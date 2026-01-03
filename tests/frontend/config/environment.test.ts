@@ -6,6 +6,7 @@ describe('Environment Configuration', () => {
   beforeEach(() => {
     jest.resetModules();
     process.env = { ...originalEnv };
+    process.env.NEXT_PUBLIC_AWS_REGION = 'us-east-1';
     resetClientEnvironmentCache();
   });
 
@@ -46,13 +47,13 @@ describe('Environment Configuration', () => {
         expect(config.NEXT_PUBLIC_API_URL).toBe('https://api.example.com');
       });
 
-      it('should use default AWS region when not provided', () => {
+      it('should throw when AWS region is missing', () => {
         process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com';
         delete process.env.NEXT_PUBLIC_AWS_REGION;
 
-        const config = getClientEnvironment();
-
-        expect(config.NEXT_PUBLIC_AWS_REGION).toBe('us-east-1');
+        expect(() => getClientEnvironment()).toThrow(
+          /NEXT_PUBLIC_AWS_REGION/
+        );
       });
 
       it('should handle optional Cognito fields as undefined', () => {
@@ -66,31 +67,31 @@ describe('Environment Configuration', () => {
         expect(config.NEXT_PUBLIC_COGNITO_CLIENT_ID).toBeUndefined();
       });
 
-      it('should use localhost API URL in test environment when missing', () => {
+      it('should throw in test environment when API URL is missing', () => {
         process.env.NODE_ENV = 'test';
         delete process.env.NEXT_PUBLIC_API_URL;
 
-        const config = getClientEnvironment();
-
-        expect(config.NEXT_PUBLIC_API_URL).toBe('http://localhost:3001');
+        expect(() => getClientEnvironment()).toThrow(
+          'Invalid client environment configuration'
+        );
       });
 
-      it('should use localhost API URL in test environment when empty', () => {
+      it('should throw in test environment when API URL is empty', () => {
         process.env.NODE_ENV = 'test';
         process.env.NEXT_PUBLIC_API_URL = '';
 
-        const config = getClientEnvironment();
-
-        expect(config.NEXT_PUBLIC_API_URL).toBe('http://localhost:3001');
+        expect(() => getClientEnvironment()).toThrow(
+          'Invalid client environment configuration'
+        );
       });
 
-      it('should use localhost API URL in test environment when whitespace', () => {
+      it('should throw in test environment when API URL is whitespace', () => {
         process.env.NODE_ENV = 'test';
         process.env.NEXT_PUBLIC_API_URL = '   ';
 
-        const config = getClientEnvironment();
-
-        expect(config.NEXT_PUBLIC_API_URL).toBe('http://localhost:3001');
+        expect(() => getClientEnvironment()).toThrow(
+          'Invalid client environment configuration'
+        );
       });
     });
 

@@ -38,16 +38,17 @@ export class EmbeddingService {
         ? { region: optionsOrRegion }
         : optionsOrRegion ?? {};
 
-    const awsRegion =
-      options.region ||
-      process.env.AWS_REGION ||
-      process.env.BEDROCK_REGION ||
-      'us-east-1';
+    const awsRegion = options.region || process.env.BEDROCK_REGION || process.env.AWS_REGION;
+    if (!awsRegion || awsRegion.trim().length === 0) {
+      throw new Error('BEDROCK_REGION or AWS_REGION must be set to initialize EmbeddingService');
+    }
 
-    this.modelId =
-      options.modelId ||
-      process.env.BEDROCK_MODEL_ID ||
-      'amazon.titan-embed-text-v1';
+    const resolvedModelId = options.modelId || process.env.BEDROCK_MODEL_ID;
+    if (!resolvedModelId || resolvedModelId.trim().length === 0) {
+      throw new Error('BEDROCK_MODEL_ID must be set to initialize EmbeddingService');
+    }
+
+    this.modelId = resolvedModelId;
 
     this.client = new BedrockRuntimeClient({ region: awsRegion });
     this.cloudwatch = new CloudWatchClient({ region: awsRegion });

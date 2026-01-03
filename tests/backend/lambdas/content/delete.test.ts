@@ -332,7 +332,7 @@ describe('Delete Content Lambda', () => {
 
       const result = await handler(event as any, {} as any);
 
-      expect(result.statusCode).toBe(410);
+      expect(result.statusCode).toBe(404);
       const body = JSON.parse(result.body);
       expect(body.error.message).toContain('already deleted');
       expect(mockContentRepository.deleteContent).not.toHaveBeenCalled();

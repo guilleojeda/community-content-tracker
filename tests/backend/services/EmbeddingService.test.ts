@@ -15,6 +15,8 @@ describe('EmbeddingService', () => {
     bedrockMock.reset();
     cloudwatchMock.reset();
     cloudwatchMock.on(PutMetricDataCommand).resolves({});
+    process.env.BEDROCK_REGION = process.env.BEDROCK_REGION || 'us-east-1';
+    process.env.BEDROCK_MODEL_ID = process.env.BEDROCK_MODEL_ID || 'amazon.titan-embed-text-v1';
     service = new EmbeddingService();
   });
 

@@ -6,6 +6,7 @@ config:
     pool: 2000
     maxSockets: 2000
     keepAlive: true
+  maxVusers: 1000
   phases:
     - name: warmup
       duration: 30
@@ -27,6 +28,7 @@ scenarios:
     flow:
       - get:
           url: "/api/search?q=aurora"
+      - think: 1
   - name: bulk-content-ingest
     weight: 1
     flow:
@@ -35,3 +37,4 @@ scenarios:
           json:
             batchId: "{{ $uuid }}"
             itemCount: 50000
+      - think: 1

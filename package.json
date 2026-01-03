@@ -350,7 +350,7 @@
         "jiti": "^1.21.7",
         "js-cookie": "^3.0.5",
         "js-tokens": "^4.0.0",
-        "js-yaml": "^4.1.0",
+        "js-yaml": "^4.1.1",
         "jsdom": "^20.0.3",
         "jsesc": "^3.1.0",
         "json-buffer": "^3.0.1",
@@ -360,7 +360,7 @@
         "json5": "^2.2.3",
         "jsonwebtoken": "^9.0.2",
         "jwa": "^1.4.2",
-        "jws": "^3.2.2",
+        "jws": "^3.2.3",
         "keyv": "^4.5.4",
         "kleur": "^3.0.3",
         "lazystream": "^1.0.1",
@@ -406,7 +406,7 @@
         "nanoid": "^3.3.11",
         "natural-compare": "^1.4.0",
         "neo-async": "^2.6.2",
-        "next": "^14.2.33",
+        "next": "^14.2.35",
         "node-int64": "^0.4.0",
         "node-releases": "^2.0.20",
         "normalize-path": "^3.0.0",
@@ -627,6 +627,24 @@
         "zip-stream": "^6.0.1"
     },
     "overrides": {
+        "@lhci/cli": {
+            "express": "4.22.1",
+            "body-parser": "1.20.4",
+            "qs": "6.14.1"
+        },
+        "@istanbuljs/load-nyc-config": {
+            "js-yaml": "3.14.2"
+        },
+        "@lhci/utils": {
+            "js-yaml": "3.14.2"
+        },
+        "archiver-utils": {
+            "glob": "10.5.0"
+        },
+        "body-parser": "2.2.1",
+        "sucrase": {
+            "glob": "10.5.0"
+        },
         "tmp": "0.2.5"
     },
     "repository": {

@@ -95,6 +95,12 @@ describe('Content Processor Lambda', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockContext = {} as Context;
+    mockBedrockClient.mockImplementation(() => ({
+      send: mockBedrockSend,
+    }));
+    mockCloudWatchClient.mockImplementation(() => ({
+      send: mockCloudWatchSend,
+    }));
     process.env.BEDROCK_MODEL_ID = 'amazon.titan-embed-text-v1';
     process.env.BEDROCK_REGION = 'us-east-1';
     process.env.AWS_REGION = 'us-east-1';

@@ -52,7 +52,10 @@ module.exports = {
       statements: 90
     }
   },
-  setupFilesAfterEnv: [path.resolve(__dirname, '../../tests/setup/consoleMock.js')],
+  setupFilesAfterEnv: [
+    path.resolve(__dirname, '../../tests/setup/backendEnv.js'),
+    path.resolve(__dirname, '../../tests/setup/consoleMock.js'),
+  ],
   // globalSetup: '<rootDir>/tests/setup/global.setup.ts',
   // globalTeardown: '<rootDir>/tests/setup/global.teardown.ts',
   testTimeout: 30000,

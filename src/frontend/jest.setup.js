@@ -22,6 +22,10 @@ jest.mock('next/image', () => {
 
 // Mock Next.js environment variables
 process.env.NEXT_PUBLIC_API_URL = 'http://localhost:3001';
+process.env.NEXT_PUBLIC_AWS_REGION = 'us-east-1';
+process.env.NEXT_PUBLIC_ENVIRONMENT = 'development';
+process.env.NEXT_PUBLIC_FEEDBACK_URL = 'https://awscommunityhub.org/beta-feedback';
+process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES = 'false';
 
 // Mock IntersectionObserver
 global.IntersectionObserver = class IntersectionObserver {

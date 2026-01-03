@@ -104,7 +104,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
       headers: buildCorsHeaders(corsOptions),
       body: JSON.stringify({
         error: {
-          code: 'CONFIGURATION_ERROR',
+          code: 'INTERNAL_ERROR',
           message: 'Feedback table not configured',
         },
       }),

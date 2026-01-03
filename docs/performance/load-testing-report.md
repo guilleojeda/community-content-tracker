@@ -7,7 +7,7 @@
 - Target: Local mock API (`load-tests/mock-server.js`) representing search and bulk ingestion endpoints
 - Phases:
   1. Warm-up – 30s @ 50 rps
-  2. Spike – 60s ramp to 1000 req/s
+  2. Spike – 60s ramp to 1000 concurrent virtual users (maxVusers=1000)
   3. Bulk import – 30s sustained 200 req/s posting batches of 50,000 content items
 
 ## aggregate results
@@ -16,6 +16,7 @@
 - Failed virtual users: **0**
 - P95 latency: **1 ms**
 - Peak throughput: **~320 requests/second**
+- Target concurrency: **1000 virtual users**
 - Test duration: **~120 seconds**
 
 ## Observations

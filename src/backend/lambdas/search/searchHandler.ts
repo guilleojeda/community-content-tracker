@@ -170,6 +170,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     const limit = params.limit ? Number.parseInt(params.limit, 10) : 10;
     const offset = params.offset ? Number.parseInt(params.offset, 10) : 0;
+    const sortBy = params.sortBy ? params.sortBy.toLowerCase() : undefined;
 
     if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
       return {
@@ -179,6 +180,19 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           error: {
             code: 'VALIDATION_ERROR',
             message: 'limit must be between 1 and 100',
+          },
+        }),
+      };
+    }
+
+    if (sortBy && sortBy !== 'relevance' && sortBy !== 'date') {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'sortBy must be either relevance or date',
           },
         }),
       };
@@ -312,7 +326,8 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       },
       Boolean(viewer.viewerId),
       viewer.badges,
-      viewer.isAwsEmployee
+      viewer.isAwsEmployee,
+      { viewerId: viewer.viewerId, sortBy: sortBy as 'relevance' | 'date' | undefined }
     );
 
     const searchLatency = Date.now() - searchStartTime;

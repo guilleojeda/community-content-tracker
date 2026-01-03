@@ -65,6 +65,16 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - name: sortBy
+          in: query
+          required: false
+          description: Sort order for search results
+          schema:
+            type: string
+            enum:
+              - relevance
+              - date
+            default: relevance
         - name: type
           in: query
           required: false

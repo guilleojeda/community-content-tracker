@@ -108,9 +108,11 @@ export default function AdminUsersPage(): JSX.Element {
   }, [loadUsers]);
 
   const loadUserDetails = useCallback(
-    async (userId: string) => {
+    async (userId: string, options?: { preserveActionMessage?: boolean }) => {
       setSelectedUserLoading(true);
-      setActionMessage(null);
+      if (!options?.preserveActionMessage) {
+        setActionMessage(null);
+      }
       try {
         const client = await getSharedApiClient();
         const detail = await client.getAdminUser(userId);
@@ -181,7 +183,7 @@ export default function AdminUsersPage(): JSX.Element {
           reason: badgeModal.reason || undefined,
         });
         setActionMessage('Badge granted successfully.');
-        await loadUserDetails(selectedUser.user.id);
+        await loadUserDetails(selectedUser.user.id, { preserveActionMessage: true });
       } else if (badgeModal.mode === 'revoke') {
         if (!selectedUser) {
           setActionMessage(USER_REQUIRED_MESSAGE);
@@ -193,7 +195,7 @@ export default function AdminUsersPage(): JSX.Element {
           reason: badgeModal.reason || undefined,
         });
         setActionMessage('Badge revoked successfully.');
-        await loadUserDetails(selectedUser.user.id);
+        await loadUserDetails(selectedUser.user.id, { preserveActionMessage: true });
       } else {
         if (selectedUserIds.length === 0) {
           setActionMessage('Select at least one user for bulk badge updates.');
@@ -218,7 +220,7 @@ export default function AdminUsersPage(): JSX.Element {
 
         await loadUsers(pagination.offset);
         if (selectedUser && selectedUserIds.includes(selectedUser.user.id)) {
-          await loadUserDetails(selectedUser.user.id);
+          await loadUserDetails(selectedUser.user.id, { preserveActionMessage: true });
         }
       }
     } catch (err) {
@@ -259,7 +261,7 @@ export default function AdminUsersPage(): JSX.Element {
       });
       setActionMessage('AWS employee status updated.');
       await loadUsers(pagination.offset);
-      await loadUserDetails(user.id);
+      await loadUserDetails(user.id, { preserveActionMessage: true });
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Failed to update AWS employee status');
     } finally {

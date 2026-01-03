@@ -11,42 +11,32 @@ describe('validateEnv', () => {
     process.env = originalEnv;
   });
 
-  it('uses localhost default when API URL is missing in non-production environments', () => {
-    delete process.env.NEXT_PUBLIC_API_URL;
-    process.env = { ...process.env, NODE_ENV: 'development' } as NodeJS.ProcessEnv;
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-
-    const { loadEnv } = require('../../../src/frontend/config/validateEnv');
-    const result = loadEnv();
-
-    expect(result.NEXT_PUBLIC_API_URL).toBe('http://localhost:3001/api');
-    expect(warnSpy).not.toHaveBeenCalled();
-
-    warnSpy.mockRestore();
-  });
-
-  it('throws when API URL is missing during production builds', () => {
-    delete process.env.NEXT_PUBLIC_API_URL;
-    process.env = { ...process.env, NODE_ENV: 'production' } as NodeJS.ProcessEnv;
-    process.env.NEXT_PUBLIC_ENVIRONMENT = 'prod';
-
-    const { loadEnv } = require('../../../src/frontend/config/validateEnv');
-
-    expect(() => loadEnv()).toThrow('NEXT_PUBLIC_API_URL must be set for production builds');
-  });
-
-  it('allows localhost fallback for production builds targeting development environment', () => {
-    delete process.env.NEXT_PUBLIC_API_URL;
-    process.env = { ...process.env, NODE_ENV: 'production' } as NodeJS.ProcessEnv;
+  it('parses required environment variables', () => {
+    process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com';
+    process.env.NEXT_PUBLIC_AWS_REGION = 'us-east-1';
     process.env.NEXT_PUBLIC_ENVIRONMENT = 'development';
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.NEXT_PUBLIC_FEEDBACK_URL = 'https://example.com/feedback';
+    process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES = 'false';
 
     const { loadEnv } = require('../../../src/frontend/config/validateEnv');
     const result = loadEnv();
 
-    expect(result.NEXT_PUBLIC_API_URL).toBe('http://localhost:3001/api');
-    expect(warnSpy).not.toHaveBeenCalled();
+    expect(result.NEXT_PUBLIC_API_URL).toBe('https://api.example.com');
+    expect(result.NEXT_PUBLIC_AWS_REGION).toBe('us-east-1');
+    expect(result.NEXT_PUBLIC_ENVIRONMENT).toBe('development');
+    expect(result.NEXT_PUBLIC_FEEDBACK_URL).toBe('https://example.com/feedback');
+    expect(result.NEXT_PUBLIC_ENABLE_BETA_FEATURES).toBe('false');
+  });
 
-    warnSpy.mockRestore();
+  it('throws when API URL is missing', () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    process.env.NEXT_PUBLIC_AWS_REGION = 'us-east-1';
+    process.env.NEXT_PUBLIC_ENVIRONMENT = 'development';
+    process.env.NEXT_PUBLIC_FEEDBACK_URL = 'https://example.com/feedback';
+    process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES = 'false';
+
+    const { loadEnv } = require('../../../src/frontend/config/validateEnv');
+
+    expect(() => loadEnv()).toThrow('Invalid Next.js environment configuration');
   });
 });

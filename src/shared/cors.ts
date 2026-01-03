@@ -12,7 +12,7 @@ function parseAllowedOrigins(): string[] {
     .filter((value) => value.length > 0);
 
   if (parsed.length === 0) {
-    parsed.push('http://localhost:3000');
+    throw new Error('CORS_ORIGIN must be set to at least one allowed origin');
   }
 
   cachedOrigins = parsed;

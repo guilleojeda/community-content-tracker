@@ -10,21 +10,22 @@ describe('featureFlags module', () => {
     process.env = { ...originalEnv };
   });
 
-  it('falls back to development defaults when env vars are missing', async () => {
+  const setRequiredEnv = () => {
+    process.env.NEXT_PUBLIC_ENVIRONMENT = 'development';
+    process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES = 'false';
+    process.env.NEXT_PUBLIC_FEEDBACK_URL = 'https://example.com/feedback';
+  };
+
+  it('throws when required env vars are missing', async () => {
     delete process.env.NEXT_PUBLIC_ENVIRONMENT;
     delete process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES;
     delete process.env.NEXT_PUBLIC_FEEDBACK_URL;
 
-    const flags = await loadFlags();
-
-    expect(flags.appEnvironment).toBe('development');
-    expect(flags.betaFeaturesEnabled).toBe(false);
-    expect(flags.feedbackUrl).toBe('https://awscommunityhub.org/beta-feedback');
-    expect(flags.isBetaEnvironment).toBe(false);
-    expect(flags.isBetaModeActive()).toBe(false);
+    await expect(loadFlags()).rejects.toThrow('NEXT_PUBLIC_ENVIRONMENT must be set');
   });
 
   it('activates beta mode when feature flag is enabled', async () => {
+    setRequiredEnv();
     process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES = 'TRUE';
 
     const flags = await loadFlags();
@@ -34,8 +35,9 @@ describe('featureFlags module', () => {
   });
 
   it('activates beta mode when environment is beta regardless of flags', async () => {
+    setRequiredEnv();
     process.env.NEXT_PUBLIC_ENVIRONMENT = 'BETA';
-    delete process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES;
+    process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES = 'false';
 
     const flags = await loadFlags();
 
@@ -44,6 +46,7 @@ describe('featureFlags module', () => {
   });
 
   it('uses custom feedback url when provided', async () => {
+    setRequiredEnv();
     process.env.NEXT_PUBLIC_FEEDBACK_URL = 'https://example.com/feedback';
 
     const flags = await loadFlags();

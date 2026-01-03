@@ -116,7 +116,7 @@ export async function handler(
     if (content.deletedAt) {
       const forceDelete = event.queryStringParameters?.force === 'true';
       if (!forceDelete) {
-        return errorResponse(410, 'GONE', 'Content already deleted', originHeader);
+        return errorResponse(404, 'NOT_FOUND', 'Content already deleted', originHeader);
       }
     }
 

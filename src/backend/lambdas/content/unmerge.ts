@@ -51,7 +51,7 @@ export async function handler(
       if (!success) {
         return createErrorResponse(
           400,
-          'UNMERGE_FAILED',
+          'VALIDATION_ERROR',
           'Failed to unmerge content. The merge may have expired or already been undone.'
         );
       }
@@ -87,8 +87,8 @@ export async function handler(
       // Check for specific error messages
       if (unmergeError.message?.includes('expired')) {
         return createErrorResponse(
-          410,
-          'MERGE_EXPIRED',
+          400,
+          'VALIDATION_ERROR',
           'The 30-day undo window for this merge has expired'
         );
       }
@@ -96,7 +96,7 @@ export async function handler(
       if (unmergeError.message?.includes('not found')) {
         return createErrorResponse(
           404,
-          'MERGE_NOT_FOUND',
+          'NOT_FOUND',
           'Merge history not found'
         );
       }

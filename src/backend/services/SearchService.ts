@@ -50,7 +50,8 @@ export class SearchService {
     request: SearchRequest,
     isAuthenticated: boolean,
     userBadges: BadgeType[] = [],
-    isAwsEmployee: boolean = false
+    isAwsEmployee: boolean = false,
+    options: { viewerId?: string; sortBy?: 'relevance' | 'date' } = {}
   ): Promise<SearchResult> {
     const startTime = Date.now();
     const { query, filters = {}, limit = 20, offset = 0 } = request;
@@ -68,12 +69,16 @@ export class SearchService {
 
       // Determine visibility levels based on authentication and badges
       const visibilityLevels = this.determineVisibility(isAuthenticated, userBadges, isAwsEmployee);
+      const hasVisibilityFilter = Array.isArray(filters.visibility) && filters.visibility.length > 0;
+      const viewerId = options.viewerId;
 
-      const requestedVisibility = filters.visibility?.filter(visibility =>
-        visibilityLevels.includes(visibility)
-      );
+      const requestedVisibility = hasVisibilityFilter
+        ? filters.visibility!.filter((visibility) =>
+            visibilityLevels.includes(visibility) || (viewerId && visibility === Visibility.PRIVATE)
+          )
+        : visibilityLevels;
 
-      if (filters.visibility && (!requestedVisibility || requestedVisibility.length === 0)) {
+      if (hasVisibilityFilter && (!requestedVisibility || requestedVisibility.length === 0)) {
         return {
           items: [],
           total: 0,
@@ -84,6 +89,21 @@ export class SearchService {
 
       const effectiveVisibilityLevels =
         requestedVisibility && requestedVisibility.length > 0 ? requestedVisibility : visibilityLevels;
+
+      const nonOwnerVisibilityLevels = effectiveVisibilityLevels.filter(
+        (visibility) => visibility !== Visibility.PRIVATE
+      );
+
+      const ownerVisibilityLevels =
+        viewerId
+          ? Array.from(
+              new Set(
+                hasVisibilityFilter
+                  ? effectiveVisibilityLevels
+                  : [...effectiveVisibilityLevels, Visibility.PRIVATE]
+              )
+            )
+          : undefined;
 
       const normalizedFilters = {
         contentTypes: filters.contentTypes,
@@ -98,7 +118,9 @@ export class SearchService {
 
       // Build search options from filters
       const searchOptions = {
-        visibilityLevels: effectiveVisibilityLevels,
+        visibilityLevels: nonOwnerVisibilityLevels.length > 0 ? nonOwnerVisibilityLevels : visibilityLevels,
+        ownerVisibilityLevels,
+        viewerId,
         contentTypes: normalizedFilters.contentTypes,
         tags: normalizedFilters.tags,
         badges: normalizedFilters.badges,
@@ -112,7 +134,9 @@ export class SearchService {
         this.contentRepo.semanticSearch(queryEmbedding, searchOptions),
         this.contentRepo.keywordSearch(query.trim(), searchOptions),
         this.contentRepo.countSearchResults({
-          visibilityLevels: effectiveVisibilityLevels,
+          visibilityLevels: nonOwnerVisibilityLevels.length > 0 ? nonOwnerVisibilityLevels : visibilityLevels,
+          ownerVisibilityLevels,
+          viewerId,
           contentTypes: normalizedFilters.contentTypes,
           tags: normalizedFilters.tags,
           badges: normalizedFilters.badges,
@@ -125,7 +149,8 @@ export class SearchService {
         semanticResults as RankedContent[],
         keywordResults as RankedContent[],
         limit,
-        offset
+        offset,
+        options.sortBy
       );
 
       // Track analytics asynchronously
@@ -199,7 +224,7 @@ export class SearchService {
     // AWS_ONLY visibility requires isAwsEmployee flag
     // Only AWS employees can see AWS_ONLY content
     if (isAwsEmployee) {
-      visibilityLevels.push(Visibility.AWS_ONLY);
+      visibilityLevels.push(Visibility.AWS_COMMUNITY, Visibility.AWS_ONLY);
     }
 
     return visibilityLevels;
@@ -219,7 +244,8 @@ export class SearchService {
     semanticResults: RankedContent[],
     keywordResults: RankedContent[],
     limit: number,
-    offset: number
+    offset: number,
+    sortBy: 'relevance' | 'date' = 'relevance'
   ): Content[] {
     // Create a map to combine scores for duplicates
     const contentMap = new Map<string, RankedContent>();
@@ -255,14 +281,23 @@ export class SearchService {
       }
     });
 
-    // Sort by combined score descending
-    const sortedResults = Array.from(contentMap.values())
-      .sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
+    const sortedResults = Array.from(contentMap.values());
+    if (sortBy === 'date') {
+      sortedResults.sort((a, b) => this.resolveSortDate(b) - this.resolveSortDate(a));
+    } else {
+      sortedResults.sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
+    }
 
     // Apply pagination and remove scoring metadata
     return sortedResults
       .slice(offset, offset + limit)
       .map(({ similarity: _similarity, rank: _rank, combinedScore: _combinedScore, ...content }) => content as Content);
+  }
+
+  private resolveSortDate(content: Content): number {
+    const candidate = content.publishDate || content.captureDate || content.createdAt;
+    const value = candidate instanceof Date ? candidate.getTime() : new Date(candidate as any).getTime();
+    return Number.isNaN(value) ? 0 : value;
   }
 
   /**

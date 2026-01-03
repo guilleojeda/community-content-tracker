@@ -8,6 +8,15 @@ process.env.CDK_DEFAULT_REGION = 'us-east-1';
 process.env.CDK_DEFAULT_ACCOUNT = '123456789012';
 // Mock DATABASE_URL for tests that don't use real database
 process.env.DATABASE_URL = 'postgresql://testuser:testpass@localhost:5432/test_db';
+process.env.BEDROCK_REGION = process.env.BEDROCK_REGION || 'us-east-1';
+process.env.BEDROCK_MODEL_ID = process.env.BEDROCK_MODEL_ID || 'amazon.titan-embed-text-v1';
+process.env.CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:3000';
+process.env.NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+process.env.NEXT_PUBLIC_AWS_REGION = process.env.NEXT_PUBLIC_AWS_REGION || 'us-east-1';
+process.env.NEXT_PUBLIC_ENVIRONMENT = process.env.NEXT_PUBLIC_ENVIRONMENT || 'development';
+process.env.NEXT_PUBLIC_FEEDBACK_URL = process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://awscommunityhub.org/beta-feedback';
+process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES = process.env.NEXT_PUBLIC_ENABLE_BETA_FEATURES || 'false';
+process.env.ENVIRONMENT = process.env.ENVIRONMENT || 'test';
 
 // Mock AWS SDK to prevent actual AWS calls and async cleanup issues
 // jest.mock('@aws-sdk/client-s3');
