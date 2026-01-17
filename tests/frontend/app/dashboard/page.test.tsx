@@ -1,15 +1,15 @@
 import React from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { useRouter } from 'next/navigation';
-import DashboardPage from '@/app/dashboard/page';
+import DashboardHomeView from '@/app/dashboard/DashboardHomeView';
 import { BadgeType, ContentType, Visibility } from '@shared/types';
 
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(),
 }));
 
-jest.mock('@/api/client', () => ({
-  getAuthenticatedApiClient: jest.fn(),
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadAuthenticatedApiClient: jest.fn(),
 }));
 
 const localStorageMock = (() => {
@@ -34,7 +34,7 @@ describe('DashboardPage', () => {
   const mockPush = jest.fn();
   const mockRouter = { push: mockPush };
 
-  const { getAuthenticatedApiClient } = require('@/api/client');
+  const { loadAuthenticatedApiClient } = require('@/lib/api/lazyClient');
 
   const mockApiClient = {
     getCurrentUser: jest.fn(),
@@ -161,7 +161,7 @@ describe('DashboardPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (useRouter as jest.Mock).mockReturnValue(mockRouter);
-    (getAuthenticatedApiClient as jest.Mock).mockReturnValue(mockApiClient);
+    (loadAuthenticatedApiClient as jest.Mock).mockResolvedValue(mockApiClient);
     localStorageMock.clear();
     localStorageMock.setItem('accessToken', 'mock-token');
     setHappyPathResponses();
@@ -173,7 +173,7 @@ describe('DashboardPage', () => {
       mockApiClient.getUserBadges.mockReturnValue(new Promise(() => {}));
       mockApiClient.listContent.mockReturnValue(new Promise(() => {}));
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByTestId('stats-skeleton')).toBeInTheDocument();
@@ -184,7 +184,7 @@ describe('DashboardPage', () => {
 
   describe('stats overview', () => {
     it('shows total content and engagement numbers', async () => {
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText('Total Engagement')).toBeInTheDocument();
@@ -213,7 +213,7 @@ describe('DashboardPage', () => {
         total: 1,
       });
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByTestId('total-engagement-card')).toBeInTheDocument();
@@ -233,7 +233,7 @@ describe('DashboardPage', () => {
         total: 1,
       });
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         const engagementCard = screen.getByTestId('total-engagement-card');
@@ -243,7 +243,7 @@ describe('DashboardPage', () => {
     });
 
     it('renders content counts for the key content types', async () => {
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         const blogCard = screen.getByRole('heading', { name: /^blogs$/i }).closest('div');
@@ -264,7 +264,7 @@ describe('DashboardPage', () => {
 
   describe('recent content list', () => {
     it('renders recent items with types and visibilities', async () => {
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText('Recent Content')).toBeInTheDocument();
@@ -276,7 +276,7 @@ describe('DashboardPage', () => {
     });
 
     it('limits list to five entries', async () => {
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         const items = screen.getAllByTestId('content-item');
@@ -287,7 +287,7 @@ describe('DashboardPage', () => {
 
   describe('visibility chart', () => {
     it('displays chart with visibility distribution', async () => {
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText('Visibility Distribution')).toBeInTheDocument();
@@ -298,7 +298,7 @@ describe('DashboardPage', () => {
 
   describe('badges section', () => {
     it('shows AWS program badges and AWS employee indicator', async () => {
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText('AWS Badges')).toBeInTheDocument();
@@ -311,7 +311,7 @@ describe('DashboardPage', () => {
     it('omits AWS employee ribbon for non-employees', async () => {
       mockApiClient.getCurrentUser.mockResolvedValueOnce({ ...mockUser, isAwsEmployee: false });
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.queryByText('AWS Employee')).not.toBeInTheDocument();
@@ -322,7 +322,7 @@ describe('DashboardPage', () => {
       mockApiClient.getCurrentUser.mockResolvedValueOnce({ ...mockUser, isAwsEmployee: false });
       mockApiClient.getUserBadges.mockResolvedValueOnce([]);
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText('AWS Badges')).toBeInTheDocument();
@@ -333,7 +333,7 @@ describe('DashboardPage', () => {
 
   describe('quick actions', () => {
     it('links to content and channel management UIs', async () => {
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText('Quick Actions')).toBeInTheDocument();
@@ -347,7 +347,7 @@ describe('DashboardPage', () => {
     it('surface user fetch errors', async () => {
       mockApiClient.getCurrentUser.mockRejectedValueOnce(new Error('Failed to fetch user'));
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText(/failed to fetch user/i)).toBeInTheDocument();
@@ -357,7 +357,7 @@ describe('DashboardPage', () => {
     it('surface badge fetch errors', async () => {
       mockApiClient.getUserBadges.mockRejectedValueOnce(new Error('Failed to fetch badges'));
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText(/failed to fetch badges/i)).toBeInTheDocument();
@@ -367,7 +367,7 @@ describe('DashboardPage', () => {
     it('surface content fetch errors', async () => {
       mockApiClient.listContent.mockRejectedValueOnce(new Error('Failed to fetch content'));
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText(/failed to fetch content/i)).toBeInTheDocument();
@@ -379,7 +379,7 @@ describe('DashboardPage', () => {
     it('redirects to login when no token present', async () => {
       localStorageMock.clear();
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(mockPush).toHaveBeenCalledWith('/auth/login');
@@ -391,7 +391,7 @@ describe('DashboardPage', () => {
     it('shows empty content messaging when API returns no content', async () => {
       mockApiClient.listContent.mockResolvedValueOnce({ content: [], total: 0 });
 
-      render(<DashboardPage />);
+      render(<DashboardHomeView />);
 
       await waitFor(() => {
         expect(screen.getByText(/no content yet/i)).toBeInTheDocument();

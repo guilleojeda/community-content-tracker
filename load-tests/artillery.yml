@@ -15,7 +15,7 @@ config:
       duration: 60
       arrivalRate: 100
       rampTo: 1000
-    - name: bulk-import
+    - name: stats-burst
       duration: 30
       arrivalRate: 200
   defaults:
@@ -29,12 +29,9 @@ scenarios:
       - get:
           url: "/api/search?q=aurora"
       - think: 1
-  - name: bulk-content-ingest
+  - name: stats-load
     weight: 1
     flow:
-      - post:
-          url: "/api/content/bulk"
-          json:
-            batchId: "{{ $uuid }}"
-            itemCount: 50000
+      - get:
+          url: "/api/stats"
       - think: 1

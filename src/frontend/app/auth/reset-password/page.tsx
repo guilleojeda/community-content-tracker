@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { getPublicApiClient } from '@/api/client';
+import { loadPublicApiClient } from '@/lib/api/lazyClient';
 
 function ResetPasswordContent() {
   const searchParams = useSearchParams();
@@ -63,7 +63,7 @@ function ResetPasswordContent() {
     setLoading(true);
 
     try {
-      const client = getPublicApiClient();
+      const client = await loadPublicApiClient();
       await client.resetPassword({
         email: formData.email,
         confirmationCode: formData.code,

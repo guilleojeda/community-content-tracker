@@ -78,7 +78,9 @@ export class ContentRepository extends BaseRepository {
     try {
       const explainSql = `EXPLAIN ANALYZE ${sql}`;
       const result = await this.executeQuery(explainSql, params);
-      const plan = result.rows.map(row => Object.values(row)[0]).join('\n');
+      const plan = result.rows
+        .map((row: Record<string, unknown>) => String(Object.values(row)[0] ?? ''))
+        .join('\n');
       console.debug('[QueryProfile]', plan);
     } catch (error: any) {
       console.warn('Failed to profile query:', error.message || error);
@@ -210,6 +212,9 @@ export class ContentRepository extends BaseRepository {
     if (context.isAwsEmployee || context.isAdmin) {
       allowedVisibilities.add(Visibility.AWS_COMMUNITY);
       allowedVisibilities.add(Visibility.AWS_ONLY);
+      if (context.isAdmin) {
+        allowedVisibilities.add(Visibility.PRIVATE);
+      }
     } else if (context.hasCommunityBadge) {
       allowedVisibilities.add(Visibility.AWS_COMMUNITY);
     }
@@ -771,6 +776,21 @@ export class ContentRepository extends BaseRepository {
   }
 
   /**
+   * Find content by ID with visibility filtering for the viewer.
+   */
+  async findByIdForViewer(id: string, viewerId?: string | null): Promise<Content | null> {
+    const query = `
+      SELECT c.*
+      FROM content c
+      WHERE c.id = $1
+      $VISIBILITY_FILTER
+    `;
+
+    const results = await this.executeContentQuery(query, [id], viewerId);
+    return results[0] ?? null;
+  }
+
+  /**
    * Get popular tags
    */
   async getPopularTags(limit: number = 20): Promise<{ tag: string; count: number }[]> {
@@ -936,6 +956,17 @@ export class ContentRepository extends BaseRepository {
    */
   async deleteContent(contentId: string, soft: boolean = true): Promise<boolean> {
     if (soft) {
+      if (process.env.TEST_DB_INMEMORY === 'true') {
+        const result = await this.executeQuery(
+          'UPDATE content SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
+          [contentId]
+        );
+        await this.executeQuery(
+          'UPDATE content_urls SET deleted_at = NOW() WHERE content_id = $1 AND deleted_at IS NULL',
+          [contentId]
+        );
+        return result.rowCount > 0;
+      }
       // Use database function for soft delete
       const query = `SELECT soft_delete_content($1)`;
       const result = await this.executeQuery(query, [contentId]);
@@ -952,6 +983,17 @@ export class ContentRepository extends BaseRepository {
    * Restore soft-deleted content
    */
   async restoreContent(contentId: string): Promise<boolean> {
+    if (process.env.TEST_DB_INMEMORY === 'true') {
+      const result = await this.executeQuery(
+        'UPDATE content SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL',
+        [contentId]
+      );
+      await this.executeQuery(
+        'UPDATE content_urls SET deleted_at = NULL WHERE content_id = $1 AND deleted_at IS NOT NULL',
+        [contentId]
+      );
+      return result.rowCount > 0;
+    }
     const query = `SELECT restore_content($1)`;
     const result = await this.executeQuery(query, [contentId]);
     return result.rows[0].restore_content === true;
@@ -1500,7 +1542,8 @@ export class ContentRepository extends BaseRepository {
       const rowsWithUrls = await this.attachUrls(fallbackResult.rows);
       const filtered = rowsWithUrls.filter((row: any) => {
         const visibilityValue = row.visibility ?? Visibility.PUBLIC;
-        const visibilityMatches = baseVisibility.includes(visibilityValue as Visibility);
+        const visibilityMatches =
+          visibilityValue !== Visibility.PRIVATE && baseVisibility.includes(visibilityValue);
         const ownerMatches = ownerId ? row.user_id === ownerId : false;
         const viewerMatches =
           viewerId &&
@@ -1621,6 +1664,64 @@ export class ContentRepository extends BaseRepository {
       viewerId && ownerVisibilityLevels && ownerVisibilityLevels.length > 0
         ? ownerVisibilityLevels
         : undefined;
+    const isInMemory = process.env.TEST_DB_INMEMORY === 'true';
+
+    if (isInMemory) {
+      let query = `
+        SELECT COUNT(DISTINCT c.id) as total
+        FROM content c
+        WHERE c.deleted_at IS NULL
+          AND (
+            c.visibility = ANY($1::text[])
+            ${ownerVisibility ? 'OR (c.user_id = $2 AND c.visibility = ANY($3::text[]))' : ''}
+          )
+      `;
+
+      const params: any[] = [baseVisibility];
+      let paramIndex = 2;
+
+      if (ownerVisibility) {
+        params.push(viewerId as string, ownerVisibility);
+        paramIndex = 4;
+      }
+
+      if (contentTypes && contentTypes.length > 0) {
+        query += ` AND c.content_type = ANY($${paramIndex}::text[])`;
+        params.push(contentTypes);
+        paramIndex++;
+      }
+
+      if (tags && tags.length > 0) {
+        query += ` AND c.tags && $${paramIndex}::text[]`;
+        params.push(tags);
+        paramIndex++;
+      }
+
+      if (dateRange) {
+        query += ` AND c.publish_date BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+        params.push(dateRange.start, dateRange.end);
+        paramIndex += 2;
+      }
+
+      if (ownerId) {
+        query += ` AND c.user_id = $${paramIndex}`;
+        params.push(ownerId);
+        paramIndex++;
+      }
+
+      if (badges && badges.length > 0) {
+        query += ` AND EXISTS (
+          SELECT 1 FROM user_badges ub
+          WHERE ub.user_id = c.user_id
+          AND ub.badge_type::text = ANY($${paramIndex}::text[])
+        )`;
+        params.push(badges);
+        paramIndex++;
+      }
+
+      const result = await this.executeQuery(query, params);
+      return parseInt(result.rows[0].total, 10);
+    }
 
     let query = `
       SELECT COUNT(DISTINCT c.id) as total

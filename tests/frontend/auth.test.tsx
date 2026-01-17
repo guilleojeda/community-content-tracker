@@ -25,8 +25,8 @@ const mockClient: AuthClient = {
   resetPassword: jest.fn(),
 };
 
-jest.mock('@/api/client', () => ({
-  getPublicApiClient: jest.fn(() => mockClient),
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadPublicApiClient: jest.fn(() => Promise.resolve(mockClient)),
 }));
 
 const mockPush = jest.fn();

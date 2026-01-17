@@ -400,7 +400,7 @@ export default function AnalyticsDashboardPage(): JSX.Element {
                       const exportedOn = new Date(entry.createdAt).toLocaleString();
                       const dateRange = [entry.parameters.startDate, entry.parameters.endDate]
                         .filter(Boolean)
-                        .join(' → ');
+                        .join(' -> ');
 
                       let details = '';
                       if (entry.exportType === 'program') {

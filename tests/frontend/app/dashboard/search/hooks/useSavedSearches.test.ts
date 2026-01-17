@@ -51,6 +51,14 @@ describe('useSavedSearches', () => {
     expect(result.current.error).toBe('Network error');
   });
 
+  it('uses fallback error message for non-Error load failures', async () => {
+    mockedApiClient.getSavedSearches.mockRejectedValue('Network error');
+
+    const { result } = renderHook(() => useSavedSearches());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBe('Failed to load saved searches');
+  });
+
   it('saves a new search via API and updates state', async () => {
     mockedApiClient.saveSearch.mockResolvedValue(sampleSearch);
 
@@ -219,6 +227,19 @@ describe('useSavedSearches', () => {
     });
 
     expect(result.current.error).toBe('Delete failed');
+  });
+
+  it('uses fallback error message when deleteSavedSearch rejects with non-Error', async () => {
+    mockedApiClient.deleteSavedSearch.mockRejectedValueOnce('Delete failed');
+
+    const { result } = renderHook(() => useSavedSearches());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.deleteSavedSearch('missing-id');
+    });
+
+    expect(result.current.error).toBe('Failed to delete saved search');
   });
 
   it('returns null and sets error when loadSearch API call fails', async () => {

@@ -7,6 +7,14 @@ interface SyntheticResult {
   body: string;
 }
 
+const requireEnv = (name: string): string => {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`${name} must be set`);
+  }
+  return value.trim();
+};
+
 const putMetrics = async (namespace: string, availability: number, latencyMs: number) => {
   await cloudWatchClient.send(
     new PutMetricDataCommand({
@@ -28,9 +36,8 @@ const putMetrics = async (namespace: string, availability: number, latencyMs: nu
 };
 
 export const handler = async (): Promise<SyntheticResult> => {
-  const url = process.env.SYNTHETIC_URL ?? 'https://example.org/';
-  const namespace =
-    process.env.CLOUDWATCH_NAMESPACE ?? 'CommunityContentHub/Synthetic/default';
+  const url = requireEnv('SYNTHETIC_URL');
+  const namespace = requireEnv('CLOUDWATCH_NAMESPACE');
 
   const start = Date.now();
   let statusCode = 0;

@@ -156,7 +156,7 @@ Use the following checklist before signing off any AgentCore changes. The steps 
 1. Login as a **super_secret** user.
 2. Ensure `window.__APP_CONFIG__.agentcoreScopes` includes `roadmap.superSecret`.
 3. Submit “Any Observability betas next quarter?”.
-4. Confirm `ndaLevel` sent to runtime is `super_secret` (browser devtools → Network tab).
+4. Confirm `ndaLevel` sent to runtime is `super_secret` (browser devtools -> Network tab).
 5. Acknowledge citations for Super Secret sources.
 
 ### Super Secret Flow (scope missing)

@@ -4,6 +4,7 @@ import { UserRepository } from '../../repositories/UserRepository';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { validate as validateUuid } from 'uuid';
 import { getDatabasePool, closeDatabasePool } from '../../services/database';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Find duplicate content using multiple detection strategies
@@ -17,17 +18,26 @@ export const handler = async (
     requestId: context.awsRequestId,
     path: event.path,
   });
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'content:find-duplicates' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Extract user ID from authorizer
     const userId = event.requestContext.authorizer?.claims?.sub;
 
     if (!userId) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
     }
 
     if (!validateUuid(userId)) {
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+      return withRateLimit(createErrorResponse(404, 'NOT_FOUND', 'User not found'));
     }
 
     // Get database pool
@@ -38,7 +48,7 @@ export const handler = async (
     // Verify user exists
     const user = await userRepo.findById(userId);
     if (!user) {
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+      return withRateLimit(createErrorResponse(404, 'NOT_FOUND', 'User not found'));
     }
 
     // Parse query parameters
@@ -49,12 +59,12 @@ export const handler = async (
     if (queryParams.threshold) {
       const parsedThreshold = parseFloat(queryParams.threshold);
       if (isNaN(parsedThreshold) || parsedThreshold < 0 || parsedThreshold > 1) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Threshold must be a number between 0 and 1',
           { threshold: 'Must be between 0 and 1' }
-        );
+        ));
       }
       threshold = parsedThreshold;
     }
@@ -66,12 +76,12 @@ export const handler = async (
     const validFields = ['title', 'tags', 'urls'];
     const invalidFields = fields.filter(f => !validFields.includes(f));
     if (invalidFields.length > 0) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Invalid fields specified',
         { fields: `Invalid fields: ${invalidFields.join(', ')}. Valid fields are: ${validFields.join(', ')}` }
-      );
+      ));
     }
 
     // Optional: specific content ID to find duplicates for
@@ -117,30 +127,39 @@ export const handler = async (
       };
     });
 
-    return createSuccessResponse(200, {
+    return withRateLimit(createSuccessResponse(200, {
       duplicates: transformedDuplicates,
       total: transformedDuplicates.length,
       threshold,
       fields,
-    });
+    }));
 
   } catch (error: any) {
     console.error('Error finding duplicates:', error);
 
     // Handle specific error cases
     if (error.code === '42P01') {
-      return createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found');
-    }
-
-    if (error.code === '42883') {
-      return createErrorResponse(
-        500,
-        'INTERNAL_ERROR',
-        'Database function not found. The pg_trgm extension may not be installed.'
+      return attachRateLimitHeaders(
+        createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found'),
+        rateLimit
       );
     }
 
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error');
+    if (error.code === '42883') {
+      return attachRateLimitHeaders(
+        createErrorResponse(
+          500,
+          'INTERNAL_ERROR',
+          'Database function not found. The pg_trgm extension may not be installed.'
+        ),
+        rateLimit
+      );
+    }
+
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error'),
+      rateLimit
+    );
   }
 };
 

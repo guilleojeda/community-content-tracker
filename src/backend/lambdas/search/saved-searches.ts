@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse, parseRequestBody } from '../auth/utils';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Multi-route handler for saved searches
@@ -19,35 +20,47 @@ export async function handler(
   const method = event.httpMethod;
   const pathParameters = event.pathParameters || {};
   const searchId = pathParameters.id;
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   // Check authentication
   const authorizer: any = event.requestContext?.authorizer;
   const userId = authorizer?.userId;
 
-  if (!userId) {
-    return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
-  }
-
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'search:saved' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
+    if (!userId) {
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
+    }
+
     const pool = await getDatabasePool();
 
     // Route based on method and path
     if (method === 'POST') {
-      return await saveSearch(pool, userId, event);
+      return withRateLimit(await saveSearch(pool, userId, event));
     } else if (method === 'GET' && !searchId) {
-      return await listSavedSearches(pool, userId);
+      return withRateLimit(await listSavedSearches(pool, userId));
     } else if (method === 'GET' && searchId) {
-      return await getSavedSearch(pool, userId, searchId);
+      return withRateLimit(await getSavedSearch(pool, userId, searchId));
     } else if (method === 'PUT' && searchId) {
-      return await updateSavedSearch(pool, userId, searchId, event);
+      return withRateLimit(await updateSavedSearch(pool, userId, searchId, event));
     } else if (method === 'DELETE' && searchId) {
-      return await deleteSavedSearch(pool, userId, searchId);
+      return withRateLimit(await deleteSavedSearch(pool, userId, searchId));
     } else {
-      return createErrorResponse(404, 'NOT_FOUND', 'Route not found');
+      return withRateLimit(createErrorResponse(404, 'NOT_FOUND', 'Route not found'));
     }
   } catch (error: any) {
     console.error('Saved searches error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Operation failed');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Operation failed'),
+      rateLimit
+    );
   }
 }
 

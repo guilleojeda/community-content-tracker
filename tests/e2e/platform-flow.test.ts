@@ -16,8 +16,7 @@ import { handler as analyticsExportHandler } from '../../src/backend/lambdas/ana
 import { handler as analyticsUserHandler } from '../../src/backend/lambdas/analytics/user-analytics';
 import { handler as adminBadgesHandler } from '../../src/backend/lambdas/admin/badges';
 import { APIGatewayProxyEvent } from 'aws-lambda';
-import { CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
-import { mockClient } from 'aws-sdk-client-mock';
+import { ConfirmSignUpCommand, InitiateAuthCommand, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
 
 jest.mock('../../src/backend/services/database', () => {
   const actual = jest.requireActual('../../src/backend/services/database');
@@ -33,7 +32,22 @@ jest.mock('../../src/backend/lambdas/auth/tokenVerifier', () => ({
 
 const { getDatabasePool } = require('../../src/backend/services/database');
 const { verifyJwtToken } = require('../../src/backend/lambdas/auth/tokenVerifier');
-const cognitoMock = mockClient(CognitoIdentityProviderClient);
+jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
+  const actual = jest.requireActual('@aws-sdk/client-cognito-identity-provider');
+  const sendMock = jest.fn();
+  return {
+    ...actual,
+    CognitoIdentityProviderClient: jest.fn(() => ({ send: sendMock })),
+    __cognitoSendMock: sendMock,
+  };
+});
+
+const cognitoSendMock = (jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  __cognitoSendMock: jest.Mock;
+}).__cognitoSendMock;
+const { CognitoIdentityProviderClient } = jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  CognitoIdentityProviderClient: jest.Mock;
+};
 
 const originalFetch = global.fetch;
 
@@ -126,16 +140,25 @@ describe('Platform end-to-end flows', () => {
     (getDatabasePool as jest.Mock).mockImplementation(async () => testDb.pool);
     Object.keys(tokenMap).forEach((key) => delete tokenMap[key]);
     (global as any).fetch = jest.fn().mockResolvedValue({ status: 200 });
-    cognitoMock.reset();
-    cognitoMock.callsFake(async (command: any) => {
+    CognitoIdentityProviderClient.mockImplementation(() => ({ send: cognitoSendMock }));
+    cognitoSendMock.mockReset();
+    cognitoSendMock.mockImplementation(async (command: any) => {
       const candidateInput =
         command && typeof command === 'object' && 'input' in command ? command.input : command;
 
-      const username = candidateInput?.Username ?? candidateInput?.username;
-      const password = candidateInput?.Password ?? candidateInput?.password;
-
-      if (username && password) {
+      if (command instanceof SignUpCommand) {
         return { UserSub: `cognito-sub-${Date.now()}` };
+      }
+
+      if (command instanceof InitiateAuthCommand) {
+        return {
+          AuthenticationResult: {
+            AccessToken: 'access-token',
+            IdToken: 'id-token',
+            RefreshToken: 'refresh-token',
+            ExpiresIn: 3600,
+          },
+        };
       }
 
       if (candidateInput && 'AccessToken' in candidateInput) {
@@ -151,8 +174,12 @@ describe('Platform end-to-end flows', () => {
         return {};
       }
 
+      if (command instanceof ConfirmSignUpCommand) {
+        return {};
+      }
+
       const confirmation = candidateInput?.ConfirmationCode ?? candidateInput?.confirmationCode;
-      if (confirmation || (command && typeof command === 'object' && 'ConfirmationCode' in command)) {
+      if (confirmation) {
         return {};
       }
 
@@ -172,8 +199,8 @@ describe('Platform end-to-end flows', () => {
 
   afterEach(async () => {
     (global as any).fetch = originalFetch;
-    jest.resetAllMocks();
-    cognitoMock.reset();
+    jest.clearAllMocks();
+    cognitoSendMock.mockReset();
     await resetTestData();
   });
 

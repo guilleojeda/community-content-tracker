@@ -15,8 +15,7 @@ import {
   createSuccessResponse,
   mapCognitoError
 } from '../../../../src/backend/lambdas/auth/utils';
-import { CognitoIdentityProviderClient, ConfirmSignUpCommand, InitiateAuthCommand, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { mockClient } from 'aws-sdk-client-mock';
+import { ConfirmSignUpCommand, InitiateAuthCommand, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
 import {
   setupTestDatabase,
   teardownTestDatabase,
@@ -32,11 +31,27 @@ import { Context, APIGatewayProxyEvent } from 'aws-lambda';
 import { Pool } from 'pg';
 import { User } from '../../../../src/shared/types';
 
+jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
+  const actual = jest.requireActual('@aws-sdk/client-cognito-identity-provider');
+  const sendMock = jest.fn();
+  return {
+    ...actual,
+    CognitoIdentityProviderClient: jest.fn(() => ({ send: sendMock })),
+    __cognitoSendMock: sendMock,
+  };
+});
+
+const cognitoSendMock = (jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  __cognitoSendMock: jest.Mock;
+}).__cognitoSendMock;
+const { CognitoIdentityProviderClient } = jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  CognitoIdentityProviderClient: jest.Mock;
+};
+
 jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier', () => ({
   verifyJwtToken: jest.fn(),
 }));
 
-const cognitoMock = mockClient(CognitoIdentityProviderClient);
 const mockedVerifyJwtToken = verifyJwtToken as jest.MockedFunction<typeof verifyJwtToken>;
 
 const baseRequestContext = (path: string, method: string) => ({
@@ -146,7 +161,7 @@ describe('Auth Integration Tests', () => {
       expect(result.errors).toBeDefined();
       expect(result.errors!.email).toContain('Invalid email format');
       expect(result.errors!.password).toContain('at least 12 characters');
-      expect(result.errors!.username).toContain('letters, numbers, and underscores');
+      expect(result.errors!.username).toContain('letters, numbers, hyphens, and underscores');
     });
 
     test('should validate login input correctly', () => {
@@ -404,19 +419,53 @@ describe('Authentication End-to-End Flow', () => {
   });
 
   beforeEach(async () => {
-    cognitoMock.reset();
+    CognitoIdentityProviderClient.mockImplementation(() => ({ send: cognitoSendMock }));
+    cognitoSendMock.mockReset();
+    cognitoSendMock.mockResolvedValue({});
     mockedVerifyJwtToken.mockReset();
     await resetTestData();
     resetAuthEnvironmentCache();
   });
 
   it('registers, logs in, refreshes tokens, and verifies email', async () => {
-    cognitoMock.on(SignUpCommand).resolves({
-      UserSub: 'cognito-user-sub-001',
-      CodeDeliveryDetails: {
-        Destination: 'flow@example.com',
-        DeliveryMedium: 'EMAIL',
-      },
+    cognitoSendMock.mockImplementation((command: any) => {
+      const candidateInput =
+        command && typeof command === 'object' && 'input' in command ? command.input : command;
+
+      if (command instanceof SignUpCommand) {
+        return Promise.resolve({
+          UserSub: 'cognito-user-sub-001',
+          CodeDeliveryDetails: {
+            Destination: 'flow@example.com',
+            DeliveryMedium: 'EMAIL',
+          },
+        });
+      }
+      if (command instanceof InitiateAuthCommand || candidateInput?.AuthFlow) {
+        if (candidateInput?.AuthFlow === 'USER_PASSWORD_AUTH') {
+          return Promise.resolve({
+            AuthenticationResult: {
+              AccessToken: 'access-token-1',
+              IdToken: 'id-token-1',
+              RefreshToken: 'refresh-token-1',
+              ExpiresIn: 3600,
+            },
+          });
+        }
+        if (candidateInput?.AuthFlow === 'REFRESH_TOKEN_AUTH') {
+          return Promise.resolve({
+            AuthenticationResult: {
+              AccessToken: 'access-token-2',
+              IdToken: 'id-token-2',
+              ExpiresIn: 3600,
+            },
+          });
+        }
+      }
+      if (command instanceof ConfirmSignUpCommand || candidateInput?.ConfirmationCode) {
+        return Promise.resolve({});
+      }
+      return Promise.resolve({});
     });
 
     const registerEvent = createJsonEvent('/auth/register', 'POST', {
@@ -434,27 +483,6 @@ describe('Authentication End-to-End Flow', () => {
     ]);
     expect(userRows).toHaveLength(1);
     const dbUser = userRows[0];
-
-    cognitoMock.on(InitiateAuthCommand, {
-      AuthFlow: 'USER_PASSWORD_AUTH',
-    }).resolves({
-      AuthenticationResult: {
-        AccessToken: 'access-token-1',
-        IdToken: 'id-token-1',
-        RefreshToken: 'refresh-token-1',
-        ExpiresIn: 3600,
-      },
-    });
-
-    cognitoMock.on(InitiateAuthCommand, {
-      AuthFlow: 'REFRESH_TOKEN_AUTH',
-    }).resolves({
-      AuthenticationResult: {
-        AccessToken: 'access-token-2',
-        IdToken: 'id-token-2',
-        ExpiresIn: 3600,
-      },
-    });
 
     mockedVerifyJwtToken.mockResolvedValueOnce({
       isValid: true,
@@ -492,7 +520,6 @@ describe('Authentication End-to-End Flow', () => {
     const refreshBody = JSON.parse(refreshResult.body);
     expect(refreshBody.accessToken).toBe('access-token-2');
 
-    cognitoMock.on(ConfirmSignUpCommand).resolves({});
     const verifyEvent = createVerifyEvent('flow@example.com', '123456');
     const verifyContext = createContext('verify-email');
     const verifyResult = await verifyEmailHandler(verifyEvent, verifyContext);

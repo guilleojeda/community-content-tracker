@@ -13,10 +13,10 @@ Date: 2025-11-06
 ---
 
 ## Validation Commands
-- `npm test` → **FAIL** (`npm` surfaces a workspace error even though Jest prints “Ran all test suites”; see `backend-test.log:35340` & `backend-test.log:35377`).
-- `npm run playwright:test` → PASS (12 UI smoke checks across Chromium, Firefox, WebKit).
-- `npm run typecheck` → PASS for backend, frontend, infrastructure, shared packages.
-- `npm run audit` → PASS (0 high-severity advisories).
+- `npm test` -> **FAIL** (`npm` surfaces a workspace error even though Jest prints “Ran all test suites”; see `backend-test.log:35340` & `backend-test.log:35377`).
+- `npm run playwright:test` -> PASS (12 UI smoke checks across Chromium, Firefox, WebKit).
+- `npm run typecheck` -> PASS for backend, frontend, infrastructure, shared packages.
+- `npm run audit` -> PASS (0 high-severity advisories).
 - Coverage snapshots: backend statements 93.14 %, lines 93.11 %, functions 95.45 %, branches 80.80 % (`src/backend/coverage/coverage-summary.json:1`); frontend statements 95.68 %, lines 96.65 %, functions 92.92 %, branches 85.83 % (`src/frontend/coverage/coverage-summary.json:1`).
 
 ---

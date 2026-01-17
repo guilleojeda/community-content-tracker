@@ -16,6 +16,7 @@ npm run deploy:prod  # Deploy to production
 npm run generate:types    # Generate TypeScript types
 npm run check:security   # Security audit
 npm run analyze:bundle   # Bundle analysis
+```
 
 Key Endpoints:
 
@@ -28,9 +29,14 @@ GET /profile/{username}
 POST /admin/badges
 
 Database Access:
-bash# Dev database
-psql $DATABASE_URL
+```bash
+# Dev database
+psql "$DATABASE_URL"
 
-# Production (via bastion)
-ssh bastion
-psql -h aurora-cluster.region.rds.amazonaws.com -U admin -d content_hub
+# Production (via RDS Data API)
+aws rds-data execute-statement \
+  --resource-arn <cluster-arn> \
+  --secret-arn <secret-arn> \
+  --database community_content \
+  --sql "select 1;"
+```

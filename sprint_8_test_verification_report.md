@@ -76,7 +76,7 @@
 - Capacity triggers, bottleneck mitigations, and cost projections are documented in `docs/performance/capacity-planning.md:8`, while the Public API stack enables provisioned concurrency + auto scaling for search Lambdas (`tests/infrastructure/PublicApiStack.test.ts:8`).
 
 ### Task 8.9 – Beta Launch Preparation
-- Recruitment goals, timeline (T-21 → T+14), and program diversity targets are defined in `docs/launch/beta-recruitment-plan.md:7`, with a 15-person cohort roster spanning multiple regions/programs (`docs/launch/beta-cohort.csv:2`).
+- Recruitment goals, timeline (T-21 -> T+14), and program diversity targets are defined in `docs/launch/beta-recruitment-plan.md:7`, with a 15-person cohort roster spanning multiple regions/programs (`docs/launch/beta-cohort.csv:2`).
 - Beta feedback channels (Typeform, email, weekly sync), Dynamo storage, SNS, and Jira fan-out are documented and enforced server-side, with the Lambda gated by the `ENABLE_BETA_FEATURES` flag and tested for both success and 403 cases (`docs/launch/beta-feedback.md:3`; `src/backend/lambdas/feedback/ingest.ts:1`; `tests/backend/lambdas/feedback/ingest.test.ts:38`).
 - The beta environment remains isolated via distinct CDK config (backup retention, capacity, feature flags) and dedicated domains in the CORS allow list (`src/infrastructure/lib/config/environments.ts:128`; `docs/AWS_DEPLOYMENT_GUIDE.md:265`).
 - Communication channels (Slack, Discord, email, status page) plus the go-live checklist and success metrics (≥12 active users, ≥25 feedback submissions) close out the remaining acceptance points (`docs/launch/communication-channels.md:3`; `docs/launch/beta-recruitment-plan.md:34`; `docs/launch/go-live-checklist.md:3`).

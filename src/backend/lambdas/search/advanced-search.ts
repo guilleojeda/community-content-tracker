@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { Visibility } from '@aws-community-hub/shared';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * GET /search/advanced
@@ -18,18 +19,28 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'search:advanced' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     const params = event.queryStringParameters || {};
     const query = params.query || '';
     const format = params.format || 'json';
     const withinIds = params.withinIds?.split(',').map(id => id.trim()).filter(id => id) || [];
 
     if (!query) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Search query is required');
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'Search query is required'));
     }
 
     if (format !== 'json' && format !== 'csv') {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid format. Must be json or csv');
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid format. Must be json or csv'));
     }
 
     const pool = await getDatabasePool();
@@ -62,8 +73,8 @@ export async function handler(
 
     if (isInMemory) {
       const likeSearch = `%${query.toLowerCase().replace(/[%_]/g, '\\$&')}%`;
-      const fallbackValues: any[] = [likeSearch];
-      let fallbackIndex = 2;
+      const fallbackValues: any[] = [likeSearch, visibilityFilter, userId];
+      let fallbackIndex = 4;
 
       let fallbackQuery = `
         SELECT
@@ -108,6 +119,10 @@ export async function handler(
           AND (
             LOWER(c.title) LIKE $1
             OR LOWER(COALESCE(c.description, '')) LIKE $1
+          )
+          AND (
+            c.visibility = ANY($2)
+            OR ($3::uuid IS NOT NULL AND c.user_id = $3::uuid)
           )
       `;
 
@@ -199,18 +214,18 @@ export async function handler(
     // Return CSV format if requested
     if (format === 'csv') {
       const csvContent = generateSearchCSV(filteredRows);
-      return {
+      return withRateLimit({
         statusCode: 200,
         headers: {
           'Content-Type': 'text/csv',
           'Content-Disposition': `attachment; filename="search_results.csv"`,
         },
         body: csvContent,
-      };
+      });
     }
 
     // Default JSON response
-    return createSuccessResponse(200, {
+    return withRateLimit(createSuccessResponse(200, {
       success: true,
       data: {
         results: filteredRows.map((row: any) => ({
@@ -242,10 +257,13 @@ export async function handler(
         count: result.rows.length,
         query: query,
       },
-    });
+    }));
   } catch (error: any) {
     console.error('Advanced search error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Search failed');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Search failed'),
+      rateLimit
+    );
   }
 }
 
@@ -258,7 +276,7 @@ export async function handler(
  * - Exact phrases (<->)
  * - Wildcards (:*)
  */
-function convertToTsQuery(query: string): string {
+export function convertToTsQuery(query: string): string {
   let tsQuery = query;
 
   // Handle quoted phrases (exact match)

@@ -670,7 +670,17 @@ export class ApiClient {
     }
   ): Promise<{ content: Content[]; total: number }> {
     const queryString = this.buildQueryString(params);
-    return this.request<{ content: Content[]; total: number }>(`/content/unclaimed${queryString}`);
+    const response = await this.request<{
+      content?: Content[];
+      items?: Content[];
+      results?: Content[];
+      total?: number;
+    }>(`/content/unclaimed${queryString}`);
+    const content = response.content ?? response.items ?? response.results ?? [];
+    return {
+      content,
+      total: response.total ?? content.length,
+    };
   }
 
   /**
@@ -723,7 +733,17 @@ export class ApiClient {
       tags: params.tags?.join(',')
     } : undefined;
     const queryString = this.buildQueryString(queryParams);
-    return this.request<{ content: Content[]; total: number }>(`/content${queryString}`);
+    const response = await this.request<{
+      content?: Content[];
+      items?: Content[];
+      results?: Content[];
+      total?: number;
+    }>(`/content${queryString}`);
+    const content = response.content ?? response.items ?? response.results ?? [];
+    return {
+      content,
+      total: response.total ?? content.length,
+    };
   }
 
   /**
@@ -910,14 +930,28 @@ export class ApiClient {
   }
 
   async getUserBadges(): Promise<Badge[]> {
-    return this.request<Badge[]>('/users/me/badges');
+    const response = await this.request<{ badges?: Badge[]; data?: Badge[] } | Badge[]>('/users/me/badges');
+    if (Array.isArray(response)) {
+      return response;
+    }
+    if (response.badges && Array.isArray(response.badges)) {
+      return response.badges;
+    }
+    if (response.data && Array.isArray(response.data)) {
+      return response.data;
+    }
+    return [];
   }
 
   async updateUserProfile(userId: string, data: UpdateUserRequest): Promise<User> {
-    return this.request<User>(`/api/users/${userId}`, {
+    const result = await this.request<{ user?: User } | User>(`/users/${userId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
+    if (result && typeof result === 'object' && 'user' in result && result.user) {
+      return result.user;
+    }
+    return result as User;
   }
 
   async getUserByUsername(username: string): Promise<User> {
@@ -926,8 +960,17 @@ export class ApiClient {
   }
 
   async getUserBadgesByUserId(userId: string): Promise<Badge[]> {
-    const response = await this.request<{ badges: Badge[] }>(`/users/${userId}/badges`);
-    return response.badges;
+    const response = await this.request<{ badges?: Badge[]; data?: Badge[] } | Badge[]>(`/users/${userId}/badges`);
+    if (Array.isArray(response)) {
+      return response;
+    }
+    if (response.badges && Array.isArray(response.badges)) {
+      return response.badges;
+    }
+    if (response.data && Array.isArray(response.data)) {
+      return response.data;
+    }
+    return [];
   }
 
   async getUserContent(
@@ -952,14 +995,14 @@ export class ApiClient {
   }
 
   async changePassword(userId: string, data: ChangePasswordRequest): Promise<ChangePasswordResponse> {
-    return this.request<ChangePasswordResponse>(`/api/users/${userId}/password`, {
+    return this.request<ChangePasswordResponse>(`/users/${userId}/password`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async setupMfa(userId: string): Promise<MfaSetupResponse> {
-    return this.request<MfaSetupResponse>(`/api/users/${userId}/mfa/setup`, {
+    return this.request<MfaSetupResponse>(`/users/${userId}/mfa/setup`, {
       method: 'POST',
     });
   }
@@ -1038,14 +1081,14 @@ export class ApiClient {
     reason?: string;
     metadata?: Record<string, any>;
   }): Promise<any> {
-    return this.request('/admin/badges/grant', {
+    return this.request('/admin/badges', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   }
 
   async revokeBadge(payload: { userId: string; badgeType: BadgeType; reason?: string }): Promise<any> {
-    return this.request('/admin/badges/revoke', {
+    return this.request('/admin/badges', {
       method: 'DELETE',
       body: JSON.stringify(payload),
     });
@@ -1267,20 +1310,20 @@ export class ApiClient {
    * --- User account management ---
    */
   async updatePreferences(userId: string, data: UpdatePreferencesRequest): Promise<UpdatePreferencesResponse> {
-    return this.request<UpdatePreferencesResponse>(`/api/users/${userId}/preferences`, {
+    return this.request<UpdatePreferencesResponse>(`/users/${userId}/preferences`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async exportUserData(userId: string = 'me'): Promise<UserDataExport> {
-    return this.request<UserDataExport>(`/api/users/${userId}/export`, {
+    return this.request<UserDataExport>(`/users/${userId}/export`, {
       method: 'GET',
     });
   }
 
   async deleteAccount(userId: string = 'me'): Promise<DeleteAccountResponse> {
-    return this.request<DeleteAccountResponse>(`/api/users/${userId}`, {
+    return this.request<DeleteAccountResponse>(`/users/${userId}`, {
       method: 'DELETE',
     });
   }

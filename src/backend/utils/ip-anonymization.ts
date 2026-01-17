@@ -11,7 +11,7 @@
 /**
  * Anonymize an IP address for GDPR compliance
  *
- * IPv4: Zeros out the last octet (e.g., 192.168.1.100 → 192.168.1.0)
+ * IPv4: Zeros out the last octet (e.g., 192.168.1.100 -> 192.168.1.0)
  * IPv6: Zeros out the last 80 bits, keeping first 48 bits (network prefix)
  *
  * This reduces precision while maintaining useful geographic/network information
@@ -47,7 +47,7 @@ export function anonymizeIp(ipAddress: string | null | undefined): string | null
 
 /**
  * Anonymize IPv4 address by zeroing the last octet
- * Example: 192.168.1.100 → 192.168.1.0
+ * Example: 192.168.1.100 -> 192.168.1.0
  */
 function anonymizeIpv4(ip: string): string | null {
   const parts = ip.split('.');
@@ -72,7 +72,7 @@ function anonymizeIpv4(ip: string): string | null {
 
 /**
  * Anonymize IPv6 address by keeping only the first 48 bits (3 groups of 16 bits)
- * Example: 2001:0db8:85a3:0000:0000:8a2e:0370:7334 → 2001:0db8:85a3::
+ * Example: 2001:0db8:85a3:0000:0000:8a2e:0370:7334 -> 2001:0db8:85a3::
  *
  * This keeps the network routing prefix while removing the interface identifier
  * which could be used to identify individual users.
@@ -102,7 +102,7 @@ function anonymizeIpv6(ip: string): string | null {
 
 /**
  * Expand abbreviated IPv6 address to full form
- * Example: 2001:db8::1 → 2001:0db8:0000:0000:0000:0000:0000:0001
+ * Example: 2001:db8::1 -> 2001:0db8:0000:0000:0000:0000:0000:0001
  */
 function expandIpv6(ip: string): string | null {
   // Handle IPv4-mapped IPv6 addresses (::ffff:192.168.1.1)

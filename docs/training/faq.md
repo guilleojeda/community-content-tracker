@@ -2,17 +2,17 @@
 
 ## Accounts
 **Q:** Can I change my email address?
-**A:** Yes. Update the email in **Settings → Profile**; Cognito sends a verification code to confirm the change.
+**A:** Yes. Update the email in **Settings -> Profile**; Cognito sends a verification code to confirm the change.
 
 **Q:** How do I enable MFA?
-**A:** Visit **Settings → Security**, click **Enable MFA**, scan the QR code, and enter a TOTP from your authenticator app.
+**A:** Visit **Settings -> Security**, click **Enable MFA**, scan the QR code, and enter a TOTP from your authenticator app.
 
 ## Content ingestion
 **Q:** Which content types are supported?
 **A:** Blogs, YouTube, GitHub, conference talks, podcasts, whitepapers, workshops, tutorials, books, and custom social posts.
 
 **Q:** Can I bulk import content?
-**A:** Yes. Use **Dashboard → Content → Bulk Import** and provide a CSV containing title, URL, publish date, and tags.
+**A:** Yes. Use **Dashboard -> Content -> Bulk Import** and provide a CSV containing title, URL, publish date, and tags.
 
 ## Search
 **Q:** How is semantic search implemented?
@@ -30,7 +30,7 @@
 
 ## Administration
 **Q:** How do I reinstate content removed by moderation?
-**A:** Use **Admin → Moderation history** to locate the action and click **Undo Remove** (available for 30 days).
+**A:** Use **Admin -> Moderation history** to locate the action and click **Undo Remove** (available for 30 days).
 
 **Q:** Can I integrate with external analytics?
 **A:** Yes. Use the Analytics CSV export or connect CloudWatch metrics to QuickSight.

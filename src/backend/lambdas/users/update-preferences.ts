@@ -5,26 +5,10 @@ import {
   parseRequestBody,
   createErrorResponse,
   createSuccessResponse,
-  extractTokenFromHeader,
 } from '../auth/utils';
-import { verifyJwtToken, TokenVerifierConfig } from '../auth/tokenVerifier';
 import { getDatabasePool } from '../../services/database';
-import { getAuthEnvironment } from '../auth/config';
-
-/**
- * Get token verifier configuration
- */
-function getTokenVerifierConfig(): TokenVerifierConfig {
-  const authEnv = getAuthEnvironment();
-  const allowedAudiences = authEnv.allowedAudiences.length > 0 ? authEnv.allowedAudiences : [authEnv.clientId];
-
-  return {
-    cognitoUserPoolId: authEnv.userPoolId,
-    cognitoRegion: authEnv.region,
-    allowedAudiences,
-    issuer: `https://cognito-idp.${authEnv.region}.amazonaws.com/${authEnv.userPoolId}`,
-  };
-}
+import { resolveAuthorizerContext } from '../../services/authorizerContext';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Validate preferences update input
@@ -67,49 +51,48 @@ function validatePreferencesInput(input: UpdatePreferencesRequest): { isValid: b
  */
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('Update preferences request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'users:update-preferences' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
+    const authContext = resolveAuthorizerContext(event.requestContext?.authorizer as any);
+    if (!authContext.userId) {
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
+    }
+
     // Extract user ID from path parameters
-    const userId = event.pathParameters?.id;
-    if (!userId) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required');
+    const rawUserId = event.pathParameters?.id;
+    if (!rawUserId) {
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required'));
     }
-
-    // Extract and verify access token
-    const accessToken = extractTokenFromHeader(event.headers.Authorization);
-    if (!accessToken) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required');
-    }
-
-    // Verify token and get user
-    const dbPool = await getDatabasePool();
-    const userRepository = new UserRepository(dbPool);
-    const tokenConfig = getTokenVerifierConfig();
-
-    const verificationResult = await verifyJwtToken(accessToken, tokenConfig, userRepository);
-
-    if (!verificationResult.isValid || !verificationResult.user) {
-      console.error('Token verification failed:', verificationResult.error);
-      return createErrorResponse(401, 'AUTH_INVALID', 'Invalid authentication token');
-    }
-
-    const authenticatedUser = verificationResult.user;
+    const targetUserId = rawUserId === 'me' ? authContext.userId : rawUserId;
 
     // Check if authenticated user is updating their own preferences
-    if (authenticatedUser.id !== userId) {
-      return createErrorResponse(403, 'PERMISSION_DENIED', 'You can only update your own preferences');
+    if (authContext.userId !== targetUserId) {
+      return withRateLimit(
+        createErrorResponse(403, 'PERMISSION_DENIED', 'You can only update your own preferences')
+      );
     }
 
     // Parse request body
     const { data: requestBody, error: parseError } = parseRequestBody<UpdatePreferencesRequest>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     // Validate input
     const validation = validatePreferencesInput(requestBody!);
     if (!validation.isValid) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Validation failed', { fields: validation.errors });
+      return withRateLimit(
+        createErrorResponse(400, 'VALIDATION_ERROR', 'Validation failed', { fields: validation.errors })
+      );
     }
 
     // Update preferences in database
@@ -125,22 +108,27 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
       RETURNING *
     `;
 
+    const dbPool = await getDatabasePool();
+    const userRepository = new UserRepository(dbPool);
     await (userRepository as any).executeQuery(query, [
-      userId,
+      targetUserId,
       requestBody!.receiveNewsletter,
       requestBody!.receiveContentNotifications,
       requestBody!.receiveCommunityUpdates,
     ]);
 
-    console.log('Preferences updated successfully for user:', userId);
+    console.log('Preferences updated successfully for user:', targetUserId);
 
     const response: UpdatePreferencesResponse = {
       message: 'Preferences updated successfully',
     };
 
-    return createSuccessResponse(200, response);
+    return withRateLimit(createSuccessResponse(200, response));
   } catch (error: any) {
     console.error('Unexpected preferences update error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while updating preferences');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while updating preferences'),
+      rateLimit
+    );
   }
 }

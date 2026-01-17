@@ -6,13 +6,16 @@ import {
   createSuccessResponse,
   mapCognitoError,
 } from './utils';
+import { getAuthEnvironment } from './config';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Get Cognito client instance
  */
 function getCognitoClient(): CognitoIdentityProviderClient {
+  const authEnv = getAuthEnvironment();
   return new CognitoIdentityProviderClient({
-    region: process.env.COGNITO_REGION || 'us-east-1',
+    region: authEnv.region,
   });
 }
 
@@ -47,12 +50,21 @@ export async function handler(
   context: Context
 ): Promise<APIGatewayProxyResult> {
   console.log('Forgot password request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'auth:forgot-password', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Parse request body
     const { data: requestBody, error: parseError } = parseRequestBody<{ email: string }>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     const { email } = requestBody!;
@@ -60,20 +72,27 @@ export async function handler(
     // Validate input
     const validation = validateForgotPasswordInput(email);
     if (!validation.isValid) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Validation failed',
         { fields: validation.errors }
-      );
+      ));
+    }
+
+    if (process.env.LOCAL_AUTH_MODE === 'true') {
+      return withRateLimit(createSuccessResponse(200, {
+        message: 'If an account with that email exists, a password reset code has been sent',
+      }));
     }
 
     // Initiate forgot password flow with Cognito
     const cognitoClient = getCognitoClient();
 
     try {
+      const authEnv = getAuthEnvironment();
       const forgotPasswordCommand = new ForgotPasswordCommand({
-        ClientId: process.env.COGNITO_CLIENT_ID!,
+        ClientId: authEnv.clientId,
         Username: email,
       });
 
@@ -92,21 +111,21 @@ export async function handler(
       // For security, don't reveal if user exists or not
       // Return success even if user doesn't exist
       if (cognitoError.name === 'UserNotFoundException' || cognitoError.name === 'InvalidParameterException') {
-        return createSuccessResponse(200, {
+        return withRateLimit(createSuccessResponse(200, {
           message: 'If an account with that email exists, a password reset code has been sent',
-        });
+        }));
       }
 
       // Map other Cognito errors
-      return mapCognitoError(cognitoError);
+      return withRateLimit(mapCognitoError(cognitoError));
     }
 
   } catch (error: any) {
     console.error('Unexpected forgot password error:', error);
-    return createErrorResponse(
+    return attachRateLimitHeaders(createErrorResponse(
       500,
       'INTERNAL_ERROR',
       'An unexpected error occurred while processing password reset request'
-    );
+    ), rateLimit);
   }
 }

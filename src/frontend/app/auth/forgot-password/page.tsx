@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getPublicApiClient } from '@/api/client';
+import { loadPublicApiClient } from '@/lib/api/lazyClient';
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
@@ -17,7 +17,7 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     try {
-      const client = getPublicApiClient();
+      const client = await loadPublicApiClient();
       await client.forgotPassword({ email });
 
       setSuccess(true);

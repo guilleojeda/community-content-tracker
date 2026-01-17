@@ -1,10 +1,10 @@
 import { Pool, PoolClient } from 'pg';
 
 export interface AuditLogEntry {
-  userId?: string;
+  userId?: string | null;
   action: string;
   resourceType: string;
-  resourceId?: string;
+  resourceId?: string | null;
   oldValues?: Record<string, any>;
   newValues?: Record<string, any>;
   ipAddress?: string;

@@ -17,7 +17,8 @@ This document captures the security measures introduced in Sprint 8 along with g
 
 ## Security Headers
 
-- Frontend security headers (CSP, HSTS, X-Frame-Options, etc.) remain managed via `src/frontend/next.config.js`. Bundle size guards are validated by `tests/frontend/config/bundle-size.test.ts`.
+- Security headers are enforced at the CDN edge via the CloudFront `ResponseHeadersPolicy` in `src/infrastructure/lib/stacks/static-site-stack.ts` (CSP, HSTS, X-Frame-Options, Referrer-Policy, etc.).
+- `src/frontend/next.config.js` only configures bundling and asset limits; it is not the source of truth for security headers.
 
 ## SQL Injection / XSS Verification
 

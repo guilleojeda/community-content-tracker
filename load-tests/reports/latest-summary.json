@@ -1,13 +1,13 @@
 {
-  "durationSeconds": 121.338,
+  "durationSeconds": 121.31,
   "scenariosCompleted": 40500,
   "requestsCompleted": 40500,
   "responsesCompleted": 40500,
   "failedUsers": 0,
   "latencyP95": 1,
-  "throughputRps": 159,
+  "throughputRps": 317,
   "targetConcurrentUsers": 1000,
   "peakArrivalRate": 1000,
-  "bulkItemCount": 50000,
+  "bulkItemCount": null,
   "errors": {}
 }

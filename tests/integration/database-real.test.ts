@@ -21,9 +21,21 @@ import { Pool } from 'pg';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { spawnSync } from 'child_process';
 import { testDb, TestDatabaseSetup } from '../backend/repositories/test-setup';
 
-const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
+const isDockerAvailable = (): boolean => {
+  const result = spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 2000 });
+  if (result.error) {
+    return false;
+  }
+  return result.status === 0;
+};
+
+const shouldSkipRealDbTests =
+  process.env.SKIP_REAL_DB_TESTS === 'true' ||
+  process.env.TEST_DB_INMEMORY === 'true' ||
+  (!process.env.LOCAL_PG_URL && !isDockerAvailable());
 
 (shouldSkipRealDbTests ? describe.skip : describe)('Real Database Integration Tests', () => {
   let pool: Pool;
@@ -67,27 +79,27 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
           [migrationName]
         );
         if (existing.rowCount > 0) {
-          console.log(`→ Migration ${file} already applied (pgmigrations)`);
+          console.log(`Migration ${file} already applied (pgmigrations)`);
           continue;
         }
       } catch (lookupError) {
         const warning = lookupError instanceof Error ? lookupError.message : String(lookupError);
         // If pgmigrations table is missing, continue and let the migration run (initial setup case)
-        console.warn(`⚠️ Could not verify migration ${file} in pgmigrations: ${warning}`);
+        console.warn(`Could not verify migration ${file} in pgmigrations: ${warning}`);
       }
 
       try {
         const sql = await fs.readFile(migrationPath, 'utf-8');
         await pool.query(sql);
-        console.log(`✓ Migration ${file} executed successfully`);
+        console.log(`Migration ${file} executed successfully`);
       } catch (error) {
         // Check if error is because tables already exist (migrations already ran)
         if (error instanceof Error && error.message.includes('already exists')) {
-          console.log(`→ Migration ${file} already applied`);
+          console.log(`Migration ${file} already applied`);
           continue;
         }
         const details = error instanceof Error ? error.message : String(error);
-        console.error(`✗ Migration ${file} failed: ${details}`);
+        console.error(`Migration ${file} failed: ${details}`);
         if (process.env.DEBUG_REAL_DB_TESTS === '1' && error instanceof Error && error.stack) {
           console.error(error.stack);
         }
@@ -288,8 +300,8 @@ const shouldSkipRealDbTests = process.env.SKIP_REAL_DB_TESTS === 'true';
       const { rows: badgeRows } = await pool.query(`SELECT COUNT(*)::int AS count FROM user_badges`);
       expect(badgeRows[0].count).toBeGreaterThan(0);
 
-      const databaseModule = await import('../../src/backend/src/database/config/database');
-      await databaseModule.db.end?.();
+      const { closeDatabasePool } = await import('../../src/backend/src/database/config/database');
+      await closeDatabasePool();
     });
   });
 

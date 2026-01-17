@@ -2,7 +2,6 @@ const path = require('path');
 
 /** @type {import('jest').Config} */
 module.exports = {
-  passWithNoTests: false,
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
   displayName: 'Frontend Tests',
@@ -31,6 +30,7 @@ module.exports = {
     path.resolve(__dirname, 'jest.setup.js'),
     path.resolve(__dirname, '../../tests/setup/consoleMock.js'),
   ],
+  globalTeardown: path.resolve(__dirname, '../../tests/setup/globalTeardown.js'),
   collectCoverageFrom: [
     'app/**/*.{ts,tsx}',
     'src/**/*.{ts,tsx}',
@@ -47,19 +47,11 @@ module.exports = {
     '!**/coverage/**'
   ],
   coverageDirectory: 'coverage',
-  coverageReporters: [
-    'text',
-    'lcov',
-    'html',
-    'json-summary'
-  ],
   coverageThreshold: {
     global: {
       lines: 90,
       statements: 90
     }
   },
-  testTimeout: 10000,
-  maxWorkers: '50%',
-  forceExit: true
+  maxWorkers: '50%'
 };

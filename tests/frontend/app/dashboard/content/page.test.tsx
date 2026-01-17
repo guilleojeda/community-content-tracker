@@ -209,6 +209,35 @@ describe('Content Management Page', () => {
       });
     });
 
+    it('should validate URL formats', async () => {
+      render(<ContentManagementPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Blog Post')).toBeInTheDocument();
+      });
+
+      const addButton = screen.getByRole('button', { name: /add content/i });
+      await userEvent.click(addButton);
+
+      const dialog = await screen.findByRole('dialog');
+      await userEvent.type(within(dialog).getByLabelText(/title/i), 'Bad URL Content');
+      await userEvent.selectOptions(within(dialog).getByLabelText(/content type/i), ContentType.BLOG);
+      await userEvent.type(within(dialog).getByLabelText(/url/i), 'ftp://example.com');
+
+      const addUrlButton = within(dialog).getByRole('button', { name: /add another url/i });
+      await userEvent.click(addUrlButton);
+      const urlInputs = within(dialog).getAllByLabelText(/url/i);
+      await userEvent.type(urlInputs[1], 'not-a-url');
+
+      const submitButton = within(dialog).getByRole('button', { name: /create/i });
+      await userEvent.click(submitButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/all urls must be valid/i)).toBeInTheDocument();
+      });
+      expect(apiClient.createContent).not.toHaveBeenCalled();
+    });
+
     it('should create content successfully', async () => {
       (apiClient.createContent as jest.Mock).mockResolvedValue({
         id: '3',
@@ -488,6 +517,27 @@ describe('Content Management Page', () => {
         );
       });
     });
+
+    it('should close edit modal on cancel', async () => {
+      render(<ContentManagementPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Blog Post')).toBeInTheDocument();
+      });
+
+      const editButton = screen.getAllByRole('button', { name: /edit/i })[0];
+      await userEvent.click(editButton);
+
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toBeInTheDocument();
+
+      const cancelButton = within(dialog).getByRole('button', { name: /cancel/i });
+      await userEvent.click(cancelButton);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
   });
 
   describe('Delete Confirmation', () => {
@@ -619,6 +669,25 @@ describe('Content Management Page', () => {
       expect(within(dialog).getByText('Test Blog Post')).toBeInTheDocument();
       expect(within(dialog).getByText('A test blog post')).toBeInTheDocument();
       expect(within(dialog).getByText('https://example.com/blog')).toBeInTheDocument();
+    });
+
+    it('should close preview when clicking close', async () => {
+      render(<ContentManagementPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Blog Post')).toBeInTheDocument();
+      });
+
+      const previewButton = screen.getAllByRole('button', { name: /preview/i })[0];
+      await userEvent.click(previewButton);
+
+      const dialog = screen.getByRole('dialog');
+      const closeButton = within(dialog).getByRole('button', { name: /close/i });
+      await userEvent.click(closeButton);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
     });
 
     it('should display all content metadata in preview', async () => {
@@ -754,6 +823,51 @@ describe('Content Management Page', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/failed to create content/i)).toBeInTheDocument();
+      });
+    });
+
+    it('should display error when updating content fails', async () => {
+      (apiClient.updateContent as jest.Mock).mockRejectedValue(new Error('Failed to update'));
+
+      render(<ContentManagementPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Blog Post')).toBeInTheDocument();
+      });
+
+      const editButton = screen.getAllByRole('button', { name: /edit/i })[0];
+      await userEvent.click(editButton);
+
+      const dialog = screen.getByRole('dialog');
+      const titleInput = within(dialog).getByDisplayValue('Test Blog Post');
+      await userEvent.clear(titleInput);
+      await userEvent.type(titleInput, 'Updated Title');
+
+      const saveButton = within(dialog).getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/failed to update content/i)).toBeInTheDocument();
+      });
+    });
+
+    it('should display error when deleting content fails', async () => {
+      (apiClient.deleteContent as jest.Mock).mockRejectedValue(new Error('Failed to delete'));
+
+      render(<ContentManagementPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Blog Post')).toBeInTheDocument();
+      });
+
+      const deleteButton = screen.getAllByRole('button', { name: /delete/i })[0];
+      await userEvent.click(deleteButton);
+
+      const confirmButton = screen.getByRole('button', { name: /confirm/i });
+      await userEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/failed to delete content/i)).toBeInTheDocument();
       });
     });
   });

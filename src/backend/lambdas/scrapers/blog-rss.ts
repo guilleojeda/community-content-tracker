@@ -7,7 +7,27 @@ import { ChannelType, ContentType, ContentProcessorMessage } from '../../../shar
 import { ParsingError, ExternalApiError, formatErrorForLogging } from '../../../shared/errors';
 import { createSendMessageCommand } from '../../utils/sqs';
 
-const sqsClient = new SQSClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const initialRegion = (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '').trim();
+let cachedRegion: string | null = initialRegion.length > 0 ? initialRegion : null;
+let sqsClient: SQSClient | null = cachedRegion ? new SQSClient({ region: cachedRegion }) : null;
+
+function resolveAwsRegion(): string {
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+  if (!region || region.trim().length === 0) {
+    throw new Error('AWS_REGION must be set');
+  }
+  return region.trim();
+}
+
+function getSqsClient(): SQSClient {
+  const region = resolveAwsRegion();
+  if (!sqsClient || cachedRegion !== region) {
+    sqsClient = new SQSClient({ region });
+    cachedRegion = region;
+  }
+  return sqsClient;
+}
+
 const parser = new Parser();
 
 let cachedQueueUrl: string | null = null;
@@ -100,7 +120,7 @@ async function sendToQueue(channelId: string, userId: string, post: RSSItem): Pr
       },
     };
     const command = createSendMessageCommand(commandInput);
-    await sqsClient.send(command);
+    await getSqsClient().send(command);
   } catch (error: any) {
     const sqsError = new ExternalApiError('SQS', 'Failed to send message to queue', 500, {
       channelId,

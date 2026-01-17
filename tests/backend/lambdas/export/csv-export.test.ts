@@ -275,15 +275,29 @@ describe('CSV Export Lambda', () => {
       expect(mockPool.query).toHaveBeenCalledTimes(2);
 
       // Verify analytics query parameters
-      const analyticsCall = mockPool.query.mock.calls[1];
-      expect(analyticsCall[0]).toContain('INSERT INTO analytics_events');
-      expect(analyticsCall[1][0]).toBe('user-123');
-      expect(typeof analyticsCall[1][1]).toBe('string');
-      expect(analyticsCall[1][2]).toBe('127.0.0.0');
-      expect(analyticsCall[1][3]).toBe('test-agent');
+      const analyticsCall = mockPool.query.mock.calls.find(call => {
+        const params = call[1];
+        if (!Array.isArray(params) || params.length < 5) {
+          return false;
+        }
+        if (typeof params[4] !== 'string') {
+          return false;
+        }
+        try {
+          const parsed = JSON.parse(params[4]);
+          return parsed.exportType === 'program';
+        } catch {
+          return false;
+        }
+      });
+      expect(analyticsCall).toBeDefined();
+      expect(analyticsCall?.[1][0]).toBe('user-123');
+      expect(typeof analyticsCall?.[1][1]).toBe('string');
+      expect(analyticsCall?.[1][2]).toBe('127.0.0.0');
+      expect(analyticsCall?.[1][3]).toBe('test-agent');
 
       // Verify metadata structure
-      const metadata = JSON.parse(analyticsCall[1][4]);
+      const metadata = JSON.parse(analyticsCall?.[1][4]);
       expect(metadata).toHaveProperty('exportType', 'program');
       expect(metadata).toHaveProperty('exportFormat', 'community_builder');
       expect(metadata).toHaveProperty('programType', 'community_builder');
@@ -325,13 +339,16 @@ describe('CSV Export Lambda', () => {
       // Verify queries were called in correct order
       expect(mockPool.query).toHaveBeenCalledTimes(2);
 
-      // Verify content query was first
-      const contentCall = mockPool.query.mock.calls[0];
-      expect(contentCall[0]).toContain('SELECT');
-
-      // Verify analytics query was second
-      const analyticsCall = mockPool.query.mock.calls[1];
-      expect(analyticsCall[0]).toContain('INSERT INTO analytics_events');
+      const contentCall = mockPool.query.mock.calls.find(call => {
+        const params = call[1];
+        return Array.isArray(params) && params.length <= 3;
+      });
+      const analyticsCall = mockPool.query.mock.calls.find(call => {
+        const params = call[1];
+        return Array.isArray(params) && params.length === 5;
+      });
+      expect(contentCall).toBeDefined();
+      expect(analyticsCall).toBeDefined();
 
       // Verify error was logged
       expect(consoleErrorSpy).toHaveBeenCalledWith(

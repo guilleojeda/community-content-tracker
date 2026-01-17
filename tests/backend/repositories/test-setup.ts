@@ -21,6 +21,20 @@ const testDbWarn = (...args: Parameters<typeof console.warn>) => {
     console.warn(...args);
   }
 };
+const withTimeout = async <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+  let timeoutId: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
 const TEST_DB_USER = process.env.TEST_DB_USER ?? 'test_user';
 const TEST_DB_PASSWORD = process.env.TEST_DB_PASSWORD ?? 'test_password';
 
@@ -36,6 +50,7 @@ export class TestDatabase {
   private pool: Pool | null = null;
   private pgMemDb: IMemoryDb | null = null;
   private localConnectionString: string | null = null;
+  private initPromise: Promise<void> | null = null;
   private usageCount = 0;
 
   private constructor() {}
@@ -51,158 +66,69 @@ export class TestDatabase {
     this.usageCount += 1;
 
     if (!this.container || !this.pool) {
-      const localConnection = process.env.LOCAL_PG_URL;
+      if (!this.initPromise) {
+        this.initPromise = (async () => {
+          const localConnection = process.env.LOCAL_PG_URL;
+          const forceInMemory = process.env.TEST_DB_INMEMORY === 'true';
 
-      if (localConnection) {
-        testDbLog('Using local PostgreSQL instance for tests.');
-        this.container = null;
-        this.pgMemDb = null;
-        this.pool = new Pool({ connectionString: localConnection });
-        process.env.TEST_DB_INMEMORY = 'false';
-        this.localConnectionString = localConnection;
-      } else {
-        testDbLog('Starting PostgreSQL test container...');
+          if (localConnection) {
+            testDbLog('Using local PostgreSQL instance for tests.');
+            this.container = null;
+            this.pgMemDb = null;
+            this.pool = new Pool({ connectionString: localConnection });
+            process.env.TEST_DB_INMEMORY = 'false';
+            this.localConnectionString = localConnection;
+          } else if (forceInMemory || !this.isDockerAvailable()) {
+            if (forceInMemory) {
+              testDbLog('Forcing in-memory PostgreSQL for tests.');
+            } else {
+              testDbWarn('Docker not available, using in-memory PostgreSQL for tests.');
+            }
+            this.setupInMemoryDatabase();
+          } else {
+            testDbLog('Starting PostgreSQL test container...');
 
-        try {
-          this.container = await new PostgreSqlContainer('pgvector/pgvector:pg15')
-            .withDatabase('test_db')
-            .withUsername(TEST_DB_USER)
-            .withPassword(TEST_DB_PASSWORD)
-            .withExposedPorts({ container: 5432, host: 0 })
-            .start();
+            try {
+              this.container = await new PostgreSqlContainer('pgvector/pgvector:pg15')
+                .withDatabase('test_db')
+                .withUsername(TEST_DB_USER)
+                .withPassword(TEST_DB_PASSWORD)
+                .withExposedPorts({ container: 5432, host: 0 })
+                .start();
 
-          try {
-            await this.container.exec([
-              'psql',
-              '-U',
-              'postgres',
-              '-c',
-              `ALTER ROLE ${TEST_DB_USER} WITH SUPERUSER;`,
-            ]);
-          } catch (grantError) {
-            testDbWarn('Unable to grant superuser to test role automatically:', grantError);
+              try {
+                await this.container.exec([
+                  'psql',
+                  '-U',
+                  'postgres',
+                  '-c',
+                  `ALTER ROLE ${TEST_DB_USER} WITH SUPERUSER;`,
+                ]);
+              } catch (grantError) {
+                testDbWarn('Unable to grant superuser to test role automatically:', grantError);
+              }
+
+              const connectionString = this.container.getConnectionUri();
+              this.pool = new Pool({ connectionString });
+              process.env.TEST_DB_INMEMORY = 'false';
+              this.localConnectionString = null;
+            } catch (error) {
+              testDbWarn('Testcontainers unavailable, falling back to in-memory PostgreSQL for tests.');
+              this.setupInMemoryDatabase();
+            }
           }
 
-          const connectionString = this.container.getConnectionUri();
-          this.pool = new Pool({ connectionString });
-          process.env.TEST_DB_INMEMORY = 'false';
-          this.localConnectionString = null;
-        } catch (error) {
-          testDbWarn('Testcontainers unavailable, falling back to in-memory PostgreSQL for tests.');
+          if (!this.pool) {
+            throw new Error('Failed to initialize test database pool');
+          }
 
-          this.container = null;
-          this.pgMemDb = newDb({ autoCreateForeignKeyIndices: true });
-          process.env.TEST_DB_INMEMORY = 'true';
-          this.localConnectionString = null;
-
-          this.pgMemDb.public.registerFunction({
-            name: 'gen_random_uuid',
-            returns: DataType.uuid,
-            implementation: () => randomUUID(),
-            impure: true,
-          });
-
-          this.pgMemDb.public.registerFunction({
-            name: 'uuid_generate_v4',
-            returns: DataType.uuid,
-            implementation: () => randomUUID(),
-            impure: true,
-          });
-
-          this.pgMemDb.public.registerFunction({
-            name: 'now',
-            returns: DataType.timestamptz,
-            implementation: () => new Date(),
-            impure: true,
-          });
-
-          this.pgMemDb.public.registerFunction({
-            name: 'clock_timestamp',
-            returns: DataType.timestamptz,
-            implementation: () => new Date(),
-            impure: true,
-          });
-
-          this.pgMemDb.public.registerFunction({
-            name: 'similarity',
-            args: [DataType.text, DataType.text],
-            returns: DataType.numeric,
-            implementation: (a: string, b: string) => {
-              if (!a || !b) {
-                return 0;
-              }
-              const makeTrigrams = (input: string): Set<string> => {
-                const normalized = `  ${input.toLowerCase()} `;
-                const trigrams = new Set<string>();
-                for (let i = 0; i < normalized.length - 2; i += 1) {
-                  trigrams.add(normalized.substring(i, i + 3));
-                }
-                return trigrams;
-              };
-
-              const trigramsA = makeTrigrams(a);
-              const trigramsB = makeTrigrams(b);
-
-              if (trigramsA.size === 0 || trigramsB.size === 0) {
-                return 0;
-              }
-
-              let intersection = 0;
-              trigramsA.forEach(trigram => {
-                if (trigramsB.has(trigram)) {
-                  intersection += 1;
-                }
-              });
-
-              const union = trigramsA.size + trigramsB.size - intersection;
-              if (union === 0) {
-                return 0;
-              }
-
-              return intersection / union;
-            },
-          });
-
-          this.pgMemDb.public.registerFunction({
-            name: 'jsonb_build_object',
-            args: [DataType.text, DataType.integer],
-            returns: DataType.jsonb,
-            implementation: (key: string, value: number) => ({ [key]: value }),
-          });
-
-          this.pgMemDb.public.registerFunction({
-            name: 'round',
-            args: [DataType.float, DataType.float],
-            returns: DataType.float,
-            implementation: (value: number, precision: number) => {
-              const factor = Math.pow(10, precision);
-              return Math.round(value * factor) / factor;
-            },
-          });
-
-          const pg = this.pgMemDb.adapters.createPg();
-          this.pool = new pg.Pool();
-
-          const originalQuery = this.pool.query.bind(this.pool);
-          (this.pool as any).query = (...args: any[]) => {
-            const text: string | undefined = typeof args[0] === 'string'
-              ? args[0]
-              : args[0]?.text;
-
-            if (text && text.trim().toUpperCase().startsWith('CREATE EXTENSION')) {
-              return Promise.resolve({ rows: [], rowCount: 0 });
-            }
-
-            return originalQuery(...args);
-          };
-        }
+          await this.runMigrations();
+        })().finally(() => {
+          this.initPromise = null;
+        });
       }
 
-      if (!this.pool) {
-        throw new Error('Failed to initialize test database pool');
-      }
-
-      await this.runMigrations();
+      await this.initPromise;
     }
 
     const connectionString = this.localConnectionString
@@ -214,6 +140,122 @@ export class TestDatabase {
       container: this.container,
       pool: this.pool!,
       connectionString,
+    };
+  }
+
+  private isDockerAvailable(): boolean {
+    const result = spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 2000 });
+    if (result.error) {
+      return false;
+    }
+    return result.status === 0;
+  }
+
+  private setupInMemoryDatabase(): void {
+    this.container = null;
+    this.pgMemDb = newDb({ autoCreateForeignKeyIndices: true });
+    process.env.TEST_DB_INMEMORY = 'true';
+    this.localConnectionString = null;
+
+    this.pgMemDb.public.registerFunction({
+      name: 'gen_random_uuid',
+      returns: DataType.uuid,
+      implementation: () => randomUUID(),
+      impure: true,
+    });
+
+    this.pgMemDb.public.registerFunction({
+      name: 'uuid_generate_v4',
+      returns: DataType.uuid,
+      implementation: () => randomUUID(),
+      impure: true,
+    });
+
+    this.pgMemDb.public.registerFunction({
+      name: 'now',
+      returns: DataType.timestamptz,
+      implementation: () => new Date(),
+      impure: true,
+    });
+
+    this.pgMemDb.public.registerFunction({
+      name: 'clock_timestamp',
+      returns: DataType.timestamptz,
+      implementation: () => new Date(),
+      impure: true,
+    });
+
+    this.pgMemDb.public.registerFunction({
+      name: 'similarity',
+      args: [DataType.text, DataType.text],
+      returns: DataType.numeric,
+      implementation: (a: string, b: string) => {
+        if (!a || !b) {
+          return 0;
+        }
+        const makeTrigrams = (input: string): Set<string> => {
+          const normalized = `  ${input.toLowerCase()} `;
+          const trigrams = new Set<string>();
+          for (let i = 0; i < normalized.length - 2; i += 1) {
+            trigrams.add(normalized.substring(i, i + 3));
+          }
+          return trigrams;
+        };
+
+        const trigramsA = makeTrigrams(a);
+        const trigramsB = makeTrigrams(b);
+
+        if (trigramsA.size === 0 || trigramsB.size === 0) {
+          return 0;
+        }
+
+        let intersection = 0;
+        trigramsA.forEach(trigram => {
+          if (trigramsB.has(trigram)) {
+            intersection += 1;
+          }
+        });
+
+        const union = trigramsA.size + trigramsB.size - intersection;
+        if (union === 0) {
+          return 0;
+        }
+
+        return intersection / union;
+      },
+    });
+
+    this.pgMemDb.public.registerFunction({
+      name: 'jsonb_build_object',
+      args: [DataType.text, DataType.integer],
+      returns: DataType.jsonb,
+      implementation: (key: string, value: number) => ({ [key]: value }),
+    });
+
+    this.pgMemDb.public.registerFunction({
+      name: 'round',
+      args: [DataType.float, DataType.float],
+      returns: DataType.float,
+      implementation: (value: number, precision: number) => {
+        const factor = Math.pow(10, precision);
+        return Math.round(value * factor) / factor;
+      },
+    });
+
+    const pg = this.pgMemDb.adapters.createPg();
+    this.pool = new pg.Pool();
+
+    const originalQuery = this.pool.query.bind(this.pool);
+    (this.pool as any).query = (...args: any[]) => {
+      const text: string | undefined = typeof args[0] === 'string'
+        ? args[0]
+        : args[0]?.text;
+
+      if (text && text.trim().toUpperCase().startsWith('CREATE EXTENSION')) {
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+
+      return originalQuery(...args);
     };
   }
 
@@ -363,6 +405,7 @@ export class TestDatabase {
             content_id UUID REFERENCES content(id) ON DELETE CASCADE NOT NULL,
             url TEXT NOT NULL,
             created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+            deleted_at TIMESTAMPTZ,
             UNIQUE(content_id, url)
           )`,
           `CREATE TABLE IF NOT EXISTS user_badges (
@@ -490,11 +533,17 @@ export class TestDatabase {
           )`,
           `CREATE TABLE content_merge_history (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            source_content_id UUID NOT NULL,
-            target_content_id UUID NOT NULL,
+            primary_content_id UUID NOT NULL,
+            merged_content_ids UUID[] NOT NULL,
             merged_by UUID,
-            reason TEXT,
-            created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+            merge_reason TEXT,
+            merged_metadata JSONB,
+            can_undo BOOLEAN NOT NULL DEFAULT true,
+            undo_deadline TIMESTAMPTZ,
+            unmerged_at TIMESTAMPTZ,
+            unmerged_by UUID,
+            created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
           )`
         ];
 
@@ -592,10 +641,10 @@ export class TestDatabase {
 
     if (this.pool) {
       try {
-        await this.pool.end();
+        await withTimeout(this.pool.end(), 30000, 'Closing test database pool');
       } catch (error: any) {
         if (!error?.code || error.code !== '57P01') {
-        testDbWarn('Error while closing test database pool:', error);
+          testDbWarn('Error while closing test database pool:', error);
         }
       } finally {
         this.pool = null;
@@ -604,7 +653,7 @@ export class TestDatabase {
 
     if (this.container) {
       try {
-        await this.container.stop();
+        await withTimeout(this.container.stop(), 30000, 'Stopping test database container');
       } catch (error) {
         testDbWarn('Error while stopping test database container:', (error as Error).message);
       } finally {

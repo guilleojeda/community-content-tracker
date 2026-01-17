@@ -13,28 +13,12 @@ import {
 } from '../../../shared/types';
 import {
   createErrorResponse,
-  extractTokenFromHeader,
 } from '../auth/utils';
-import { verifyJwtToken, TokenVerifierConfig } from '../auth/tokenVerifier';
 import { getDatabasePool } from '../../services/database';
-import { getAuthEnvironment } from '../auth/config';
 import { AuditLogService } from '../../services/AuditLogService';
 import { buildCorsHeaders } from '../../services/cors';
-
-/**
- * Get token verifier configuration
- */
-function getTokenVerifierConfig(): TokenVerifierConfig {
-  const authEnv = getAuthEnvironment();
-  const allowedAudiences = authEnv.allowedAudiences.length > 0 ? authEnv.allowedAudiences : [authEnv.clientId];
-
-  return {
-    cognitoUserPoolId: authEnv.userPoolId,
-    cognitoRegion: authEnv.region,
-    allowedAudiences,
-    issuer: `https://cognito-idp.${authEnv.region}.amazonaws.com/${authEnv.userPoolId}`,
-  };
-}
+import { resolveAuthorizerContext } from '../../services/authorizerContext';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 const asDate = (value: any): Date => {
   if (value instanceof Date) {
@@ -94,6 +78,7 @@ const serializeContent = (content: any): Content => ({
   createdAt: asDate(content.createdAt ?? content.created_at),
   updatedAt: asDate(content.updatedAt ?? content.updated_at),
   deletedAt: asOptionalDate(content.deletedAt ?? content.deleted_at),
+  version: Number(content.version ?? content.content_version ?? 1),
 });
 
 const serializeBadge = (badge: any): Badge => ({
@@ -170,55 +155,52 @@ const serializeConsent = (consent: any): UserConsentRecord => {
  */
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('Export user data request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
     const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
     const corsOptions = { origin: originHeader, methods: 'GET,OPTIONS', allowCredentials: true };
+    rateLimit = await applyRateLimit(event, { resource: 'users:export-data' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests', undefined, corsOptions));
+    }
+
+    const authContext = resolveAuthorizerContext(event.requestContext?.authorizer as any);
+    if (!authContext.userId) {
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required', undefined, corsOptions));
+    }
 
     // Extract user ID from path parameters
     const rawUserId = event.pathParameters?.id;
     if (!rawUserId) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required', undefined, corsOptions);
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required', undefined, corsOptions));
     }
-
-    // Extract and verify access token
-    const accessToken = extractTokenFromHeader(event.headers.Authorization);
-    if (!accessToken) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required', undefined, corsOptions);
-    }
-
-    // Verify token and get user
-    const dbPool = await getDatabasePool();
-    const userRepository = new UserRepository(dbPool);
-    const tokenConfig = getTokenVerifierConfig();
-
-    const verificationResult = await verifyJwtToken(accessToken, tokenConfig, userRepository);
-
-    if (!verificationResult.isValid || !verificationResult.user) {
-      console.error('Token verification failed:', verificationResult.error);
-      return createErrorResponse(401, 'AUTH_INVALID', 'Invalid authentication token', undefined, corsOptions);
-    }
-
-    const authenticatedUser = verificationResult.user;
-    const targetUserId = rawUserId === 'me' ? authenticatedUser.id : rawUserId;
+    const targetUserId = rawUserId === 'me' ? authContext.userId : rawUserId;
 
     // Check if authenticated user is exporting their own data (or is admin)
-    if (authenticatedUser.id !== targetUserId && !authenticatedUser.isAdmin) {
-      return createErrorResponse(403, 'PERMISSION_DENIED', 'You can only export your own data', undefined, corsOptions);
+    if (authContext.userId !== targetUserId && !authContext.isAdmin) {
+      return withRateLimit(
+        createErrorResponse(403, 'PERMISSION_DENIED', 'You can only export your own data', undefined, corsOptions)
+      );
     }
 
     // Export user data using repository method
+    const dbPool = await getDatabasePool();
+    const userRepository = new UserRepository(dbPool);
     const exportData = await userRepository.exportUserData(targetUserId);
 
     if (!exportData) {
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found', undefined, corsOptions);
+      return withRateLimit(createErrorResponse(404, 'NOT_FOUND', 'User not found', undefined, corsOptions));
     }
 
     console.log('User data exported successfully for user:', targetUserId);
 
     const auditLogService = new AuditLogService(dbPool);
     await auditLogService.log({
-      userId: authenticatedUser.id,
+      userId: authContext.userId,
       action: 'user.data.export',
       resourceType: 'user',
       resourceId: targetUserId,
@@ -245,7 +227,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     };
 
     // Set content disposition for download
-    return {
+    return withRateLimit({
       statusCode: 200,
       headers: {
         ...buildCorsHeaders(corsOptions),
@@ -253,13 +235,16 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
         'Content-Disposition': `attachment; filename="user-data-${targetUserId}-${new Date().toISOString()}.json"`,
       },
       body: JSON.stringify(response, null, 2),
-    };
+    });
   } catch (error: any) {
     console.error('Unexpected export data error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while exporting user data', undefined, {
-      origin: event.headers?.Origin || event.headers?.origin || undefined,
-      methods: 'GET,OPTIONS',
-      allowCredentials: true,
-    });
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while exporting user data', undefined, {
+        origin: event.headers?.Origin || event.headers?.origin || undefined,
+        methods: 'GET,OPTIONS',
+        allowCredentials: true,
+      }),
+      rateLimit
+    );
   }
 }

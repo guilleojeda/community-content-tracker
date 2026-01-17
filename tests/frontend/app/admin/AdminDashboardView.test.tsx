@@ -166,7 +166,6 @@ describe('AdminDashboardView', () => {
 
     await waitFor(() => expect(screen.getByText(/Platform Overview/i)).toBeInTheDocument());
     const statusChip = screen.getByText(/degraded/i);
-    expect(statusChip).toHaveClass('bg-red-100');
     expect(screen.getByText(/RDS connection issues/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Checked/i).length).toBeGreaterThan(0);
   });

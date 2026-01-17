@@ -3,6 +3,7 @@ import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { BadgeType } from '@aws-community-hub/shared';
 import { PoolClient } from 'pg';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Extract admin context from API Gateway event
@@ -43,37 +44,50 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+  const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+    attachRateLimitHeaders(response, rateLimit);
+  const respondError = (...args: Parameters<typeof createErrorResponse>) =>
+    withRateLimit(createErrorResponse(...args));
+  const respondSuccess = (...args: Parameters<typeof createSuccessResponse>) =>
+    withRateLimit(createSuccessResponse(...args));
+
+  rateLimit = await applyRateLimit(event, { resource: 'admin:grant-badge' });
+  if (rateLimit && !rateLimit.allowed) {
+    return respondError(429, 'RATE_LIMITED', 'Too many requests');
+  }
+
   const admin = extractAdminContext(event);
 
   // Check admin privileges
   if (!admin.isAdmin) {
-    return createErrorResponse(403, 'PERMISSION_DENIED', 'Admin privileges required');
+    return respondError(403, 'PERMISSION_DENIED', 'Admin privileges required');
   }
 
   // Parse and validate request body
   let requestBody: GrantBadgeRequest;
   try {
     if (!event.body) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Request body is required');
+      return respondError(400, 'VALIDATION_ERROR', 'Request body is required');
     }
     requestBody = JSON.parse(event.body);
   } catch (error) {
-    return createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid JSON in request body');
+    return respondError(400, 'VALIDATION_ERROR', 'Invalid JSON in request body');
   }
 
   // Validate required fields
   if (!requestBody.userId) {
-    return createErrorResponse(400, 'VALIDATION_ERROR', 'userId is required');
+    return respondError(400, 'VALIDATION_ERROR', 'userId is required');
   }
 
   if (!requestBody.badgeType) {
-    return createErrorResponse(400, 'VALIDATION_ERROR', 'badgeType is required');
+    return respondError(400, 'VALIDATION_ERROR', 'badgeType is required');
   }
 
   // Validate badge type enum
   const validBadgeTypes = Object.values(BadgeType);
   if (!validBadgeTypes.includes(requestBody.badgeType)) {
-    return createErrorResponse(
+    return respondError(
       400,
       'VALIDATION_ERROR',
       `Invalid badge type. Must be one of: ${validBadgeTypes.join(', ')}`
@@ -96,7 +110,7 @@ export async function handler(
 
     if (userCheck.rows.length === 0) {
       await client.query('ROLLBACK');
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+      return respondError(404, 'NOT_FOUND', 'User not found');
     }
 
     // Check if badge already exists (active or inactive)
@@ -114,7 +128,7 @@ export async function handler(
       if (existingBadge.is_active) {
         // Badge is already active
         await client.query('ROLLBACK');
-        return createErrorResponse(
+        return respondError(
           409,
           'DUPLICATE_RESOURCE',
           'User already has an active badge of this type'
@@ -180,7 +194,7 @@ export async function handler(
       operation,
     });
 
-    return createSuccessResponse(operation === 'reactivated' ? 200 : 201, {
+    return respondSuccess(operation === 'reactivated' ? 200 : 201, {
       success: true,
       data: {
         badgeId,
@@ -203,7 +217,7 @@ export async function handler(
     }
 
     console.error('Grant badge error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to grant badge');
+    return respondError(500, 'INTERNAL_ERROR', 'Failed to grant badge');
   } finally {
     if (client) {
       client.release();

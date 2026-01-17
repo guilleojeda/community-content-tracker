@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { getCacheClient } from '../../services/cache/cache';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Valid date grouping periods for DATE_TRUNC
@@ -32,11 +33,21 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'analytics:user' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Check authentication
     const authorizer: any = event.requestContext?.authorizer;
     if (!authorizer || !authorizer.userId) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
     }
 
     const userId = authorizer.userId;
@@ -59,7 +70,7 @@ export async function handler(
 
     const cachedResponse = await cache.get<Record<string, any>>(cacheKey);
     if (cachedResponse) {
-      return createSuccessResponse(200, cachedResponse);
+      return withRateLimit(createSuccessResponse(200, cachedResponse));
     }
 
     // Build date filter
@@ -262,9 +273,12 @@ export async function handler(
 
     await cache.set(cacheKey, payload, 300);
 
-    return createSuccessResponse(200, payload);
+    return withRateLimit(createSuccessResponse(200, payload));
   } catch (error: any) {
     console.error('User analytics error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to fetch analytics');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to fetch analytics'),
+      rateLimit
+    );
   }
 }

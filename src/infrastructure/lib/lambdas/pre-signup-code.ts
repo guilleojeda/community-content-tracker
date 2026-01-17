@@ -6,8 +6,9 @@ exports.handler = async (event, context, callback) => {
     console.log('Pre-signup trigger event:', JSON.stringify(event, null, 2));
 
     try {
-        const { userAttributes } = event.request;
-        const customUsername = userAttributes['custom:username'];
+        const { userAttributes } = event.request || {};
+        const customUsername = userAttributes ? userAttributes['custom:username'] : undefined;
+        const userPoolId = event.userPoolId;
 
         // Validate username format
         if (customUsername) {
@@ -23,9 +24,24 @@ exports.handler = async (event, context, callback) => {
                 throw error;
             }
 
-            // Check for username uniqueness
-            // Note: In production, this would query the database
-            // For now, we'll just validate format
+            if (!userPoolId) {
+                const error = new Error('User pool ID is required for username uniqueness checks');
+                error.name = 'InvalidParameterException';
+                throw error;
+            }
+
+            const listResponse = await cognito.listUsers({
+                UserPoolId: userPoolId,
+                Filter: 'custom:username = "' + customUsername + '"',
+                Limit: 1,
+            }).promise();
+
+            if (listResponse.Users && listResponse.Users.length > 0) {
+                const error = new Error('Username already exists');
+                error.name = 'InvalidParameterException';
+                throw error;
+            }
+
             console.log('Username validation passed for:', customUsername);
         }
 

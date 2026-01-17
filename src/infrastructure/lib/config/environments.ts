@@ -10,7 +10,8 @@ export interface EnvironmentConfig {
   cognito: {
     deletionProtection: boolean;
     mfaConfiguration: string;
-    advancedSecurityMode: string;
+    standardThreatProtectionMode: string;
+    customThreatProtectionMode?: string;
     passwordPolicy: {
       minLength: number;
       requireLowercase: boolean;
@@ -61,7 +62,7 @@ export const getEnvironmentConfig = (environment: string): EnvironmentConfig => 
       cognito: {
         deletionProtection: isProductionLike,
         mfaConfiguration: isProductionLike ? 'OPTIONAL' : 'OFF',
-        advancedSecurityMode: isProductionLike ? 'ENFORCED' : 'OFF',
+        standardThreatProtectionMode: isProductionLike ? 'ENFORCED' : 'OFF',
         passwordPolicy: {
           minLength: 12,
           requireLowercase: true,

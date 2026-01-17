@@ -160,6 +160,236 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /users/me:
+    get:
+      summary: Get current user profile
+      description: Returns the authenticated user's profile and preferences.
+      operationId: getCurrentUser
+      tags:
+        - Users
+      responses:
+        '200':
+          description: Authenticated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/me/badges:
+    get:
+      summary: Get badges for current user
+      description: Returns the badges associated with the authenticated user.
+      operationId: getCurrentUserBadges
+      tags:
+        - Users
+      responses:
+        '200':
+          description: Badge list for current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBadgesResponse'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/username/{username}:
+    get:
+      summary: Get user by username
+      description: Returns the public profile for the requested username.
+      operationId: getUserByUsername
+      tags:
+        - Users
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Username of the profile to retrieve
+      responses:
+        '200':
+          description: User profile found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserLookupResponse'
+        '400':
+          description: Missing username
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/{id}/badges:
+    get:
+      summary: Get user badges
+      description: Returns badges for the specified user. Use `me` to reference the authenticated user.
+      operationId: getUserBadges
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: me
+          description: ID of user whose badges are requested.
+      responses:
+        '200':
+          description: Badge list for user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBadgesResponse'
+        '400':
+          description: Missing user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/{id}/content:
+    get:
+      summary: Get user content
+      description: Returns content belonging to the specified user, filtered by visibility rules. Use `me` to reference the authenticated user.
+      operationId: getUserContent
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: me
+          description: ID of user whose content is being requested.
+        - name: visibility
+          in: query
+          required: false
+          schema:
+            type: string
+            example: public,aws_community
+          description: Filter by visibility values (comma-separated)
+        - name: contentType
+          in: query
+          required: false
+          schema:
+            type: string
+            example: blog,youtube
+          description: Filter by content type values (comma-separated)
+        - name: tags
+          in: query
+          required: false
+          schema:
+            type: string
+            example: serverless,lambda
+          description: Filter by tags (comma-separated)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Maximum number of content items to return
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for pagination
+      responses:
+        '200':
+          description: Content list for user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserContentResponse'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /users/{id}:
     patch:
       summary: Update user profile (right to rectification)
@@ -696,11 +926,12 @@ components:
               type: string
               description: Machine-readable error code
               enum:
-                - VALIDATION_ERROR
-                - AUTHENTICATION_ERROR
-                - AUTHORIZATION_ERROR
+                - AUTH_REQUIRED
+                - AUTH_INVALID
+                - PERMISSION_DENIED
                 - NOT_FOUND
-                - CONFLICT
+                - VALIDATION_ERROR
+                - DUPLICATE_RESOURCE
                 - RATE_LIMITED
                 - INTERNAL_ERROR
               example: "VALIDATION_ERROR"
@@ -708,14 +939,120 @@ components:
               type: string
               description: Human-readable error message
               example: "Missing required query parameter: q"
-            field:
-              type: string
-              description: Field that caused the error (if applicable)
-              example: "q"
             details:
               type: object
               description: Additional error details
               additionalProperties: true
+
+    SocialLinks:
+      type: object
+      properties:
+        twitter:
+          type: string
+          format: uri
+        linkedin:
+          type: string
+          format: uri
+        github:
+          type: string
+          format: uri
+        website:
+          type: string
+          format: uri
+
+    User:
+      type: object
+      required:
+        - id
+        - cognitoSub
+        - email
+        - username
+        - profileSlug
+        - defaultVisibility
+        - isAdmin
+        - isAwsEmployee
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        cognitoSub:
+          type: string
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        profileSlug:
+          type: string
+        bio:
+          type: string
+          nullable: true
+        socialLinks:
+          $ref: '#/components/schemas/SocialLinks'
+        defaultVisibility:
+          type: string
+          enum: [public, aws_community, aws_only, private]
+        isAdmin:
+          type: boolean
+        isAwsEmployee:
+          type: boolean
+        mfaEnabled:
+          type: boolean
+        receiveNewsletter:
+          type: boolean
+        receiveContentNotifications:
+          type: boolean
+        receiveCommunityUpdates:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserLookupResponse:
+      type: object
+      required:
+        - user
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+
+    UserBadgesResponse:
+      type: object
+      required:
+        - userId
+        - username
+        - badges
+        - badgeCount
+      properties:
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        badgeCount:
+          type: integer
+        badges:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
+
+    UserContentResponse:
+      type: object
+      required:
+        - content
+        - total
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+        total:
+          type: integer
 
     UserProfile:
       type: object
@@ -745,10 +1082,8 @@ components:
           type: string
           enum: [public, aws_community, aws_only, private]
         socialLinks:
-          type: object
-          additionalProperties:
-            type: string
-          description: Map of social link type to URL
+          $ref: '#/components/schemas/SocialLinks'
+          description: Social link profiles
         updatedAt:
           type: string
           format: date-time

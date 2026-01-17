@@ -3,6 +3,7 @@ import { UserRepository } from '../../repositories/UserRepository';
 import { ContentType, Visibility } from '@aws-community-hub/shared';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 interface UnclaimedQueryParams {
   limit?: string;
@@ -37,17 +38,26 @@ export const handler = async (
   context: Context
 ): Promise<APIGatewayProxyResult> => {
   console.log('Unclaimed Content Lambda invoked', {
-    requestId: context.requestId,
+    requestId: context.awsRequestId,
     path: event.path,
   });
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'content:unclaimed' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Extract user ID from authorizer
     const userId = event.requestContext.authorizer?.claims?.sub;
 
     if (!userId) {
-    return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
-  }
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
+    }
 
     // Get database pool
     const dbPool = await getDatabasePool();
@@ -56,8 +66,15 @@ export const handler = async (
     // Get user information for visibility filtering
     const user = await userRepo.findById(userId);
     if (!user) {
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+      return withRateLimit(createErrorResponse(404, 'NOT_FOUND', 'User not found'));
     }
+    const identityTokens = [
+      user.username,
+      user.email,
+      user.email?.split('@')[0],
+    ]
+      .filter((value): value is string => Boolean(value && value.trim().length > 0))
+      .map((value) => value.toLowerCase().trim());
 
     // Parse query parameters
     const queryParams = (event.queryStringParameters || {}) as UnclaimedQueryParams;
@@ -67,20 +84,20 @@ export const handler = async (
     if (queryParams.limit) {
       const parsedLimit = parseInt(queryParams.limit, 10);
       if (isNaN(parsedLimit) || parsedLimit < 1) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Invalid limit parameter',
           { limit: 'Must be a positive integer' }
-        );
+        ));
       }
       if (parsedLimit > 100) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Limit exceeds maximum allowed value',
           { limit: 'Maximum is 100' }
-        );
+        ));
       }
       limit = parsedLimit;
     }
@@ -90,12 +107,12 @@ export const handler = async (
     if (queryParams.offset) {
       const parsedOffset = parseInt(queryParams.offset, 10);
       if (isNaN(parsedOffset) || parsedOffset < 0) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Invalid offset parameter',
           { offset: 'Must be non-negative' }
-        );
+        ));
       }
       offset = parsedOffset;
     }
@@ -138,9 +155,14 @@ export const handler = async (
     // Build the query
     let query = `
       SELECT c.*,
-             array_agg(DISTINCT cu.url) FILTER (WHERE cu.url IS NOT NULL) as urls
+             urls.urls
       FROM content c
-      LEFT JOIN content_urls cu ON c.id = cu.content_id
+      LEFT JOIN (
+        SELECT content_id,
+               array_agg(DISTINCT url) FILTER (WHERE url IS NOT NULL) as urls
+        FROM content_urls
+        GROUP BY content_id
+      ) urls ON c.id = urls.content_id
       WHERE c.is_claimed = false
         AND (${visibilityConditions.join(' OR ')})
     `;
@@ -155,7 +177,6 @@ export const handler = async (
     }
 
     query += `
-      GROUP BY c.id
       ORDER BY ${orderBy === 'title' ? 'c.title' : 'c.publish_date'} ${sortOrder.toUpperCase()}
       LIMIT $${paramIndex++}
       OFFSET $${paramIndex++}
@@ -210,21 +231,56 @@ export const handler = async (
       };
     });
 
-    return createSuccessResponse(200, {
-      items: transformedItems,
+    const matchesIdentity = (originalAuthor?: string | null): boolean => {
+      if (!originalAuthor) {
+        return false;
+      }
+      const normalizedAuthor = originalAuthor.toLowerCase().trim();
+      if (normalizedAuthor.length === 0) {
+        return false;
+      }
+      return identityTokens.some((token) =>
+        normalizedAuthor === token ||
+        normalizedAuthor.includes(token) ||
+        token.includes(normalizedAuthor)
+      );
+    };
+
+    const sortedItems = transformedItems
+      .map((item, index) => ({
+        item,
+        index,
+        matches: matchesIdentity(item.originalAuthor),
+      }))
+      .sort((a, b) => {
+        if (a.matches === b.matches) {
+          return a.index - b.index;
+        }
+        return a.matches ? -1 : 1;
+      })
+      .map(({ item }) => item);
+
+    return withRateLimit(createSuccessResponse(200, {
+      items: sortedItems,
       total,
       limit,
       offset,
-    });
+    }));
 
   } catch (error: any) {
     console.error('Error listing unclaimed content:', error);
 
     // Handle specific error cases
     if (error.code === '42P01') {
-      return createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found');
+      return attachRateLimitHeaders(
+        createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found'),
+        rateLimit
+      );
     }
 
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error'),
+      rateLimit
+    );
   }
 };

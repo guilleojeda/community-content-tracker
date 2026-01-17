@@ -4,11 +4,9 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
-import { getPublicApiClient } from '@/api/client';
+import { loadPublicApiClient } from '@/lib/api/lazyClient';
 
-import type { components } from '@/api/schema';
-
-type PlatformStats = components['schemas']['PlatformStats'];
+import type { PlatformStats } from '@aws-community-hub/shared';
 
 const StatsSection = dynamic(() => import('./sections/StatsSection'), {
   loading: () => (
@@ -29,7 +27,7 @@ export default function HomePageContent() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const client = getPublicApiClient();
+        const client = await loadPublicApiClient();
         const data = await client.getStats();
         setStats(data);
       } catch (error) {

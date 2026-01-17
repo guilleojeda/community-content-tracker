@@ -98,7 +98,7 @@ npm run deploy:dev
 ```
 
 This will:
-1. Build Next.js frontend → `src/frontend/out`
+1. Build Next.js frontend -> `src/frontend/out`
 2. Deploy all CDK stacks
 3. Upload frontend files to S3
 4. Invalidate CloudFront cache
@@ -344,19 +344,19 @@ aws cloudwatch get-metric-statistics \
 ## Security Considerations
 
 1. **S3 Bucket**
-   - Block all public access ✓
-   - Only CloudFront OAI can read ✓
-   - Encryption at rest enabled ✓
+   - Block all public access OK
+   - Only CloudFront OAI can read OK
+   - Encryption at rest enabled OK
 
 2. **CloudFront**
-   - HTTPS only (redirect HTTP) ✓
-   - Security headers enforced ✓
-   - WAF enabled (prod) ✓
+   - HTTPS only (redirect HTTP) OK
+   - Security headers enforced OK
+   - WAF enabled (prod) OK
 
 3. **Deployment**
-   - IAM role with minimal permissions ✓
-   - No secrets in build output ✓
-   - Build process validated ✓
+   - IAM role with minimal permissions OK
+   - No secrets in build output OK
+   - Build process validated OK
 
 ## CI/CD Integration
 

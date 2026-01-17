@@ -2,18 +2,52 @@ import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as path from 'path';
 import { Construct } from 'constructs';
 import { PgVectorEnabler } from '../constructs/pgvector-enabler';
 
+const requireEnv = (name: string, options?: { allowEmpty?: boolean }): string => {
+  const value = process.env[name];
+  if (value && value.trim().length > 0) {
+    return value;
+  }
+  if (options?.allowEmpty) {
+    return '';
+  }
+  throw new Error(`${name} must be set`);
+};
+
+const parseNumberEnv = (name: string): number | null => {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a valid number`);
+  }
+  return parsed;
+};
+
+const resolveExternalApiKey = (name: string, allowEmpty: boolean): string => {
+  return requireEnv(name, { allowEmpty });
+};
+
 export interface DatabaseStackProps extends cdk.StackProps {
   /**
    * Environment name (dev, staging, prod)
    */
-  environment?: string;
+  environment: string;
+
+  /**
+   * Database name for the cluster
+   */
+  databaseName: string;
 
   /**
    * Whether to enable deletion protection
@@ -34,6 +68,12 @@ export interface DatabaseStackProps extends cdk.StackProps {
    * Max Aurora Serverless capacity
    */
   maxCapacity?: number;
+
+  /**
+   * Number of NAT gateways to provision in the VPC
+   */
+  natGateways?: number;
+
 }
 
 /**
@@ -44,7 +84,6 @@ export interface DatabaseStackProps extends cdk.StackProps {
  * - Aurora Serverless v2 PostgreSQL cluster with pgvector extension
  * - RDS Proxy for connection pooling
  * - Secrets Manager for database credentials
- * - Bastion host for development access
  * - Security groups and proper networking
  */
 export class DatabaseStack extends cdk.Stack {
@@ -54,22 +93,30 @@ export class DatabaseStack extends cdk.Stack {
   public readonly databaseSecret: secretsmanager.Secret;
   public readonly youtubeApiKeySecret: secretsmanager.Secret;
   public readonly githubTokenSecret: secretsmanager.Secret;
-  public readonly bastionHost?: ec2.Instance;
+  public readonly lambdaSecurityGroup: ec2.SecurityGroup;
   public readonly clusterEndpoint: string;
   public readonly proxyEndpoint: string;
+  public readonly redisEndpointAddress: string;
+  public readonly redisEndpointPort: string;
+  public readonly redisUrl: string;
 
-  constructor(scope: Construct, id: string, props?: DatabaseStackProps) {
+  constructor(scope: Construct, id: string, props: DatabaseStackProps) {
     super(scope, id, props);
 
     // Add cost tags
     cdk.Tags.of(this).add('Project', 'community-content-hub');
-    cdk.Tags.of(this).add('Environment', props?.environment || 'dev');
+    cdk.Tags.of(this).add('Environment', props.environment);
 
-    const environment = props?.environment || 'dev';
+    const environment = props.environment;
+    const databaseName = props.databaseName;
     const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
     const isProductionLike = productionLikeEnvs.has(environment);
-
-    // Create VPC with public and private subnets
+    const allowEmptyExternalKeys = !isProductionLike;
+    const natGateways = props.natGateways ?? parseNumberEnv('VPC_NAT_GATEWAYS');
+    if (natGateways === null) {
+      throw new Error('VPC_NAT_GATEWAYS must be set to provision VPC egress');
+    }
+    // Create VPC with public, private (egress), and isolated subnets
     this.vpc = new ec2.Vpc(this, 'CommunityContentVpc', {
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
       maxAzs: 2,
@@ -83,11 +130,16 @@ export class DatabaseStack extends cdk.Stack {
         },
         {
           cidrMask: 24,
-          name: 'Private',
+          name: 'PrivateEgress',
           subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
         },
+        {
+          cidrMask: 24,
+          name: 'PrivateIsolated',
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+        },
       ],
-      natGateways: 1, // Reduce cost in dev, increase in prod
+      natGateways,
     });
 
     // Create security group for Aurora cluster
@@ -110,29 +162,30 @@ export class DatabaseStack extends cdk.Stack {
       description: 'Security group for Lambda functions',
       allowAllOutbound: true,
     });
+    this.lambdaSecurityGroup = lambdaSecurityGroup;
 
-    // Create security group for bastion host (only in non-prod)
-    let bastionSecurityGroup: ec2.SecurityGroup | undefined;
-    if (!isProductionLike) {
-      bastionSecurityGroup = new ec2.SecurityGroup(this, 'BastionSecurityGroup', {
-        vpc: this.vpc,
-        description: 'Security group for bastion host',
-        allowAllOutbound: true,
-      });
-
-      // Allow SSH access to bastion host
-      bastionSecurityGroup.addIngressRule(
-        ec2.Peer.anyIpv4(),
-        ec2.Port.tcp(22),
-        'Allow SSH access'
-      );
-    }
-
-    // Allow Lambda and Proxy to connect to database
-    databaseSecurityGroup.addIngressRule(
+    // Create security group for VPC endpoints
+    const endpointSecurityGroup = new ec2.SecurityGroup(this, 'VpcEndpointSecurityGroup', {
+      vpc: this.vpc,
+      description: 'Security group for VPC interface endpoints',
+      allowAllOutbound: true,
+    });
+    endpointSecurityGroup.addIngressRule(
       lambdaSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow Lambda access to database'
+      ec2.Port.tcp(443),
+      'Allow Lambda access to VPC interface endpoints'
+    );
+
+    // Create security group for Redis
+    const redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
+      vpc: this.vpc,
+      description: 'Security group for Redis cache',
+      allowAllOutbound: true,
+    });
+    redisSecurityGroup.addIngressRule(
+      lambdaSecurityGroup,
+      ec2.Port.tcp(6379),
+      'Allow Lambda access to Redis cache'
     );
 
     databaseSecurityGroup.addIngressRule(
@@ -141,14 +194,48 @@ export class DatabaseStack extends cdk.Stack {
       'Allow RDS Proxy access to database'
     );
 
-    // Allow bastion host to connect to database (dev only)
-    if (!isProductionLike && bastionSecurityGroup) {
-      databaseSecurityGroup.addIngressRule(
-        bastionSecurityGroup,
-        ec2.Port.tcp(5432),
-        'Allow bastion host access to database'
-      );
-    }
+    proxySecurityGroup.addIngressRule(
+      lambdaSecurityGroup,
+      ec2.Port.tcp(5432),
+      'Allow Lambda access to RDS Proxy'
+    );
+
+    const endpointSubnets: ec2.SubnetSelection = {
+      subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+    };
+    const gatewayEndpointSubnets: ec2.SubnetSelection[] = [
+      { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+    ];
+
+    this.vpc.addGatewayEndpoint('S3GatewayEndpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
+      subnets: gatewayEndpointSubnets,
+    });
+
+    this.vpc.addGatewayEndpoint('DynamoDbGatewayEndpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+      subnets: gatewayEndpointSubnets,
+    });
+
+    const addInterfaceEndpoint = (id: string, service: ec2.IInterfaceVpcEndpointService) => {
+      this.vpc.addInterfaceEndpoint(id, {
+        service,
+        subnets: endpointSubnets,
+        securityGroups: [endpointSecurityGroup],
+        privateDnsEnabled: true,
+      });
+    };
+
+    addInterfaceEndpoint('SecretsManagerEndpoint', ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER);
+    addInterfaceEndpoint('SqsEndpoint', ec2.InterfaceVpcEndpointAwsService.SQS);
+    addInterfaceEndpoint('LambdaEndpoint', ec2.InterfaceVpcEndpointAwsService.LAMBDA);
+    addInterfaceEndpoint('CloudWatchEndpoint', ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_MONITORING);
+    addInterfaceEndpoint('CloudWatchLogsEndpoint', ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS);
+    addInterfaceEndpoint('CognitoIdpEndpoint', new ec2.InterfaceVpcEndpointAwsService('cognito-idp'));
+    addInterfaceEndpoint('BedrockRuntimeEndpoint', ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME);
+    addInterfaceEndpoint('RdsDataEndpoint', ec2.InterfaceVpcEndpointAwsService.RDS_DATA);
+    addInterfaceEndpoint('SesApiEndpoint', new ec2.InterfaceVpcEndpointAwsService('email'));
 
     // Create database credentials secret
     this.databaseSecret = new secretsmanager.Secret(this, 'DatabaseSecret', {
@@ -161,11 +248,13 @@ export class DatabaseStack extends cdk.Stack {
       },
     });
 
-    // Create YouTube API key secret (placeholder - should be set via CLI)
+    // Create YouTube API key secret (provided via environment at deploy time)
     this.youtubeApiKeySecret = new secretsmanager.Secret(this, 'YouTubeApiKeySecret', {
       description: 'YouTube Data API v3 key for content scraping',
       secretName: `youtube-api-key-${environment}`,
-      secretStringValue: cdk.SecretValue.unsafePlainText(process.env.YOUTUBE_API_KEY ?? ''),
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        resolveExternalApiKey('YOUTUBE_API_KEY', allowEmptyExternalKeys)
+      ),
     });
     const youtubeRotationFunction = this.createExternalApiKeyRotationFunction(
       'YouTubeApiKeyRotationFunction',
@@ -178,11 +267,13 @@ export class DatabaseStack extends cdk.Stack {
       automaticallyAfter: cdk.Duration.days(isProductionLike ? 30 : 60),
     });
 
-    // Create GitHub token secret (placeholder - should be set via CLI)
+    // Create GitHub token secret (provided via environment at deploy time)
     this.githubTokenSecret = new secretsmanager.Secret(this, 'GitHubTokenSecret', {
       description: 'GitHub personal access token for content scraping',
       secretName: `github-token-${environment}`,
-      secretStringValue: cdk.SecretValue.unsafePlainText(process.env.GITHUB_TOKEN ?? ''),
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        resolveExternalApiKey('GITHUB_TOKEN', allowEmptyExternalKeys)
+      ),
     });
     const githubRotationFunction = this.createExternalApiKeyRotationFunction(
       'GitHubTokenRotationFunction',
@@ -200,7 +291,7 @@ export class DatabaseStack extends cdk.Stack {
       description: 'Subnet group for Aurora Serverless cluster',
       vpc: this.vpc,
       vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
       },
     });
 
@@ -214,17 +305,17 @@ export class DatabaseStack extends cdk.Stack {
       subnetGroup,
       securityGroups: [databaseSecurityGroup],
       enableDataApi: true,
-      serverlessV2MinCapacity: props?.minCapacity ?? (isProductionLike ? 1 : 0.5),
-      serverlessV2MaxCapacity: props?.maxCapacity ?? (isProductionLike ? 4 : 1),
+      serverlessV2MinCapacity: props.minCapacity ?? (isProductionLike ? 1 : 0.5),
+      serverlessV2MaxCapacity: props.maxCapacity ?? (isProductionLike ? 4 : 1),
       backup: {
-        retention: cdk.Duration.days(props?.backupRetentionDays ?? (isProductionLike ? 30 : 7)),
+        retention: cdk.Duration.days(props.backupRetentionDays ?? (isProductionLike ? 30 : 7)),
         preferredWindow: '03:00-04:00',
       },
       preferredMaintenanceWindow: 'Sun:04:00-Sun:05:00',
-      deletionProtection: props?.deletionProtection ?? isProductionLike,
+      deletionProtection: props.deletionProtection ?? isProductionLike,
       cloudwatchLogsExports: ['postgresql'],
       cloudwatchLogsRetention: isProductionLike ? cdk.aws_logs.RetentionDays.ONE_MONTH : cdk.aws_logs.RetentionDays.ONE_WEEK,
-      defaultDatabaseName: 'community_content',
+      defaultDatabaseName: databaseName,
       writer: rds.ClusterInstance.serverlessV2('writer'),
     });
 
@@ -241,6 +332,7 @@ export class DatabaseStack extends cdk.Stack {
       secrets: [this.databaseSecret],
       vpc: this.vpc,
       securityGroups: [proxySecurityGroup],
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       requireTLS: true,
       idleClientTimeout: cdk.Duration.seconds(1800),
     });
@@ -250,42 +342,33 @@ export class DatabaseStack extends cdk.Stack {
       cluster: this.cluster,
       databaseSecret: this.databaseSecret,
       vpc: this.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSecurityGroup],
-      databaseName: 'community_content',
+      databaseName,
     });
+    const redisSubnets = this.vpc.selectSubnets({
+      subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+    }).subnetIds;
 
-    // Create bastion host for development access (only in non-prod environments)
-    if (!isProductionLike) {
-      const bastionRole = new iam.Role(this, 'BastionRole', {
-        assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
-        managedPolicies: [
-          iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
-        ],
-      });
-
-      this.bastionHost = new ec2.Instance(this, 'BastionHost', {
-        instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
-        machineImage: ec2.MachineImage.latestAmazonLinux2(),
-        vpc: this.vpc,
-        vpcSubnets: {
-          subnetType: ec2.SubnetType.PUBLIC,
-        },
-        securityGroup: bastionSecurityGroup!,
-        role: bastionRole,
-        userData: ec2.UserData.custom(`#!/bin/bash
-yum update -y
-yum install -y postgresql15
-echo 'export PGHOST=${this.cluster.clusterEndpoint.hostname}' >> /home/ec2-user/.bashrc
-echo 'export PGPORT=5432' >> /home/ec2-user/.bashrc
-echo 'export PGDATABASE=community_content' >> /home/ec2-user/.bashrc
-echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
-`),
-      });
-    }
+    const redisCache = new elasticache.CfnServerlessCache(this, 'RedisServerlessCache', {
+      serverlessCacheName: `community-content-hub-${environment}-cache`,
+      description: `Valkey serverless cache for ${environment}`,
+      engine: 'valkey',
+      subnetIds: redisSubnets,
+      securityGroupIds: [redisSecurityGroup.securityGroupId],
+    });
 
     // Store endpoints for easy access
     this.clusterEndpoint = this.cluster.clusterEndpoint.socketAddress;
     this.proxyEndpoint = this.proxy.endpoint;
+    this.redisEndpointAddress = redisCache.attrEndpointAddress;
+    this.redisEndpointPort = redisCache.attrEndpointPort;
+    this.redisUrl = cdk.Fn.join('', [
+      'redis://',
+      this.redisEndpointAddress,
+      ':',
+      this.redisEndpointPort,
+    ]);
 
     // Create SSM parameters for database configuration
     new ssm.StringParameter(this, 'DatabaseEndpointParameter', {
@@ -304,6 +387,24 @@ echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
       parameterName: `/${environment}/database/secret-arn`,
       stringValue: this.databaseSecret.secretArn,
       description: 'Database credentials secret ARN',
+    });
+
+    new ssm.StringParameter(this, 'RedisEndpointParameter', {
+      parameterName: `/${environment}/cache/redis/endpoint`,
+      stringValue: this.redisEndpointAddress,
+      description: 'Redis cache endpoint address',
+    });
+
+    new ssm.StringParameter(this, 'RedisPortParameter', {
+      parameterName: `/${environment}/cache/redis/port`,
+      stringValue: this.redisEndpointPort,
+      description: 'Redis cache endpoint port',
+    });
+
+    new ssm.StringParameter(this, 'RedisUrlParameter', {
+      parameterName: `/${environment}/cache/redis/url`,
+      stringValue: this.redisUrl,
+      description: 'Redis cache connection URL',
     });
 
     // CloudFormation outputs
@@ -332,12 +433,20 @@ echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
       description: 'Secrets Manager ARN for database credentials',
     });
 
-    if (this.bastionHost) {
-      new cdk.CfnOutput(this, 'BastionHostInstanceId', {
-        value: this.bastionHost.instanceId,
-        description: 'Bastion host instance ID for database access',
-      });
-    }
+    new cdk.CfnOutput(this, 'RedisEndpoint', {
+      value: this.redisEndpointAddress,
+      description: 'Redis cache endpoint address',
+    });
+
+    new cdk.CfnOutput(this, 'RedisPort', {
+      value: this.redisEndpointPort,
+      description: 'Redis cache endpoint port',
+    });
+
+    new cdk.CfnOutput(this, 'RedisUrl', {
+      value: this.redisUrl,
+      description: 'Redis cache connection URL',
+    });
 
     new cdk.CfnOutput(this, 'DatabaseSecurityGroupId', {
       value: databaseSecurityGroup.securityGroupId,
@@ -357,11 +466,13 @@ echo 'export PGUSER=postgres' >> /home/ec2-user/.bashrc
     alias: string
   ): lambda.Function {
     const functionTimeout = cdk.Duration.seconds(30);
-    const rotationFunction = new lambda.Function(this, id, {
+    const depsLockFilePath = path.join(__dirname, '../../../../package-lock.json');
+    const rotationFunction = new NodejsFunction(this, id, {
       description: `Secrets Manager rotation for ${alias}`,
       runtime: lambda.Runtime.NODEJS_18_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/api-key-rotation')),
+      entry: path.join(__dirname, '../lambdas/api-key-rotation/index.ts'),
+      handler: 'handler',
+      depsLockFilePath,
       timeout: functionTimeout,
       memorySize: 256,
       environment: {

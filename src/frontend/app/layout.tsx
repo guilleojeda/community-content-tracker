@@ -2,18 +2,17 @@ import type { Metadata } from 'next';
 import '../src/styles/globals.css';
 import dynamic from 'next/dynamic';
 import { isBetaModeActive } from '@/lib/featureFlags';
+import { getClientEnvironment } from '@/config/environment';
+import Link from 'next/link';
 
 const CookieConsentBoundary = dynamic(() => import('./CookieConsentBoundary'), {
   loading: () => null,
 });
 
-const appOrigin =
-  process.env.NEXT_PUBLIC_DOMAIN && process.env.NEXT_PUBLIC_DOMAIN.trim().length > 0
-    ? `https://${process.env.NEXT_PUBLIC_DOMAIN}`
-    : 'https://awscommunityhub.org';
+const { NEXT_PUBLIC_SITE_URL: siteUrl } = getClientEnvironment();
 
 export const metadata: Metadata = {
-  metadataBase: new URL(appOrigin),
+  metadataBase: new URL(siteUrl),
   title: 'AWS Community Content Hub',
   description: 'Discover and track AWS community content from contributors worldwide',
   keywords: 'AWS, community, content, developers, cloud computing',
@@ -31,26 +30,26 @@ export default function RootLayout({
       <body>
         <nav className="bg-aws-blue text-white shadow-lg">
           <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-            <a href="/" className="text-2xl font-bold flex items-center gap-2">
+            <Link href="/" className="text-2xl font-bold flex items-center gap-2">
               <span>AWS Community Hub</span>
               {betaActive && (
                 <span className="rounded-full bg-aws-orange px-2 py-1 text-xs font-semibold text-gray-900">
                   Beta
                 </span>
               )}
-            </a>
+            </Link>
             <div className="space-x-4">
-              <a href="/search" className="hover:text-aws-orange transition-colors">Search</a>
+              <Link href="/search" className="hover:text-aws-orange transition-colors">Search</Link>
               {betaActive && (
-                <a
+                <Link
                   href="/feedback"
                   className="hover:text-aws-orange transition-colors"
                 >
                   Feedback
-                </a>
+                </Link>
               )}
-              <a href="/auth/login" className="hover:text-aws-orange transition-colors">Login</a>
-              <a href="/auth/register" className="btn-primary">Register</a>
+              <Link href="/auth/login" className="hover:text-aws-orange transition-colors">Login</Link>
+              <Link href="/auth/register" className="btn-primary">Register</Link>
             </div>
           </div>
         </nav>
@@ -60,16 +59,16 @@ export default function RootLayout({
             <p>AWS Community Content Hub - Open Source Project</p>
             <p className="text-sm text-gray-400 mt-2">Built with Next.js, AWS Lambda, and PostgreSQL</p>
             <div className="mt-4 flex justify-center gap-4 text-sm text-gray-300">
-              <a href="/privacy" className="hover:text-white">
+              <Link href="/privacy" className="hover:text-white">
                 Privacy Policy
-              </a>
-              <a href="/terms" className="hover:text-white">
+              </Link>
+              <Link href="/terms" className="hover:text-white">
                 Terms of Service
-              </a>
+              </Link>
               {betaActive && (
-                <a href="/feedback" className="hover:text-white">
+                <Link href="/feedback" className="hover:text-white">
                   Share Feedback
-                </a>
+                </Link>
               )}
             </div>
           </div>

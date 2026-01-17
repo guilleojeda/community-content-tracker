@@ -12,6 +12,7 @@ describe('SearchService', () => {
   let mockContentRepo: jest.Mocked<ContentRepository>;
   let mockEmbeddingService: jest.Mocked<EmbeddingService>;
   let mockCloudWatch: jest.Mocked<CloudWatchClient>;
+  const originalTestDbInMemory = process.env.TEST_DB_INMEMORY;
 
   // Sample test data
   const mockEmbedding = new Array(1536).fill(0).map((_, i) => i / 1536);
@@ -69,6 +70,7 @@ describe('SearchService', () => {
   beforeEach(() => {
     // Reset mocks
     jest.clearAllMocks();
+    process.env.TEST_DB_INMEMORY = 'false';
 
     // Create mock instances
     mockContentRepo = {
@@ -89,6 +91,14 @@ describe('SearchService', () => {
     searchService = new SearchService(mockContentRepo, mockEmbeddingService, mockCloudWatch);
   });
 
+  afterEach(() => {
+    if (originalTestDbInMemory === undefined) {
+      delete process.env.TEST_DB_INMEMORY;
+    } else {
+      process.env.TEST_DB_INMEMORY = originalTestDbInMemory;
+    }
+  });
+
   describe('search', () => {
     it('should return empty results for empty query', async () => {
       const request: SearchRequest = {
@@ -106,6 +116,30 @@ describe('SearchService', () => {
         offset: 0,
       });
       expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
+    });
+
+    it('uses default pagination and skips semantic search when disabled', async () => {
+      const originalDisable = process.env.DISABLE_SEMANTIC_SEARCH;
+      process.env.DISABLE_SEMANTIC_SEARCH = 'true';
+
+      try {
+        mockContentRepo.keywordSearch.mockResolvedValue([{ ...mockContent1, rank: 0.5 }] as any);
+        mockContentRepo.countSearchResults.mockResolvedValue(1);
+
+        const result = await searchService.search({ query: 'AWS' }, true);
+
+        expect(result.limit).toBe(20);
+        expect(result.offset).toBe(0);
+        expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
+        expect(mockContentRepo.semanticSearch).not.toHaveBeenCalled();
+        expect(mockContentRepo.keywordSearch).toHaveBeenCalled();
+      } finally {
+        if (originalDisable === undefined) {
+          delete process.env.DISABLE_SEMANTIC_SEARCH;
+        } else {
+          process.env.DISABLE_SEMANTIC_SEARCH = originalDisable;
+        }
+      }
     });
 
     it('should perform hybrid search for authenticated user', async () => {
@@ -144,6 +178,23 @@ describe('SearchService', () => {
       expect(mockContentRepo.semanticSearch).toHaveBeenCalled();
       expect(mockContentRepo.keywordSearch).toHaveBeenCalled();
       expect(mockContentRepo.countSearchResults).toHaveBeenCalled();
+    });
+
+    it('combines keyword score when semantic score is zero', async () => {
+      const request: SearchRequest = {
+        query: 'AWS',
+        limit: 5,
+        offset: 0,
+      };
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockContentRepo.semanticSearch.mockResolvedValue([{ ...mockContent1, similarity: 0 }] as any);
+      mockContentRepo.keywordSearch.mockResolvedValue([{ ...mockContent1, rank: 0.8 }] as any);
+      mockContentRepo.countSearchResults.mockResolvedValue(1);
+
+      const result = await searchService.search(request, true, []);
+
+      expect(result.items[0]?.id).toBe(mockContent1.id);
     });
 
     it('should filter by visibility for anonymous user', async () => {
@@ -326,6 +377,49 @@ describe('SearchService', () => {
       expect(countCall[0].visibilityLevels).toEqual([Visibility.PUBLIC]);
     });
 
+    it('should include private visibility for owner context when viewerId is provided', async () => {
+      const request: SearchRequest = {
+        query: 'AWS',
+        limit: 20,
+        offset: 0,
+      };
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockContentRepo.semanticSearch.mockResolvedValue([]);
+      mockContentRepo.keywordSearch.mockResolvedValue([]);
+      mockContentRepo.countSearchResults.mockResolvedValue(0);
+
+      await searchService.search(request, true, [BadgeType.HERO], false, { viewerId: 'user-1' });
+
+      const semanticCall = mockContentRepo.semanticSearch.mock.calls[0];
+      expect(semanticCall[1].visibilityLevels).not.toContain(Visibility.PRIVATE);
+      expect(semanticCall[1].ownerVisibilityLevels).toEqual(
+        expect.arrayContaining([Visibility.PRIVATE])
+      );
+    });
+
+    it('should allow private-only filters for owners while preserving non-owner visibility', async () => {
+      const request: SearchRequest = {
+        query: 'AWS',
+        filters: {
+          visibility: [Visibility.PRIVATE],
+        },
+        limit: 20,
+        offset: 0,
+      };
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockContentRepo.semanticSearch.mockResolvedValue([]);
+      mockContentRepo.keywordSearch.mockResolvedValue([]);
+      mockContentRepo.countSearchResults.mockResolvedValue(0);
+
+      await searchService.search(request, true, [], false, { viewerId: 'user-1' });
+
+      const semanticCall = mockContentRepo.semanticSearch.mock.calls[0];
+      expect(semanticCall[1].visibilityLevels).toEqual([Visibility.PUBLIC]);
+      expect(semanticCall[1].ownerVisibilityLevels).toEqual([Visibility.PRIVATE]);
+    });
+
     it('should handle pagination correctly', async () => {
       const request: SearchRequest = {
         query: 'AWS',
@@ -349,6 +443,59 @@ describe('SearchService', () => {
       expect(result.limit).toBe(5);
       expect(result.offset).toBe(10);
       expect(result.items.length).toBeLessThanOrEqual(5);
+    });
+
+    it('should sort results by date when requested', async () => {
+      const request: SearchRequest = {
+        query: 'AWS',
+        limit: 10,
+        offset: 0,
+      };
+
+      const datedResults = [
+        {
+          ...mockContent1,
+          id: 'content-publish',
+          publishDate: new Date('2024-01-05'),
+          similarity: 0.9,
+        },
+        {
+          ...mockContent1,
+          id: 'content-capture',
+          publishDate: undefined,
+          captureDate: new Date('2024-01-10'),
+          similarity: 0.8,
+        },
+        {
+          ...mockContent1,
+          id: 'content-created',
+          publishDate: undefined,
+          captureDate: undefined as any,
+          createdAt: new Date('2024-01-02'),
+          similarity: 0.7,
+        },
+        {
+          ...mockContent1,
+          id: 'content-invalid',
+          publishDate: 'invalid-date' as any,
+          captureDate: new Date('2024-01-01'),
+          similarity: 0.6,
+        },
+      ];
+
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockContentRepo.semanticSearch.mockResolvedValue(datedResults as any);
+      mockContentRepo.keywordSearch.mockResolvedValue([]);
+      mockContentRepo.countSearchResults.mockResolvedValue(datedResults.length);
+
+      const result = await searchService.search(request, false, [], false, { sortBy: 'date' });
+
+      expect(result.items.map(item => item.id)).toEqual([
+        'content-capture',
+        'content-publish',
+        'content-created',
+        'content-invalid',
+      ]);
     });
 
     it('should merge results from semantic and keyword searches', async () => {
@@ -611,23 +758,39 @@ describe('SearchService', () => {
       expect(mockCloudWatch.send).toHaveBeenCalled();
     });
 
-    it('should categorize embedding errors correctly', async () => {
+    it.each([
+      ['Failed to generate embedding', 'EmbeddingError', 'embedding'],
+      ['Database connection error', 'DatabaseError', 'keyword'],
+      ['Request timeout reached', 'TimeoutError', 'keyword'],
+      ['ThrottlingException from AWS', 'ThrottlingError', 'keyword'],
+      ['Completely unknown problem', 'UnknownError', 'keyword'],
+    ])('categorizes "%s" as %s', async (message, expectedCategory, failureStage) => {
       const request: SearchRequest = {
         query: 'AWS',
         limit: 10,
         offset: 0,
       };
 
-      mockEmbeddingService.generateEmbedding.mockRejectedValue(
-        new Error('Failed to generate embedding')
-      );
+      if (failureStage === 'embedding') {
+        mockEmbeddingService.generateEmbedding.mockRejectedValue(new Error(message));
+      } else {
+        mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+        mockContentRepo.semanticSearch.mockResolvedValue([]);
+        mockContentRepo.keywordSearch.mockRejectedValue(new Error(message));
+        mockContentRepo.countSearchResults.mockResolvedValue(0);
+      }
 
       await expect(searchService.search(request, false)).rejects.toThrow();
-
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Verify CloudWatch was called for error tracking
       expect(mockCloudWatch.send).toHaveBeenCalled();
+      const putMetricCalls = (PutMetricDataCommand as jest.Mock).mock.calls;
+      const input = putMetricCalls[0]?.[0];
+      const errorType = input.MetricData[0].Dimensions.find(
+        (dimension: { Name: string; Value: string }) => dimension.Name === 'ErrorType'
+      )?.Value;
+
+      expect(errorType).toBe(expectedCategory);
     });
 
     it('should not fail if CloudWatch tracking fails', async () => {
@@ -751,47 +914,46 @@ describe('SearchService', () => {
       expect(semanticCall[1].visibilityLevels).toContain(Visibility.AWS_COMMUNITY);
       expect(semanticCall[1].visibilityLevels).toContain(Visibility.AWS_ONLY);
     });
-  });
 
-  describe('internal helpers', () => {
-    it.each([
-      ['Embedding service failed', 'EmbeddingError'],
-      ['Database connection error', 'DatabaseError'],
-      ['Request timeout reached', 'TimeoutError'],
-      ['ThrottlingException from AWS', 'ThrottlingError'],
-      ['Completely unknown problem', 'UnknownError'],
-    ])('categorizeError maps "%s" to %s', (message, expectedCategory) => {
-      const result = (searchService as any).categorizeError(message);
-      expect(result).toBe(expectedCategory);
-    });
-  });
+    it('returns empty results when requested visibility is not allowed', async () => {
+      const request: SearchRequest = {
+        query: 'test',
+        limit: 10,
+        offset: 0,
+        filters: {
+          visibility: [Visibility.AWS_ONLY],
+        },
+      };
 
-  describe('getSearchService singleton behavior', () => {
-    it('throws if dependencies are missing on first call', () => {
-      jest.isolateModules(() => {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const module = require('../../../src/backend/services/SearchService');
-        expect(() => module.getSearchService()).toThrow('SearchService not initialized');
-      });
+      const result = await searchService.search(request, false);
+
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
+      expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
+      expect(mockContentRepo.semanticSearch).not.toHaveBeenCalled();
+      expect(mockContentRepo.keywordSearch).not.toHaveBeenCalled();
     });
 
-    it('reuses the same instance after initialization', () => {
-      jest.isolateModules(() => {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const module = require('../../../src/backend/services/SearchService');
-        const repo = {
-          semanticSearch: jest.fn(),
-          keywordSearch: jest.fn(),
-          countSearchResults: jest.fn(),
-        } as unknown as ContentRepository;
-        const embedding = { generateEmbedding: jest.fn() } as unknown as EmbeddingService;
-        const cloudwatch = { send: jest.fn().mockResolvedValue(undefined) } as unknown as CloudWatchClient;
+    it('includes private visibility for owner queries', async () => {
+      const request: SearchRequest = {
+        query: 'test',
+        limit: 10,
+        offset: 0,
+        filters: {
+          visibility: [Visibility.PRIVATE],
+        },
+      };
 
-        const firstInstance = module.getSearchService(repo, embedding, cloudwatch);
-        const secondInstance = module.getSearchService();
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockContentRepo.semanticSearch.mockResolvedValue([] as any);
+      mockContentRepo.keywordSearch.mockResolvedValue([] as any);
+      mockContentRepo.countSearchResults.mockResolvedValue(0);
 
-        expect(secondInstance).toBe(firstInstance);
-      });
+      await searchService.search(request, true, [], false, { viewerId: 'viewer-1' });
+
+      const semanticCall = mockContentRepo.semanticSearch.mock.calls[0];
+      expect(semanticCall[1].ownerVisibilityLevels).toContain(Visibility.PRIVATE);
+      expect(semanticCall[1].visibilityLevels).not.toContain(Visibility.PRIVATE);
     });
   });
 });

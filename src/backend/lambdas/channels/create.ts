@@ -3,6 +3,7 @@ import { ChannelRepository } from '../../repositories/ChannelRepository';
 import { ChannelType, CreateChannelRequest } from '../../../shared/types';
 import { errorResponse, successResponse } from '../../../shared/api-errors';
 import { getDatabasePool } from '../../services/database';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 function validateUrl(url: string): boolean {
   try {
@@ -15,6 +16,9 @@ function validateUrl(url: string): boolean {
 
 async function validateUrlAccessibility(url: string): Promise<{ accessible: boolean; error?: string }> {
   try {
+    if (process.env.SKIP_URL_ACCESSIBILITY_CHECK === 'true') {
+      return { accessible: true };
+    }
     // Use HEAD request to check if URL is accessible without downloading full content
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
@@ -80,7 +84,21 @@ export const handler = async (
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> => {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'channels:create' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+    const respondError = (code: string, message: string, statusCode: number, details?: Record<string, any>) =>
+      withRateLimit(errorResponse(code, message, statusCode, details));
+    const respondSuccess = (statusCode: number, data: any) =>
+      withRateLimit(successResponse(statusCode, data));
+
+    if (rateLimit && !rateLimit.allowed) {
+      return respondError('RATE_LIMITED', 'Too many requests', 429);
+    }
+
     const pool = await getDatabasePool();
     const channelRepository = new ChannelRepository(pool);
 
@@ -88,18 +106,18 @@ export const handler = async (
     const userId = event.requestContext.authorizer?.claims?.sub ||
                    event.requestContext?.authorizer?.userId;
     if (!userId) {
-      return errorResponse('AUTH_REQUIRED', 'Authentication required', 401);
+      return respondError('AUTH_REQUIRED', 'Authentication required', 401);
     }
 
     if (!event.body) {
-      return errorResponse('VALIDATION_ERROR', 'Request body is required', 400);
+      return respondError('VALIDATION_ERROR', 'Request body is required', 400);
     }
 
     const requestData: CreateChannelRequest = JSON.parse(event.body);
 
     // Validate required URL
     if (!requestData.url) {
-      return errorResponse(
+      return respondError(
         'VALIDATION_ERROR',
         'url is required',
         400,
@@ -113,7 +131,7 @@ export const handler = async (
 
     // Validate URL format
     if (!validateUrl(requestData.url)) {
-      return errorResponse(
+      return respondError(
         'VALIDATION_ERROR',
         'Invalid URL format',
         400,
@@ -128,7 +146,7 @@ export const handler = async (
     // Validate URL accessibility
     const accessibilityCheck = await validateUrlAccessibility(requestData.url);
     if (!accessibilityCheck.accessible) {
-      return errorResponse(
+      return respondError(
         'VALIDATION_ERROR',
         'URL is not accessible',
         400,
@@ -145,7 +163,7 @@ export const handler = async (
     if (!channelType) {
       const detectedType = detectChannelType(requestData.url);
       if (!detectedType) {
-        return errorResponse(
+        return respondError(
           'VALIDATION_ERROR',
           'Could not detect channel type from URL. Please provide channelType explicitly.',
           400,
@@ -161,7 +179,7 @@ export const handler = async (
 
     // Validate channel type
     if (!validateChannelType(channelType)) {
-      return errorResponse(
+      return respondError(
         'VALIDATION_ERROR',
         'Invalid channel type',
         400,
@@ -176,7 +194,7 @@ export const handler = async (
     // Check for duplicate URL
     const existing = await channelRepository.findByUserIdAndUrl(userId, requestData.url);
     if (existing) {
-      return errorResponse('DUPLICATE_RESOURCE', 'Channel with this URL already exists', 409);
+      return respondError('DUPLICATE_RESOURCE', 'Channel with this URL already exists', 409);
     }
 
     // Create channel
@@ -189,10 +207,13 @@ export const handler = async (
       metadata: requestData.metadata || {},
     });
 
-    return successResponse(201, channel);
+    return respondSuccess(201, channel);
   } catch (error: any) {
     console.error('Error creating channel:', error);
 
-    return errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', 500);
+    return attachRateLimitHeaders(
+      errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', 500),
+      rateLimit
+    );
   }
 };

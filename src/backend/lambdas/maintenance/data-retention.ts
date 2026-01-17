@@ -35,7 +35,7 @@ export async function handler(): Promise<APIGatewayProxyResult> {
     await auditLog.log({
       action: 'system.data-retention',
       resourceType: 'analytics_events',
-      resourceId: null,
+      resourceId: undefined,
       userId: undefined,
       newValues: {
         deletedCount: analyticsDeleted,

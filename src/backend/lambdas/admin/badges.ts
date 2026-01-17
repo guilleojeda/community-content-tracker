@@ -10,6 +10,7 @@ import {
   createSuccessResponse,
   parseRequestBody,
 } from '../auth/utils';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 interface BadgeGrantRequest {
   userId?: string;
@@ -495,35 +496,47 @@ export async function handler(
   const deps = await getDependencies();
   const path = event.path || '';
   const method = (event.httpMethod || 'GET').toUpperCase();
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'admin:badges' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     if (method === 'POST' && path === '/admin/badges/bulk') {
-      return await handleBulkOperation(event, deps);
+      return withRateLimit(await handleBulkOperation(event, deps));
     }
 
     if (method === 'POST' && path === '/admin/badges') {
-      return await handleGrantBadge(event, deps);
+      return withRateLimit(await handleGrantBadge(event, deps));
     }
 
     if (method === 'DELETE' && path === '/admin/badges') {
-      return await handleRevokeBadge(event, deps);
+      return withRateLimit(await handleRevokeBadge(event, deps));
     }
 
     if (method === 'PUT' && /^\/admin\/users\/[^/]+\/aws-employee$/.test(path)) {
-      return await handleAwsEmployeeStatus(event, deps);
+      return withRateLimit(await handleAwsEmployeeStatus(event, deps));
     }
 
     if (method === 'GET' && /^\/users\/[^/]+\/badges$/.test(path)) {
-      return await handlePublicBadgeListing(event, deps);
+      return withRateLimit(await handlePublicBadgeListing(event, deps));
     }
 
     if (method === 'GET' && /^\/admin\/badges\/history\/[^/]+$/.test(path)) {
-      return await handleBadgeHistory(event, deps);
+      return withRateLimit(await handleBadgeHistory(event, deps));
     }
 
-    return createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`);
+    return withRateLimit(createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`));
   } catch (error) {
     console.error('Unhandled badge admin error', { path, method, error });
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred'),
+      rateLimit
+    );
   }
 }

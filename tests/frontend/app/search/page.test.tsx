@@ -7,8 +7,8 @@ const mockApiClient = {
   search: jest.fn(),
 };
 
-jest.mock('@/api/client', () => ({
-  getPublicApiClient: jest.fn(() => mockApiClient),
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadPublicApiClient: jest.fn(() => Promise.resolve(mockApiClient)),
 }));
 
 jest.mock('next/navigation', () => ({
@@ -246,6 +246,32 @@ describe('Public Search Page', () => {
     });
   });
 
+  it('hides call-to-action when authenticated via session storage', async () => {
+    window.sessionStorage.setItem('accessToken', 'token');
+    mockApiClient.search.mockResolvedValue({
+      results: [{
+        id: '1',
+        title: 'Lambda Deep Dive',
+        contentType: 'blog',
+        visibility: 'public',
+        tags: [],
+        urls: [{ url: 'https://example.com' }],
+      }],
+      total: 1,
+      offset: 0,
+      limit: 10,
+    });
+
+    render(<SearchPage />);
+
+    fireEvent.change(screen.getByPlaceholderText(/search aws content/i), { target: { value: 'lambda' } });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/create account/i)).not.toBeInTheDocument();
+    });
+  });
+
   it('condenses pagination controls for large result sets', async () => {
     const pagingResponse = (offset: number) => ({
       results: Array.from({ length: 10 }, (_, i) => ({
@@ -345,5 +371,41 @@ describe('Public Search Page', () => {
       expect(screen.getByText('Public Blog')).toBeInTheDocument();
       expect(screen.queryByText('Internal Paper')).toBeNull();
     });
+  });
+
+  it('renders items payloads and ignores invalid URLs', async () => {
+    mockApiClient.search.mockResolvedValue({
+      items: [
+        {
+          id: 'edge-1',
+          title: 'Edge Case Result',
+          contentType: 'blog',
+          visibility: 'public',
+          urls: [
+            { id: 'missing-url' },
+            { url: '' },
+            { url: 'https://valid.example.com' },
+          ],
+          tags: undefined,
+          description: null,
+          userId: null,
+          captureDate: null,
+          createdAt: null,
+          updatedAt: null,
+          version: undefined,
+        },
+      ],
+      total: 1,
+      offset: 0,
+      limit: 10,
+    });
+
+    render(<SearchPage />);
+
+    fireEvent.change(screen.getByPlaceholderText(/search aws content/i), { target: { value: 'edge' } });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    const resultLink = await screen.findByRole('link', { name: 'Edge Case Result' });
+    expect(resultLink).toHaveAttribute('href', 'https://valid.example.com');
   });
 });

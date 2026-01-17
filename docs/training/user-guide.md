@@ -11,12 +11,12 @@
 ![Dashboard overview](./images/dashboard-overview.svg)
 
 ## 2. Managing your profile
-- Open **Settings → Profile** to update username, bio, and visibility defaults.
+- Open **Settings -> Profile** to update username, bio, and visibility defaults.
 - Social links accept full URLs and are validated client-side.
 - Use the **Preview** card to verify profile before saving.
 
 ## 3. Content ingestion
-- Go to **Dashboard → Content**.
+- Go to **Dashboard -> Content**.
 - Click **Add Content** and provide title, URLs, tags, and visibility.
 - The platform validates URLs and prevents duplicates.
 - Bulk visibility updates can be applied from the content list toolbar.
@@ -24,27 +24,27 @@
 ![Content management form](./images/content-form.svg)
 
 ## 4. Search & discovery
-- Use the global search bar or open **Dashboard → Search** for advanced filters.
+- Use the global search bar or open **Dashboard -> Search** for advanced filters.
 - Save frequent queries with **Save Search**; they appear in the left history panel.
 - Export filtered results via **Export CSV**.
 
 ![Advanced search filters](./images/search-filters.svg)
 
 ## 5. GDPR self-service
-- **Export data:** Settings → Privacy → *Download personal archive*.
-- **Delete account:** Settings → Danger Zone → *Delete account* (irreversible).
+- **Export data:** Settings -> Privacy -> *Download personal archive*.
+- **Delete account:** Settings -> Danger Zone -> *Delete account* (irreversible).
 - Expect an email confirmation for each action. Exports are delivered as downloadable JSON.
 
 ## 6. Analytics
-- Navigate to **Dashboard → Analytics** for channel and tag breakdowns.
+- Navigate to **Dashboard -> Analytics** for channel and tag breakdowns.
 - Adjust date range and grouping (day/week/month) to compare performance.
 - Export CSV summaries or program-specific reports for Hero/Ambassador reporting.
 
 ![Analytics dashboard](./images/analytics-dashboard.svg)
 
 ## 7. Notifications & consent
-- Cookie banner respects analytics consent; update preferences in **Settings → Privacy**.
-- Email notifications can be toggled under **Settings → Communication**.
+- Cookie banner respects analytics consent; update preferences in **Settings -> Privacy**.
+- Email notifications can be toggled under **Settings -> Communication**.
 
 ## 8. Support
 - Email `support@awscommunityhub.org` for technical issues.

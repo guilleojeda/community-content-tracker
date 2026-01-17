@@ -12,13 +12,16 @@ NC='\033[0m' # No Color
 
 # Get environment from argument or default to dev
 ENVIRONMENT=${1:-dev}
+if [[ "$ENVIRONMENT" == "production" ]]; then
+    ENVIRONMENT="prod"
+fi
 
 echo -e "${GREEN}Deploying AWS Community Content Hub - Environment: ${ENVIRONMENT}${NC}"
 echo ""
 
 # Validate environment
-if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod)$ ]]; then
-    echo -e "${RED}Error: Invalid environment. Must be dev, staging, or prod${NC}"
+if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod|blue|green|beta)$ ]]; then
+    echo -e "${RED}Error: Invalid environment. Must be dev, staging, prod, blue, green, or beta${NC}"
     exit 1
 fi
 

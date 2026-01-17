@@ -13,6 +13,7 @@ describe('CommunityContentApp', () => {
     it('configures development infrastructure with cost-optimised defaults', () => {
       const communityApp = new CommunityContentApp(app, 'CommunityContentDev', {
         environment: 'dev',
+        databaseName: 'community_content',
       });
 
       const dbTemplate = Template.fromStack(communityApp.databaseStack);
@@ -37,6 +38,7 @@ describe('CommunityContentApp', () => {
     it('enables production safeguards and WAF for production deployments', () => {
       const communityApp = new CommunityContentApp(app, 'CommunityContentProd', {
         environment: 'prod',
+        databaseName: 'community_content',
         domainName: 'community-content.example.com',
         certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/prod-cert',
         enableWaf: true,
@@ -68,6 +70,7 @@ describe('CommunityContentApp', () => {
     it('exports stack names for downstream stacks', () => {
       const communityApp = new CommunityContentApp(app, 'CommunityContentDev', {
         environment: 'dev',
+        databaseName: 'community_content',
       });
 
       const dbTemplate = Template.fromStack(communityApp.databaseStack);
@@ -94,6 +97,7 @@ describe('CommunityContentApp', () => {
 
       const communityApp = new CommunityContentApp(app, 'CommunityContentEnv', {
         environment: 'dev',
+        databaseName: 'community_content',
       });
 
       expect(communityApp.databaseStack.account).toBe('123456789012');

@@ -6,8 +6,8 @@ const mockApiClient = {
   getStats: jest.fn(),
 };
 
-jest.mock('@/api/client', () => ({
-  getPublicApiClient: jest.fn(() => mockApiClient),
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadPublicApiClient: jest.fn(() => Promise.resolve(mockApiClient)),
 }));
 
 jest.mock('next/dynamic', () => () => {

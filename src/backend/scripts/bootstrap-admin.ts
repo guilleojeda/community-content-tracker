@@ -45,7 +45,7 @@ function hasDatabaseParts(env: NodeJS.ProcessEnv): boolean {
 
 function buildDatabaseUrl(env: NodeJS.ProcessEnv): string {
   const host = env.DB_HOST as string;
-  const port = (env.DB_PORT as string) || '5432';
+  const port = env.DB_PORT as string;
   const database = env.DB_NAME as string;
   const user = encodeURIComponent(env.DB_USER as string);
   const password = env.DB_PASSWORD ? encodeURIComponent(env.DB_PASSWORD) : '';
@@ -101,7 +101,11 @@ function getArg(args: string[], flag: string): string | undefined {
 
 export function validateEnvironment(env: NodeJS.ProcessEnv = process.env): BootstrapEnvironment {
   const databaseUrl = resolveDatabaseUrl(env);
-  const region = env.AWS_REGION || 'us-east-1';
+  const region = env.AWS_REGION;
+  if (!region || region.trim().length === 0) {
+    console.error('Missing required environment variable: AWS_REGION');
+    throw new Error('INVALID_ENVIRONMENT');
+  }
   const userPoolId = env.COGNITO_USER_POOL_ID;
   const clientId = env.COGNITO_CLIENT_ID;
 

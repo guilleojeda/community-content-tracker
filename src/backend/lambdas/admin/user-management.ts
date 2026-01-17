@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { BadgeType } from '@aws-community-hub/shared';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 function extractAdminContext(event: APIGatewayProxyEvent) {
   const authorizer: any = event.requestContext?.authorizer || {};
@@ -220,23 +221,35 @@ export async function handler(
 ): Promise<APIGatewayProxyResult> {
   const path = event.path || '';
   const method = (event.httpMethod || 'GET').toUpperCase();
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'admin:user-management' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     if (method === 'GET' && path === '/admin/users') {
-      return await handleListUsers(event);
+      return withRateLimit(await handleListUsers(event));
     }
 
     if (method === 'GET' && /^\/admin\/users\/[^/]+$/.test(path)) {
-      return await handleGetUser(event);
+      return withRateLimit(await handleGetUser(event));
     }
 
     if (method === 'POST' && path === '/admin/users/export') {
-      return await handleExportUsers(event);
+      return withRateLimit(await handleExportUsers(event));
     }
 
-    return createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`);
+    return withRateLimit(createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`));
   } catch (error) {
     console.error('Unhandled user management error', { path, method, error });
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred'),
+      rateLimit
+    );
   }
 }

@@ -224,7 +224,7 @@ We need to ingest content from multiple sources with different protocols and upd
 Decision
 Implement a modular ingestion pipeline:
 Architecture
-Source → Lambda Scraper → SQS → Lambda Processor → Database
+Source -> Lambda Scraper -> SQS -> Lambda Processor -> Database
                 ↓
          CloudWatch Events
           (Daily Schedule)

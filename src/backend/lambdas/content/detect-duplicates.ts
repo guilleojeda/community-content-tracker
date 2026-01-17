@@ -3,9 +3,16 @@ import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { normalizeUrl } from '../../utils/url-normalization';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
+import type { StandardUnit } from '@aws-sdk/client-cloudwatch';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
+
+const awsRegion = process.env.AWS_REGION;
+if (!awsRegion || awsRegion.trim().length === 0) {
+  throw new Error('AWS_REGION must be set');
+}
 
 // Initialize CloudWatch client
-const cloudwatchClient = new CloudWatchClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const cloudwatchClient = new CloudWatchClient({ region: awsRegion });
 
 /**
  * Helper function to publish CloudWatch metrics
@@ -16,28 +23,28 @@ async function publishMetrics(duplicatesCount: number, duplicatesByType: Record<
       {
         MetricName: 'DuplicatesDetected',
         Value: duplicatesCount,
-        Unit: 'Count',
+        Unit: 'Count' as StandardUnit,
         Timestamp: new Date(),
         Dimensions: [{ Name: 'Function', Value: 'DuplicateDetection' }],
       },
       {
         MetricName: 'TitleDuplicates',
         Value: duplicatesByType.title || 0,
-        Unit: 'Count',
+        Unit: 'Count' as StandardUnit,
         Timestamp: new Date(),
         Dimensions: [{ Name: 'DetectionType', Value: 'Title' }],
       },
       {
         MetricName: 'UrlDuplicates',
         Value: duplicatesByType.url || 0,
-        Unit: 'Count',
+        Unit: 'Count' as StandardUnit,
         Timestamp: new Date(),
         Dimensions: [{ Name: 'DetectionType', Value: 'URL' }],
       },
       {
         MetricName: 'EmbeddingDuplicates',
         Value: duplicatesByType.embedding || 0,
-        Unit: 'Count',
+        Unit: 'Count' as StandardUnit,
         Timestamp: new Date(),
         Dimensions: [{ Name: 'DetectionType', Value: 'Embedding' }],
       },
@@ -220,6 +227,8 @@ export async function handler(
   event: APIGatewayProxyEvent | ScheduledEvent,
   context: Context
 ): Promise<APIGatewayProxyResult | void> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+
   try {
     const pool = await getDatabasePool();
 
@@ -267,9 +276,17 @@ export async function handler(
     } else {
       // API Gateway mode: Process single user
       const apiEvent = event as APIGatewayProxyEvent;
+      rateLimit = await applyRateLimit(apiEvent, { resource: 'content:detect-duplicates' });
+      const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+        attachRateLimitHeaders(response, rateLimit);
+
+      if (rateLimit && !rateLimit.allowed) {
+        return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+      }
+
       const authorizer: any = apiEvent.requestContext?.authorizer;
       if (!authorizer || !authorizer.userId) {
-        return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+        return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
       }
 
       const userId = authorizer.userId;
@@ -312,16 +329,19 @@ export async function handler(
         ).values()
       );
 
-      return createSuccessResponse(200, {
+      return withRateLimit(createSuccessResponse(200, {
         success: true,
         data: {
           duplicates: uniqueDuplicates,
           count: uniqueDuplicates.length,
         },
-      });
+      }));
     }
   } catch (error: any) {
     console.error('Duplicate detection error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to detect duplicates');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to detect duplicates'),
+      rateLimit
+    );
   }
 }

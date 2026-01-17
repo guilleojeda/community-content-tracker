@@ -4,7 +4,7 @@ import { getApiBaseUrl } from '../env';
 
 // Create typed API client
 export const apiClient = createClient<paths>({
-  baseUrl: `${getApiBaseUrl()}/api`,
+  baseUrl: getApiBaseUrl(),
   headers: {
     'Content-Type': 'application/json',
   },

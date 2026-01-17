@@ -1,8 +1,31 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
-import { handler } from '../../../../src/backend/lambdas/search/advanced-search';
+import { handler, convertToTsQuery } from '../../../../src/backend/lambdas/search/advanced-search';
 import { getDatabasePool } from '../../../../src/backend/services/database';
 
 jest.mock('../../../../src/backend/services/database');
+
+describe('convertToTsQuery', () => {
+  it('converts boolean AND operator', () => {
+    expect(convertToTsQuery('AWS AND Lambda')).toBe('AWS&Lambda');
+  });
+
+  it('converts boolean OR operator', () => {
+    expect(convertToTsQuery('AWS OR Lambda')).toBe('AWS|Lambda');
+  });
+
+  it('converts boolean NOT operator', () => {
+    expect(convertToTsQuery('AWS NOT Lambda')).toBe('AWS!Lambda');
+  });
+
+  it('converts quoted phrases to proximity operators', () => {
+    const result = convertToTsQuery('"AWS Lambda"');
+    expect(result).toContain('<->');
+  });
+
+  it('converts wildcard suffix to tsquery syntax', () => {
+    expect(convertToTsQuery('Lamb*')).toBe('Lamb:*');
+  });
+});
 
 describe('Advanced Search Lambda', () => {
   const mockPool = {
@@ -16,7 +39,7 @@ describe('Advanced Search Lambda', () => {
     (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
   });
 
-  const createMockEvent = (queryParams: any): APIGatewayProxyEvent => ({
+  const createMockEvent = (queryParams: any, authorizer?: any): APIGatewayProxyEvent => ({
     httpMethod: 'GET',
     path: '/search/advanced',
     headers: {},
@@ -55,135 +78,10 @@ describe('Advanced Search Lambda', () => {
         userAgent: 'test-agent',
         userArn: null,
       },
-      authorizer: undefined,
+      authorizer,
     },
     resource: '/search/advanced',
   } as any);
-
-  it('should support boolean AND operator', async () => {
-    const event = createMockEvent({ query: 'AWS AND Lambda' });
-
-    mockPool.query.mockResolvedValue({
-      rows: [
-        {
-          id: 'content-1',
-          title: 'AWS Lambda Tutorial',
-          description: 'Learn AWS Lambda',
-          content_type: 'blog',
-        },
-      ],
-    });
-
-    const response = await handler(event, {} as any);
-
-    expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.body);
-    expect(body.success).toBe(true);
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining(['AWS&Lambda'])
-    );
-  });
-
-  it('should support boolean OR operator', async () => {
-    const event = createMockEvent({ query: 'AWS OR Lambda' });
-
-    mockPool.query.mockResolvedValue({
-      rows: [
-        {
-          id: 'content-1',
-          title: 'AWS Services',
-          description: 'Overview of AWS',
-          content_type: 'blog',
-        },
-      ],
-    });
-
-    const response = await handler(event, {} as any);
-
-    expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.body);
-    expect(body.success).toBe(true);
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining('|'),
-      expect.any(Array)
-    );
-  });
-
-  it('should support boolean NOT operator', async () => {
-    const event = createMockEvent({ query: 'AWS NOT Lambda' });
-
-    mockPool.query.mockResolvedValue({
-      rows: [
-        {
-          id: 'content-1',
-          title: 'AWS EC2 Guide',
-          description: 'Learn EC2',
-          content_type: 'blog',
-        },
-      ],
-    });
-
-    const response = await handler(event, {} as any);
-
-    expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.body);
-    expect(body.success).toBe(true);
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining(['AWS!Lambda'])
-    );
-  });
-
-  it('should support exact phrase matching with quotes', async () => {
-    const event = createMockEvent({ query: '"AWS Lambda"' });
-
-    mockPool.query.mockResolvedValue({
-      rows: [
-        {
-          id: 'content-1',
-          title: 'AWS Lambda Functions',
-          description: 'AWS Lambda guide',
-          content_type: 'blog',
-        },
-      ],
-    });
-
-    const response = await handler(event, {} as any);
-
-    expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.body);
-    expect(body.success).toBe(true);
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining([expect.stringContaining('<->')])
-    );
-  });
-
-  it('should support wildcard search', async () => {
-    const event = createMockEvent({ query: 'Lamb*' });
-
-    mockPool.query.mockResolvedValue({
-      rows: [
-        {
-          id: 'content-1',
-          title: 'Lambda Functions',
-          description: 'Lambda guide',
-          content_type: 'blog',
-        },
-      ],
-    });
-
-    const response = await handler(event, {} as any);
-
-    expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.body);
-    expect(body.success).toBe(true);
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining([expect.stringContaining(':*')])
-    );
-  });
 
   it('should apply visibility filters for public search', async () => {
     const event = createMockEvent({ query: 'AWS' });
@@ -192,10 +90,19 @@ describe('Advanced Search Lambda', () => {
       rows: [
         {
           id: 'content-1',
+          user_id: 'user-1',
           title: 'AWS Guide',
           description: 'Learn AWS',
           content_type: 'blog',
           visibility: 'public',
+        },
+        {
+          id: 'content-2',
+          user_id: 'user-2',
+          title: 'Private Notes',
+          description: 'Internal',
+          content_type: 'blog',
+          visibility: 'private',
         },
       ],
     });
@@ -203,9 +110,42 @@ describe('Advanced Search Lambda', () => {
     const response = await handler(event, {} as any);
 
     expect(response.statusCode).toBe(200);
-    const callArgs = mockPool.query.mock.calls[0];
-    expect(callArgs[0]).toContain('visibility');
-    expect(callArgs[1][1]).toContain('public');
+    const body = JSON.parse(response.body);
+    expect(body.data.results).toHaveLength(1);
+    expect(body.data.results[0].id).toBe('content-1');
+  });
+
+  it('should include private content for the owner', async () => {
+    const event = createMockEvent({ query: 'AWS' }, { userId: 'user-2' });
+
+    mockPool.query.mockResolvedValue({
+      rows: [
+        {
+          id: 'content-1',
+          user_id: 'user-1',
+          title: 'AWS Guide',
+          description: 'Learn AWS',
+          content_type: 'blog',
+          visibility: 'public',
+        },
+        {
+          id: 'content-2',
+          user_id: 'user-2',
+          title: 'Private Notes',
+          description: 'Internal',
+          content_type: 'blog',
+          visibility: 'private',
+        },
+      ],
+    });
+
+    const response = await handler(event, {} as any);
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    const ids = body.data.results.map((item: { id: string }) => item.id);
+    expect(ids).toContain('content-1');
+    expect(ids).toContain('content-2');
   });
 
   it('should return CSV format when format=csv is specified', async () => {
@@ -407,11 +347,9 @@ describe('Advanced Search Lambda', () => {
     const body = JSON.parse(response.body);
     expect(body.success).toBe(true);
 
-    // Verify the query includes the withinIds filter
-    const callArgs = mockPool.query.mock.calls[0];
-    expect(callArgs[0]).toContain('c.id = ANY');
-    // The withinIds array should be the 3rd parameter (index 2) after tsQuery and visibilityFilter
-    expect(callArgs[1][3]).toEqual(['content-1', 'content-3', 'content-5']);
+    const values = mockPool.query.mock.calls[0][1];
+    const withinIdsArg = values.find((value: unknown) => Array.isArray(value) && value.includes('content-1'));
+    expect(withinIdsArg).toEqual(['content-1', 'content-3', 'content-5']);
   });
 
   it('should handle empty withinIds parameter gracefully', async () => {
@@ -440,9 +378,9 @@ describe('Advanced Search Lambda', () => {
     const body = JSON.parse(response.body);
     expect(body.success).toBe(true);
 
-    // Should not include withinIds filter when empty
-    const callArgs = mockPool.query.mock.calls[0];
-    expect(callArgs[0]).not.toContain('c.id = ANY');
+    const values = mockPool.query.mock.calls[0][1];
+    const arrayArgs = values.filter((value: unknown) => Array.isArray(value));
+    expect(arrayArgs).toHaveLength(1);
   });
 
   it('should handle whitespace in withinIds parameter', async () => {

@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LoginRequest, LoginResponse } from '@aws-community-hub/shared';
-import { getPublicApiClient } from '@/api/client';
+import { loadPublicApiClient } from '@/lib/api/lazyClient';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -21,7 +21,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const client = getPublicApiClient();
+      const client = await loadPublicApiClient();
       const requestBody: LoginRequest = {
         email: formData.email,
         password: formData.password,

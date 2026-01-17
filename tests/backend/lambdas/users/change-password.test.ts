@@ -1,22 +1,45 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/users/change-password';
-import { CognitoIdentityProviderClient, ChangePasswordCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { mockClient } from 'aws-sdk-client-mock';
+import { ChangePasswordCommand } from '@aws-sdk/client-cognito-identity-provider';
 
-const cognitoMock = mockClient(CognitoIdentityProviderClient);
+jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
+  const actual = jest.requireActual('@aws-sdk/client-cognito-identity-provider');
+  const sendMock = jest.fn();
+  return {
+    ...actual,
+    CognitoIdentityProviderClient: jest.fn(() => ({ send: sendMock })),
+    __cognitoSendMock: sendMock,
+  };
+});
+
+const cognitoSendMock = (jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  __cognitoSendMock: jest.Mock;
+}).__cognitoSendMock;
+const { CognitoIdentityProviderClient } = jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  CognitoIdentityProviderClient: jest.Mock;
+};
 
 describe('Change Password Lambda', () => {
   const validUserId = 'user-123';
   const validAccessToken = 'valid-access-token';
 
   beforeEach(() => {
-    cognitoMock.reset();
+    CognitoIdentityProviderClient.mockImplementation(() => ({ send: cognitoSendMock }));
+    cognitoSendMock.mockReset();
   });
 
-  const createEvent = (body: any, userId?: string, authHeader?: string): Partial<APIGatewayProxyEvent> => ({
+  const createEvent = (
+    body: any,
+    userId?: string,
+    authHeader?: string,
+    authorizerUserId: string | null = validUserId
+  ): Partial<APIGatewayProxyEvent> => ({
     pathParameters: userId ? { id: userId } : undefined,
     headers: authHeader ? { Authorization: authHeader } : {},
     body: JSON.stringify(body),
+    requestContext: {
+      authorizer: authorizerUserId ? { userId: authorizerUserId } : undefined,
+    } as any,
   });
 
   describe('Validation', () => {
@@ -126,7 +149,7 @@ describe('Change Password Lambda', () => {
 
   describe('Success Cases', () => {
     it('should successfully change password with valid inputs', async () => {
-      cognitoMock.on(ChangePasswordCommand).resolves({});
+      cognitoSendMock.mockResolvedValueOnce({});
 
       const event = createEvent(
         { currentPassword: 'OldPass123!', newPassword: 'NewPassword456!' },
@@ -141,9 +164,11 @@ describe('Change Password Lambda', () => {
       expect(body.message).toBe('Password changed successfully');
 
       // Verify Cognito was called correctly
-      const cognitoCalls = cognitoMock.commandCalls(ChangePasswordCommand);
-      expect(cognitoCalls.length).toBe(1);
-      expect(cognitoCalls[0].args[0].input).toEqual({
+      const cognitoCommands = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof ChangePasswordCommand);
+      expect(cognitoCommands.length).toBe(1);
+      expect(cognitoCommands[0].input).toEqual({
         PreviousPassword: 'OldPass123!',
         ProposedPassword: 'NewPassword456!',
         AccessToken: validAccessToken,
@@ -153,7 +178,7 @@ describe('Change Password Lambda', () => {
 
   describe('Error Handling', () => {
     it('should return 401 for NotAuthorizedException', async () => {
-      cognitoMock.on(ChangePasswordCommand).rejects({
+      cognitoSendMock.mockRejectedValueOnce({
         name: 'NotAuthorizedException',
         message: 'Invalid credentials',
       });
@@ -172,7 +197,7 @@ describe('Change Password Lambda', () => {
     });
 
     it('should return 400 for InvalidPasswordException', async () => {
-      cognitoMock.on(ChangePasswordCommand).rejects({
+      cognitoSendMock.mockRejectedValueOnce({
         name: 'InvalidPasswordException',
         message: 'Password does not meet requirements',
       });
@@ -191,7 +216,7 @@ describe('Change Password Lambda', () => {
     });
 
     it('should return 500 for unexpected errors', async () => {
-      cognitoMock.on(ChangePasswordCommand).rejects(new Error('Unexpected error'));
+      cognitoSendMock.mockRejectedValueOnce(new Error('Unexpected error'));
 
       const event = createEvent(
         { currentPassword: 'OldPass123!', newPassword: 'NewPassword456!' },

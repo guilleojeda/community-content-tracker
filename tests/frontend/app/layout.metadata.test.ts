@@ -1,16 +1,16 @@
 jest.mock('identity-obj-proxy', () => ({}), { virtual: true });
 
 describe('RootLayout metadata', () => {
-  const originalDomain = process.env.NEXT_PUBLIC_DOMAIN;
+  const originalSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
 
   beforeEach(() => {
-    delete process.env.NEXT_PUBLIC_DOMAIN;
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://awscommunityhub.org';
     jest.resetModules();
     jest.doMock('../../../src/frontend/src/styles/globals.css', () => ({}), { virtual: true });
   });
 
   afterAll(() => {
-    process.env.NEXT_PUBLIC_DOMAIN = originalDomain;
+    process.env.NEXT_PUBLIC_SITE_URL = originalSiteUrl;
   });
 
   it('exposes SEO metadata fields for the public site', async () => {

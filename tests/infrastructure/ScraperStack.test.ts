@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { ScraperStack } from '../../src/infrastructure/lib/stacks/ScraperStack';
 
 describe('ScraperStack', () => {
@@ -14,6 +15,16 @@ describe('ScraperStack', () => {
 
     // Create a minimal helper stack for importing external resources
     const importStack = new cdk.Stack(app, 'ImportStack');
+    const networkStack = new cdk.Stack(app, 'NetworkStack');
+    const vpc = new ec2.Vpc(networkStack, 'Vpc', {
+      maxAzs: 2,
+      subnetConfiguration: [
+        { name: 'Public', subnetType: ec2.SubnetType.PUBLIC },
+        { name: 'PrivateEgress', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        { name: 'PrivateIsolated', subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+      ],
+    });
+    const lambdaSecurityGroup = new ec2.SecurityGroup(networkStack, 'LambdaSg', { vpc });
 
     // Import mock resources using ARNs
     const mockQueue = sqs.Queue.fromQueueArn(
@@ -38,9 +49,15 @@ describe('ScraperStack', () => {
     stack = new ScraperStack(app, 'TestScraperStack', {
       environment: 'test',
       databaseSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:test-db-secret-abc123',
+      databaseProxyEndpoint: 'proxy.test.local',
+      databaseName: 'community_content',
+      databasePort: 5432,
+      redisUrl: 'redis://cache.test.local:6379',
       contentProcessingQueue: mockQueue as sqs.Queue,
       youtubeApiKeySecret: mockYouTubeSecret,
       githubTokenSecret: mockGitHubSecret,
+      vpc,
+      lambdaSecurityGroup,
     });
 
     template = Template.fromStack(stack);
@@ -52,7 +69,7 @@ describe('ScraperStack', () => {
         template.hasResourceProperties('AWS::Lambda::Function', {
           FunctionName: 'scraper-orchestrator-test',
           Runtime: 'nodejs18.x',
-          Handler: 'scrapers/orchestrator.handler',
+          Handler: 'index.handler',
           Timeout: 120, // 2 minutes
           MemorySize: 256,
         });
@@ -90,7 +107,7 @@ describe('ScraperStack', () => {
         template.hasResourceProperties('AWS::Lambda::Function', {
           FunctionName: 'blog-scraper-test',
           Runtime: 'nodejs18.x',
-          Handler: 'scrapers/blog-rss.handler',
+          Handler: 'index.handler',
           Timeout: 300, // 5 minutes
           MemorySize: 512,
         });
@@ -114,7 +131,7 @@ describe('ScraperStack', () => {
         template.hasResourceProperties('AWS::Lambda::Function', {
           FunctionName: 'youtube-scraper-test',
           Runtime: 'nodejs18.x',
-          Handler: 'scrapers/youtube.handler',
+          Handler: 'index.handler',
           Timeout: 300, // 5 minutes
           MemorySize: 512,
         });
@@ -137,7 +154,7 @@ describe('ScraperStack', () => {
         template.hasResourceProperties('AWS::Lambda::Function', {
           FunctionName: 'github-scraper-test',
           Runtime: 'nodejs18.x',
-          Handler: 'scrapers/github.handler',
+          Handler: 'index.handler',
           Timeout: 300, // 5 minutes
           MemorySize: 512,
         });
@@ -160,7 +177,7 @@ describe('ScraperStack', () => {
         template.hasResourceProperties('AWS::Lambda::Function', {
           FunctionName: 'content-processor-test',
           Runtime: 'nodejs18.x',
-          Handler: 'scrapers/content-processor.handler',
+          Handler: 'index.handler',
           Timeout: 900, // 15 minutes
           MemorySize: 1024,
         });
@@ -190,7 +207,7 @@ describe('ScraperStack', () => {
         template.hasResourceProperties('AWS::Lambda::Function', {
           FunctionName: 'channel-sync-test',
           Runtime: 'nodejs18.x',
-          Handler: 'channels/sync.handler',
+          Handler: 'index.handler',
           Timeout: 30,
           MemorySize: 256,
         });
@@ -249,6 +266,16 @@ describe('ScraperStack', () => {
 
       // Create import stack for prod resources
       const prodImportStack = new cdk.Stack(prodApp, 'ProdImportStack');
+      const prodNetworkStack = new cdk.Stack(prodApp, 'ProdNetworkStack');
+      const vpc = new ec2.Vpc(prodNetworkStack, 'ProdVpc', {
+        maxAzs: 2,
+        subnetConfiguration: [
+          { name: 'Public', subnetType: ec2.SubnetType.PUBLIC },
+          { name: 'PrivateEgress', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+          { name: 'PrivateIsolated', subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
+        ],
+      });
+      const lambdaSecurityGroup = new ec2.SecurityGroup(prodNetworkStack, 'ProdLambdaSg', { vpc });
 
       const prodMockQueue = sqs.Queue.fromQueueArn(
         prodImportStack,
@@ -272,9 +299,15 @@ describe('ScraperStack', () => {
       prodStack = new ScraperStack(prodApp, 'ProdScraperStack', {
         environment: 'prod',
         databaseSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:prod-db-secret-abc123',
+        databaseProxyEndpoint: 'proxy.prod.local',
+        databaseName: 'community_content',
+        databasePort: 5432,
+        redisUrl: 'redis://cache.prod.local:6379',
         contentProcessingQueue: prodMockQueue as sqs.Queue,
         youtubeApiKeySecret: prodMockYouTubeSecret,
         githubTokenSecret: prodMockGitHubSecret,
+        vpc,
+        lambdaSecurityGroup,
       });
 
       prodTemplate = Template.fromStack(prodStack);

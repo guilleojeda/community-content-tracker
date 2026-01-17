@@ -7,8 +7,44 @@ import { getDatabasePool } from '../../services/database';
 import { ExternalApiError, ThrottlingError, ValidationError, formatErrorForLogging } from '../../../shared/errors';
 import { createSendMessageCommand } from '../../utils/sqs';
 
-const sqsClient = new SQSClient({ region: process.env.AWS_REGION || 'us-east-1' });
-const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const initialRegion = (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '').trim();
+let cachedRegion: string | null = initialRegion.length > 0 ? initialRegion : null;
+let sqsClient: SQSClient | null = cachedRegion ? new SQSClient({ region: cachedRegion }) : null;
+let secretsClient: SecretsManagerClient | null = cachedRegion ? new SecretsManagerClient({ region: cachedRegion }) : null;
+
+function resolveAwsRegion(): string {
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+  if (!region || region.trim().length === 0) {
+    throw new Error('AWS_REGION must be set');
+  }
+  return region.trim();
+}
+
+function ensureAwsClients(region: string): void {
+  if (cachedRegion !== region) {
+    sqsClient = null;
+    secretsClient = null;
+    cachedRegion = region;
+  }
+}
+
+function getSqsClient(): SQSClient {
+  const region = resolveAwsRegion();
+  ensureAwsClients(region);
+  if (!sqsClient) {
+    sqsClient = new SQSClient({ region });
+  }
+  return sqsClient;
+}
+
+function getSecretsClient(): SecretsManagerClient {
+  const region = resolveAwsRegion();
+  ensureAwsClients(region);
+  if (!secretsClient) {
+    secretsClient = new SecretsManagerClient({ region });
+  }
+  return secretsClient;
+}
 
 let cachedQueueUrl: string | null = null;
 function resolveQueueUrl(): string {
@@ -65,7 +101,7 @@ async function getGitHubToken(): Promise<string | null> {
         (command as any).input = commandInput;
       }
 
-      const response = await secretsClient.send(command);
+      const response = await getSecretsClient().send(command);
 
       const secretValue = response.SecretString?.trim();
       if (secretValue) {
@@ -369,7 +405,7 @@ async function sendToQueue(channelId: string, userId: string, repo: GitHubRepo):
       },
     };
     const command = createSendMessageCommand(commandInput);
-    await sqsClient.send(command);
+    await getSqsClient().send(command);
   } catch (error: any) {
     const sqsError = new ExternalApiError('SQS', `Failed to send message to queue`, 500, {
       channelId,

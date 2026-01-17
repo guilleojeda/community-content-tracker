@@ -53,7 +53,39 @@ npm run deploy:staging
 
 # Deploy to prod
 npm run deploy:prod
+
+# Deploy to blue/green
+npm run deploy:blue
+npm run deploy:green
 ```
+
+### Blue/Green Production Rollouts
+
+Blue/green deployments are driven by weighted Route53 records pointing at the blue/green CloudFront distributions.
+
+Required environment variables (or CDK context values):
+- `BLUE_GREEN_DOMAIN_NAME` (root domain, e.g. `app.example.com`)
+- `BLUE_GREEN_HOSTED_ZONE_ID` and `BLUE_GREEN_HOSTED_ZONE_NAME`
+- Optional weights: `BLUE_GREEN_WEIGHT_BLUE` (default 0) and `BLUE_GREEN_WEIGHT_GREEN` (default 100)
+
+Deployment steps:
+
+```bash
+# Deploy blue and green environments (full stacks)
+./scripts/deploy-all.sh blue
+./scripts/deploy-all.sh green
+
+# Deploy routing stack in prod (creates weighted DNS records)
+cd src/infrastructure
+BLUE_GREEN_DOMAIN_NAME=app.example.com \
+BLUE_GREEN_HOSTED_ZONE_ID=Z123456ABCDEFG \
+BLUE_GREEN_HOSTED_ZONE_NAME=example.com \
+BLUE_GREEN_WEIGHT_BLUE=10 \
+BLUE_GREEN_WEIGHT_GREEN=90 \
+cdk deploy CommunityContentHub-BlueGreenRouting-Prod --context environment=prod
+```
+
+To shift traffic, update `BLUE_GREEN_WEIGHT_BLUE/GREEN` and redeploy the routing stack.
 
 ### Method 2: Deploy Specific Stacks
 
@@ -92,4 +124,4 @@ aws cloudformation describe-stacks \
 
 ---
 
-**Last Updated:** 2025-10-05
+**Last Updated:** 2026-01-16

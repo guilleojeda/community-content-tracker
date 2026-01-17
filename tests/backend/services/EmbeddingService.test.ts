@@ -1,27 +1,103 @@
-import { EmbeddingService } from '../../../src/backend/services/EmbeddingService';
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
-import { mockClient } from 'aws-sdk-client-mock';
-import 'aws-sdk-client-mock-jest';
+import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
+
+const bedrockSendMock = jest.fn();
+const cloudwatchSendMock = jest.fn();
+
+const { EmbeddingService } = require('../../../src/backend/services/EmbeddingService');
+
+const setMockClients = (target: EmbeddingService) => {
+  (target as any).client = { send: bedrockSendMock };
+  (target as any).cloudwatch = { send: cloudwatchSendMock };
+};
 
 describe('EmbeddingService', () => {
-  const bedrockMock = mockClient(BedrockRuntimeClient);
-  const cloudwatchMock = mockClient(CloudWatchClient);
   let service: EmbeddingService;
   const originalEnv = process.env;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    bedrockMock.reset();
-    cloudwatchMock.reset();
-    cloudwatchMock.on(PutMetricDataCommand).resolves({});
+    bedrockSendMock.mockReset();
+    cloudwatchSendMock.mockReset();
+    cloudwatchSendMock.mockResolvedValue({});
     process.env.BEDROCK_REGION = process.env.BEDROCK_REGION || 'us-east-1';
     process.env.BEDROCK_MODEL_ID = process.env.BEDROCK_MODEL_ID || 'amazon.titan-embed-text-v1';
     service = new EmbeddingService();
+    setMockClients(service);
   });
 
   afterAll(() => {
     process.env = originalEnv;
+  });
+
+  describe('constructor', () => {
+    it('uses AWS_REGION when BEDROCK_REGION is not set', () => {
+      const previousBedrock = process.env.BEDROCK_REGION;
+      const previousAws = process.env.AWS_REGION;
+      delete process.env.BEDROCK_REGION;
+      process.env.AWS_REGION = 'us-west-1';
+
+      expect(() => new EmbeddingService()).not.toThrow();
+
+      if (previousBedrock === undefined) {
+        delete process.env.BEDROCK_REGION;
+      } else {
+        process.env.BEDROCK_REGION = previousBedrock;
+      }
+      if (previousAws === undefined) {
+        delete process.env.AWS_REGION;
+      } else {
+        process.env.AWS_REGION = previousAws;
+      }
+    });
+
+    it('throws when no region is configured', () => {
+      const previousBedrock = process.env.BEDROCK_REGION;
+      const previousAws = process.env.AWS_REGION;
+      delete process.env.BEDROCK_REGION;
+      delete process.env.AWS_REGION;
+
+      expect(() => new EmbeddingService()).toThrow('BEDROCK_REGION or AWS_REGION must be set');
+
+      if (previousBedrock === undefined) {
+        delete process.env.BEDROCK_REGION;
+      } else {
+        process.env.BEDROCK_REGION = previousBedrock;
+      }
+      if (previousAws === undefined) {
+        delete process.env.AWS_REGION;
+      } else {
+        process.env.AWS_REGION = previousAws;
+      }
+    });
+
+    it('accepts a region string in the constructor', async () => {
+      const mockEmbedding = new Array(1536).fill(0.2);
+      bedrockSendMock.mockResolvedValueOnce({
+        body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
+          embedding: mockEmbedding
+        }))) as any
+      });
+
+      const customService = new EmbeddingService('us-west-2');
+      setMockClients(customService);
+      const result = await customService.generateEmbedding('Custom region test');
+
+      expect(result).toEqual(mockEmbedding);
+    });
+
+    it('throws when BEDROCK_MODEL_ID is missing', () => {
+      const previousModelId = process.env.BEDROCK_MODEL_ID;
+      delete process.env.BEDROCK_MODEL_ID;
+
+      expect(() => new EmbeddingService()).toThrow('BEDROCK_MODEL_ID must be set');
+
+      if (previousModelId === undefined) {
+        delete process.env.BEDROCK_MODEL_ID;
+      } else {
+        process.env.BEDROCK_MODEL_ID = previousModelId;
+      }
+    });
   });
 
   describe('when generating an embedding for a single text', () => {
@@ -30,7 +106,7 @@ describe('EmbeddingService', () => {
       const inputText = 'AWS Lambda is a serverless compute service';
       const mockEmbedding = new Array(1536).fill(0).map((_, i) => i / 1536);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -42,7 +118,9 @@ describe('EmbeddingService', () => {
       // Assert
       expect(result).toHaveLength(1536);
       expect(result).toEqual(mockEmbedding);
-      expect(bedrockMock).toHaveReceivedCommandWith(InvokeModelCommand, {
+      const command = bedrockSendMock.mock.calls[0]?.[0];
+      expect(command).toBeInstanceOf(InvokeModelCommand);
+      expect(command?.input).toMatchObject({
         modelId: 'amazon.titan-embed-text-v1',
         contentType: 'application/json',
         accept: 'application/json'
@@ -54,7 +132,7 @@ describe('EmbeddingService', () => {
       const inputText = 'Cached content';
       const mockEmbedding = new Array(1536).fill(0.5);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -66,13 +144,13 @@ describe('EmbeddingService', () => {
 
       // Assert
       expect(cachedResult).toEqual(mockEmbedding);
-      expect(bedrockMock).toHaveReceivedCommandTimes(InvokeModelCommand, 1);
+      expect(bedrockSendMock).toHaveBeenCalledTimes(1);
     });
 
     it('should throw error when Bedrock API fails', async () => {
       // Arrange
       const inputText = 'Test content';
-      bedrockMock.on(InvokeModelCommand).rejects(new Error('API Throttled'));
+      bedrockSendMock.mockRejectedValueOnce(new Error('API Throttled'));
 
       // Act & Assert
       await expect(service.generateEmbedding(inputText)).rejects.toThrow('Failed to generate embedding');
@@ -88,7 +166,7 @@ describe('EmbeddingService', () => {
       const longText = 'a'.repeat(10000);
       const mockEmbedding = new Array(1536).fill(0.1);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -99,7 +177,7 @@ describe('EmbeddingService', () => {
 
       // Assert
       expect(result).toEqual(mockEmbedding);
-      expect(bedrockMock).toHaveReceivedCommand(InvokeModelCommand);
+      expect(bedrockSendMock).toHaveBeenCalled();
     });
   });
 
@@ -113,7 +191,7 @@ describe('EmbeddingService', () => {
       ];
       const mockEmbedding = new Array(1536).fill(0.3);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -125,7 +203,7 @@ describe('EmbeddingService', () => {
       // Assert
       expect(results).toHaveLength(3);
       expect(results[0]).toHaveLength(1536);
-      expect(bedrockMock).toHaveReceivedCommandTimes(InvokeModelCommand, 3);
+      expect(bedrockSendMock).toHaveBeenCalledTimes(3);
     });
 
     it('should use cached embeddings in batch processing', async () => {
@@ -133,7 +211,7 @@ describe('EmbeddingService', () => {
       const texts = ['Content A', 'Content B', 'Content A']; // Duplicate
       const mockEmbedding = new Array(1536).fill(0.4);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -144,7 +222,7 @@ describe('EmbeddingService', () => {
 
       // Assert
       expect(results).toHaveLength(3);
-      expect(bedrockMock).toHaveReceivedCommandTimes(InvokeModelCommand, 2); // Only 2 unique
+      expect(bedrockSendMock).toHaveBeenCalledTimes(2); // Only 2 unique
     });
 
     it('should handle partial failures in batch', async () => {
@@ -152,7 +230,7 @@ describe('EmbeddingService', () => {
       const texts = ['Good content', 'Bad content', 'Good content 2'];
       let callCount = 0;
 
-      bedrockMock.on(InvokeModelCommand).callsFake(() => {
+      bedrockSendMock.mockImplementation(() => {
         callCount++;
         if (callCount === 2) {
           throw new Error('API Error');
@@ -174,7 +252,7 @@ describe('EmbeddingService', () => {
 
       // Assert
       expect(results).toEqual([]);
-      expect(bedrockMock).not.toHaveReceivedCommand(InvokeModelCommand);
+      expect(bedrockSendMock).not.toHaveBeenCalled();
     });
   });
 
@@ -185,7 +263,7 @@ describe('EmbeddingService', () => {
       const description = 'A comprehensive guide to AWS Lambda and serverless architecture';
       const mockEmbedding = new Array(1536).fill(0.6);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -196,8 +274,8 @@ describe('EmbeddingService', () => {
 
       // Assert
       expect(result).toEqual(mockEmbedding);
-      const command = bedrockMock.commandCalls(InvokeModelCommand)[0];
-      const bodyStr = new TextDecoder().decode(command.args[0].input.body as Uint8Array);
+      const command = bedrockSendMock.mock.calls[0]?.[0];
+      const bodyStr = new TextDecoder().decode(command.input.body as Uint8Array);
       const body = JSON.parse(bodyStr);
       expect(body.inputText).toContain(title);
       expect(body.inputText).toContain(description);
@@ -208,7 +286,7 @@ describe('EmbeddingService', () => {
       const title = 'AWS Lambda Tutorial';
       const mockEmbedding = new Array(1536).fill(0.7);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -227,7 +305,7 @@ describe('EmbeddingService', () => {
 
       // Assert
       expect(result).toBeNull();
-      expect(bedrockMock).not.toHaveReceivedCommand(InvokeModelCommand);
+      expect(bedrockSendMock).not.toHaveBeenCalled();
     });
   });
 
@@ -238,7 +316,7 @@ describe('EmbeddingService', () => {
       const mockEmbedding = new Array(1536).fill(0.8);
       let attemptCount = 0;
 
-      bedrockMock.on(InvokeModelCommand).callsFake(() => {
+      bedrockSendMock.mockImplementation(() => {
         attemptCount++;
         if (attemptCount === 1) {
           const error: any = new Error('ThrottlingException');
@@ -264,7 +342,7 @@ describe('EmbeddingService', () => {
       // Arrange
       const inputText = 'Always throttled';
 
-      bedrockMock.on(InvokeModelCommand).callsFake(() => {
+      bedrockSendMock.mockImplementation(() => {
         const error: any = new Error('ThrottlingException');
         error.name = 'ThrottlingException';
         throw error;
@@ -281,7 +359,7 @@ describe('EmbeddingService', () => {
       const inputText = 'Cacheable content';
       const mockEmbedding = new Array(1536).fill(0.9);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -293,13 +371,13 @@ describe('EmbeddingService', () => {
       await service.generateEmbedding(inputText);
 
       // Assert
-      expect(bedrockMock).toHaveReceivedCommandTimes(InvokeModelCommand, 2);
+      expect(bedrockSendMock).toHaveBeenCalledTimes(2);
     });
 
     it('should get cache stats', async () => {
       // Arrange
       const mockEmbedding = new Array(1536).fill(0.1);
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -319,10 +397,18 @@ describe('EmbeddingService', () => {
   });
 
   describe('performance metrics', () => {
+    it('returns zeroed metrics when no calls have been made', () => {
+      const metrics = service.getPerformanceMetrics();
+
+      expect(metrics.apiCalls).toBe(0);
+      expect(metrics.averageLatency).toBe(0);
+      expect(metrics.cacheHitRate).toBe(0);
+    });
+
     it('should track API calls and latency', async () => {
       // Arrange
       const mockEmbedding = new Array(1536).fill(0.5);
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -342,7 +428,7 @@ describe('EmbeddingService', () => {
     it('should calculate cache hit rate correctly', async () => {
       // Arrange
       const mockEmbedding = new Array(1536).fill(0.5);
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -361,7 +447,7 @@ describe('EmbeddingService', () => {
   describe('error handling', () => {
     it('should handle empty response body from Bedrock', async () => {
       // Arrange
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: undefined
       });
 
@@ -371,7 +457,7 @@ describe('EmbeddingService', () => {
 
     it('should handle invalid embedding format', async () => {
       // Arrange
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           notEmbedding: []
         }))) as any
@@ -383,7 +469,7 @@ describe('EmbeddingService', () => {
 
     it('should handle non-array embedding in response', async () => {
       // Arrange
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: 'not-an-array'
         }))) as any
@@ -397,11 +483,11 @@ describe('EmbeddingService', () => {
       // Arrange
       const error: any = new Error('ValidationException');
       error.name = 'ValidationException';
-      bedrockMock.on(InvokeModelCommand).rejects(error);
+      bedrockSendMock.mockRejectedValueOnce(error);
 
       // Act & Assert
       await expect(service.generateEmbedding('test')).rejects.toThrow('Failed to generate embedding');
-      expect(bedrockMock).toHaveReceivedCommandTimes(InvokeModelCommand, 1); // No retries
+      expect(bedrockSendMock).toHaveBeenCalledTimes(1); // No retries
     });
   });
 
@@ -409,7 +495,7 @@ describe('EmbeddingService', () => {
     it('should publish metrics on successful embedding generation', async () => {
       // Arrange
       const mockEmbedding = new Array(1536).fill(0.5);
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValue({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -422,19 +508,19 @@ describe('EmbeddingService', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Assert - should have published metrics
-      expect(cloudwatchMock).toHaveReceivedCommand(PutMetricDataCommand);
+      expect(cloudwatchSendMock).toHaveBeenCalled();
     });
 
     it('should handle metrics publishing failures gracefully', async () => {
       // Arrange
       const mockEmbedding = new Array(1536).fill(0.5);
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
       });
-      cloudwatchMock.reset();
-      cloudwatchMock.on(PutMetricDataCommand).rejects(new Error('CloudWatch error'));
+      cloudwatchSendMock.mockReset();
+      cloudwatchSendMock.mockRejectedValueOnce(new Error('CloudWatch error'));
 
       // Act - should not throw even if metrics fail
       const result = await service.generateEmbedding('test content');
@@ -445,7 +531,7 @@ describe('EmbeddingService', () => {
 
     it('includes estimated cost metric with required dimensions', async () => {
       const mockEmbedding = new Array(1536).fill(0.5);
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({
           embedding: mockEmbedding
         }))) as any
@@ -454,9 +540,11 @@ describe('EmbeddingService', () => {
       await service.generateEmbedding('cost metric validation');
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      const calls = cloudwatchMock.commandCalls(PutMetricDataCommand);
+      const calls = cloudwatchSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof PutMetricDataCommand);
       expect(calls.length).toBeGreaterThan(0);
-      const metricData = calls[0].args[0].input.MetricData;
+      const metricData = calls[0].input.MetricData;
       const metricNames = (metricData ?? []).map(metric => metric.MetricName);
 
       expect(metricNames).toEqual(expect.arrayContaining([
@@ -587,30 +675,32 @@ describe('EmbeddingService', () => {
     it('respects BEDROCK_MODEL_ID environment variable', async () => {
       process.env.BEDROCK_MODEL_ID = 'custom.model';
       const customService = new EmbeddingService();
+      setMockClients(customService);
       const mockEmbedding = new Array(1536).fill(0.2);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({ embedding: mockEmbedding }))) as any
       });
 
       await customService.generateEmbedding('env-configured content');
 
-      const calls = bedrockMock.commandCalls(InvokeModelCommand);
-      expect(calls[0]?.args[0]?.input?.modelId).toBe('custom.model');
+      const calls = bedrockSendMock.mock.calls;
+      expect(calls[0]?.[0]?.input?.modelId).toBe('custom.model');
     });
 
     it('accepts explicit region and model overrides via constructor options', async () => {
       const customService = new EmbeddingService({ region: 'us-west-2', modelId: 'custom.model' });
+      setMockClients(customService);
       const mockEmbedding = new Array(1536).fill(0.7);
 
-      bedrockMock.on(InvokeModelCommand).resolves({
+      bedrockSendMock.mockResolvedValueOnce({
         body: new Uint8Array(new TextEncoder().encode(JSON.stringify({ embedding: mockEmbedding }))) as any
       });
 
       await customService.generateEmbedding('explicit configuration');
 
-      const calls = bedrockMock.commandCalls(InvokeModelCommand);
-      expect(calls[0]?.args[0]?.input?.modelId).toBe('custom.model');
+      const calls = bedrockSendMock.mock.calls;
+      expect(calls[0]?.[0]?.input?.modelId).toBe('custom.model');
     });
   });
 });

@@ -127,7 +127,7 @@ Similar to dev but with production resources:
 ### Via GitHub Web Interface
 
 1. Navigate to your repository
-2. Go to **Settings** → **Secrets and variables** → **Actions**
+2. Go to **Settings** -> **Secrets and variables** -> **Actions**
 3. Click **New repository secret**
 4. Enter the secret name and value
 5. Click **Add secret**

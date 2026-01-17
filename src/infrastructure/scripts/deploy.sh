@@ -92,15 +92,15 @@ bootstrap_cdk() {
 validate_environment() {
     local env=$1
     
-    if [[ "$env" != "dev" && "$env" != "staging" && "$env" != "prod" ]]; then
+    if [[ "$env" != "dev" && "$env" != "staging" && "$env" != "prod" && "$env" != "blue" && "$env" != "green" && "$env" != "beta" ]]; then
         print_error "Invalid environment: $env"
-        print_error "Valid environments: dev, staging, prod"
+        print_error "Valid environments: dev, staging, prod, blue, green, beta"
         exit 1
     fi
     
     # Production safety check
-    if [[ "$env" == "prod" ]]; then
-        print_warning "Deploying to PRODUCTION environment!"
+    if [[ "$env" == "prod" || "$env" == "blue" || "$env" == "green" ]]; then
+        print_warning "Deploying to PRODUCTION-like environment!"
         read -p "Are you sure you want to continue? (yes/no): " -r
         if [[ ! $REPLY =~ ^yes$ ]]; then
             print_error "Deployment cancelled"
@@ -124,6 +124,8 @@ synthesize() {
 deploy_stacks() {
     local env=$1
     local deploy_all=${2:-false}
+    local env_capitalized
+    env_capitalized="$(tr '[:lower:]' '[:upper:]' <<< "${env:0:1}")${env:1}"
     
     print_status "Starting deployment for $env environment..."
     
@@ -133,13 +135,36 @@ deploy_stacks() {
     else
         # Deploy stacks in order with dependencies
         print_status "Deploying Database stack..."
-        cdk deploy "CommunityTracker-Database-$env" --context environment=$env --require-approval never
-        
+        cdk deploy "CommunityContentHub-Database-${env_capitalized}" --context environment=$env --require-approval never
+
+        print_status "Deploying Static Site stack..."
+        cdk deploy "CommunityContentHub-StaticSite-${env_capitalized}" --context environment=$env --require-approval never
+
         print_status "Deploying Cognito stack..."
-        cdk deploy "CommunityTracker-Cognito-$env" --context environment=$env --require-approval never
-        
+        cdk deploy "CommunityContentHub-Cognito-${env_capitalized}" --context environment=$env --require-approval never
+
+        print_status "Deploying Queue stack..."
+        cdk deploy "CommunityContentHub-Queue-${env_capitalized}" --context environment=$env --require-approval never
+
+        print_status "Deploying Scraper stack..."
+        cdk deploy "CommunityContentHub-Scraper-${env_capitalized}" --context environment=$env --require-approval never
+
+        print_status "Deploying Public API stack..."
+        cdk deploy "CommunityContentHub-PublicApi-${env_capitalized}" --context environment=$env --require-approval never
+
+        print_status "Deploying Application API stack..."
+        cdk deploy "CommunityContentHub-ApplicationApi-${env_capitalized}" --context environment=$env --require-approval never
+
         print_status "Deploying API Gateway stack..."
-        cdk deploy "CommunityTracker-ApiGateway-$env" --context environment=$env --require-approval never
+        cdk deploy "CommunityContentHub-ApiGateway-${env_capitalized}" --context environment=$env --require-approval never
+
+        print_status "Deploying Monitoring stack..."
+        cdk deploy "CommunityContentHub-Monitoring-${env_capitalized}" --context environment=$env --require-approval never
+
+        if [[ "$env" == "prod" && -n "${BLUE_GREEN_DOMAIN_NAME:-}" ]]; then
+            print_status "Deploying Blue/Green routing stack..."
+            cdk deploy "CommunityContentHub-BlueGreenRouting-${env_capitalized}" --context environment=$env --require-approval never
+        fi
     fi
     
     print_success "All stacks deployed successfully"
@@ -156,11 +181,13 @@ diff_stacks() {
 # Function to destroy stacks
 destroy_stacks() {
     local env=$1
+    local env_capitalized
+    env_capitalized="$(tr '[:lower:]' '[:upper:]' <<< "${env:0:1}")${env:1}"
     
     print_warning "This will DESTROY all infrastructure for $env environment!"
     
     # Extra confirmation for production
-    if [[ "$env" == "prod" ]]; then
+    if [[ "$env" == "prod" || "$env" == "blue" || "$env" == "green" ]]; then
         print_error "PRODUCTION DESTRUCTION REQUESTED!"
         read -p "Type 'DELETE PRODUCTION' to confirm: " -r
         if [[ "$REPLY" != "DELETE PRODUCTION" ]]; then
@@ -178,9 +205,15 @@ destroy_stacks() {
     print_status "Destroying stacks in reverse order..."
     
     # Destroy in reverse order
-    cdk destroy "CommunityTracker-ApiGateway-$env" --context environment=$env --force
-    cdk destroy "CommunityTracker-Cognito-$env" --context environment=$env --force
-    cdk destroy "CommunityTracker-Database-$env" --context environment=$env --force
+    cdk destroy "CommunityContentHub-Monitoring-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-ApiGateway-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-ApplicationApi-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-PublicApi-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-Scraper-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-Queue-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-Cognito-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-StaticSite-${env_capitalized}" --context environment=$env --force
+    cdk destroy "CommunityContentHub-Database-${env_capitalized}" --context environment=$env --force
     
     print_success "All stacks destroyed"
 }
@@ -188,17 +221,19 @@ destroy_stacks() {
 # Function to show deployment status
 show_status() {
     local env=$1
+    local env_capitalized
+    env_capitalized="$(tr '[:lower:]' '[:upper:]' <<< "${env:0:1}")${env:1}"
     
     print_status "Deployment status for $env environment:"
     
     # Check CloudFormation stacks
-    aws cloudformation describe-stacks --query "Stacks[?contains(StackName, 'CommunityTracker') && contains(StackName, '$env')].{Name:StackName,Status:StackStatus}" --output table
+    aws cloudformation describe-stacks --query "Stacks[?contains(StackName, 'CommunityContentHub') && contains(StackName, '-${env_capitalized}')].{Name:StackName,Status:StackStatus}" --output table
     
     # Show outputs
     print_status "Stack outputs:"
-    aws cloudformation describe-stacks --stack-name "CommunityTracker-Database-$env" --query "Stacks[0].Outputs" --output table 2>/dev/null || true
-    aws cloudformation describe-stacks --stack-name "CommunityTracker-Cognito-$env" --query "Stacks[0].Outputs" --output table 2>/dev/null || true
-    aws cloudformation describe-stacks --stack-name "CommunityTracker-ApiGateway-$env" --query "Stacks[0].Outputs" --output table 2>/dev/null || true
+    aws cloudformation describe-stacks --stack-name "CommunityContentHub-Database-${env_capitalized}" --query "Stacks[0].Outputs" --output table 2>/dev/null || true
+    aws cloudformation describe-stacks --stack-name "CommunityContentHub-Cognito-${env_capitalized}" --query "Stacks[0].Outputs" --output table 2>/dev/null || true
+    aws cloudformation describe-stacks --stack-name "CommunityContentHub-ApiGateway-${env_capitalized}" --query "Stacks[0].Outputs" --output table 2>/dev/null || true
 }
 
 # Function to show help
@@ -219,6 +254,9 @@ show_help() {
     echo "  dev         Development environment"
     echo "  staging     Staging environment"
     echo "  prod        Production environment"
+    echo "  blue        Blue deployment (prod routing)"
+    echo "  green       Green deployment (prod routing)"
+    echo "  beta        Beta environment"
     echo
     echo "Options:"
     echo "  --all       Deploy all stacks at once (faster but less granular)"
@@ -256,6 +294,9 @@ main() {
     
     # Validate environment for commands that need it
     if [[ "$command" != "help" && -n "$environment" ]]; then
+        if [[ "$environment" == "production" ]]; then
+            environment="prod"
+        fi
         validate_environment "$environment"
     fi
     

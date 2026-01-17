@@ -75,7 +75,7 @@ export class BadgeRepository extends BaseRepository {
     if ('awardedAt' in data && data.awardedAt !== undefined) {
       transformed.awarded_at = data.awardedAt;
     }
-    if (data.metadata !== undefined) {
+    if ('metadata' in data && data.metadata !== undefined) {
       transformed.metadata = data.metadata;
     }
     if ('isActive' in data && data.isActive !== undefined) {

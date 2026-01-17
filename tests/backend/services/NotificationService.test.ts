@@ -1,15 +1,29 @@
 import { NotificationService, NotificationServiceOptions } from '../../../src/backend/services/NotificationService';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { mockClient } from 'aws-sdk-client-mock';
-import 'aws-sdk-client-mock-jest';
+
+jest.mock('@aws-sdk/client-ses', () => {
+  const actual = jest.requireActual('@aws-sdk/client-ses');
+  const sendMock = jest.fn();
+  return {
+    ...actual,
+    SESClient: jest.fn(() => ({ send: sendMock })),
+    __sesSendMock: sendMock,
+  };
+});
+
+const sesSendMock = (jest.requireMock('@aws-sdk/client-ses') as { __sesSendMock: jest.Mock }).__sesSendMock;
+const { SESClient: MockSesClient } = jest.requireMock('@aws-sdk/client-ses') as { SESClient: jest.Mock };
 
 describe('NotificationService', () => {
   const mockPool = () => ({ query: jest.fn() }) as any;
-  const sesMock = mockClient(SESClient);
+
+  beforeEach(() => {
+    MockSesClient.mockImplementation(() => ({ send: sesSendMock }));
+    sesSendMock.mockReset();
+  });
 
   afterEach(() => {
     jest.restoreAllMocks();
-    sesMock.reset();
   });
 
   it('notifies all admins for review', async () => {
@@ -20,24 +34,24 @@ describe('NotificationService', () => {
         { id: 'admin-2', email: 'admin2@example.com' },
       ],
     });
-
-    const notificationSpy = jest
-      .spyOn(NotificationService.prototype as any, 'createNotification')
-      .mockResolvedValue('notif-1');
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'notif-1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'notif-2' }] });
 
     const service = new NotificationService(pool, 'noreply@test.com');
     const result = await service.notifyAdminForReview('user-1', 'content-1', 'Needs review');
 
     expect(result).toBe(true);
-    expect(pool.query).toHaveBeenCalledTimes(1);
-    expect(notificationSpy).toHaveBeenCalledTimes(2);
-    expect(notificationSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recipientId: 'admin-1',
-        type: 'content.claim_review',
-        metadata: expect.objectContaining({ reason: 'Needs review' }),
-      })
+    expect(pool.query).toHaveBeenCalledTimes(3);
+    const insertCalls = pool.query.mock.calls.filter(
+      call => Array.isArray(call[1]) && call[1].includes('content.claim_review')
     );
+    expect(insertCalls).toHaveLength(2);
+    const recipients = insertCalls.map(call => call[1][0]);
+    expect(recipients).toEqual(expect.arrayContaining(['admin-1', 'admin-2']));
+    insertCalls.forEach(call => {
+      expect(JSON.parse(call[1][4])).toMatchObject({ reason: 'Needs review' });
+    });
   });
 
   it('returns false when admin notification fails', async () => {
@@ -46,7 +60,7 @@ describe('NotificationService', () => {
       rows: [{ id: 'admin-1', email: 'admin1@example.com' }],
     });
     const error = new Error('failure');
-    jest.spyOn(NotificationService.prototype as any, 'createNotification').mockRejectedValue(error);
+    pool.query.mockRejectedValueOnce(error);
 
     const service = new NotificationService(pool);
     await expect(service.notifyAdminForReview('user-1', 'content-1', 'reason')).resolves.toBe(false);
@@ -54,19 +68,25 @@ describe('NotificationService', () => {
 
   it('sends badge and merge notifications', async () => {
     const pool = mockPool();
-    jest.spyOn(NotificationService.prototype as any, 'createNotification').mockResolvedValue('id');
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'notif-1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'notif-2' }] });
 
     const service = new NotificationService(pool);
 
     await expect(service.notifyBadgeGranted('user-1', 'hero', 'great work')).resolves.toBe(true);
     await expect(service.notifyContentMerged('user-2', 'primary', 2)).resolves.toBe(true);
 
-    expect((NotificationService.prototype as any).createNotification).toHaveBeenCalledTimes(2);
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    const badgeCall = pool.query.mock.calls.find(call => Array.isArray(call[1]) && call[1].includes('badge.granted'));
+    const mergeCall = pool.query.mock.calls.find(call => Array.isArray(call[1]) && call[1].includes('content.merged'));
+    expect(badgeCall?.[1]).toEqual(expect.arrayContaining(['user-1', 'badge.granted']));
+    expect(mergeCall?.[1]).toEqual(expect.arrayContaining(['user-2', 'content.merged']));
   });
 
   it('handles notification failures gracefully', async () => {
     const pool = mockPool();
-    jest.spyOn(NotificationService.prototype as any, 'createNotification').mockRejectedValue(new Error('oops'));
+    pool.query.mockRejectedValue(new Error('oops'));
 
     const service = new NotificationService(pool);
     await expect(service.notifyBadgeGranted('user-1', 'hero')).resolves.toBe(false);
@@ -98,11 +118,11 @@ describe('NotificationService', () => {
 
   it('sends email using default implementation', async () => {
     const pool = mockPool();
-    sesMock.on(SendEmailCommand).resolves({});
+    sesSendMock.mockResolvedValueOnce({});
 
     const options: NotificationServiceOptions = {
       fromEmail: 'noreply@test.com',
-      sesClient: sesMock.client,
+      sesClient: new SESClient({ region: 'us-east-1' }),
       sesRegion: 'us-east-1',
     };
     const service = new NotificationService(pool, options);
@@ -114,7 +134,8 @@ describe('NotificationService', () => {
     });
 
     expect(result).toBe(true);
-    expect(sesMock).toHaveReceivedCommandTimes(SendEmailCommand, 1);
+    expect(sesSendMock).toHaveBeenCalledTimes(1);
+    expect(sesSendMock.mock.calls[0][0]).toBeInstanceOf(SendEmailCommand);
   });
 
   it('gracefully skips email sends when SES is not configured', async () => {
@@ -128,38 +149,16 @@ describe('NotificationService', () => {
     });
 
     expect(result).toBe(false);
-    expect(sesMock).toHaveReceivedCommandTimes(SendEmailCommand, 0);
-  });
-
-  it('persists notification rows in the database', async () => {
-    const pool = mockPool();
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 'notif-123' }] });
-    const service = new NotificationService(pool);
-
-    const id = await (service as any).createNotification({
-      recipientId: 'user-1',
-      type: 'badge.granted',
-      title: 'Congrats',
-      message: 'You earned a badge',
-      metadata: { badge: 'hero' },
-      priority: 'high',
-    });
-
-    expect(id).toBe('notif-123');
-    expect(pool.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO notifications'),
-      expect.arrayContaining(['user-1', 'badge.granted', 'Congrats'])
-    );
+    expect(sesSendMock).not.toHaveBeenCalled();
   });
 
   it('bulk notifies recipients while continuing on failure', async () => {
     const pool = mockPool();
-    const service = new NotificationService(pool);
-    const createSpy = jest
-      .spyOn(NotificationService.prototype as any, 'createNotification')
-      .mockResolvedValueOnce('id-1')
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'id-1' }] })
       .mockRejectedValueOnce(new Error('Failed'))
-      .mockResolvedValueOnce('id-3');
+      .mockResolvedValueOnce({ rows: [{ id: 'id-3' }] });
+    const service = new NotificationService(pool);
 
     const count = await service.bulkNotify([
       { recipientId: 'a', type: 't', title: 'x', message: 'm' },
@@ -168,15 +167,6 @@ describe('NotificationService', () => {
     ]);
 
     expect(count).toBe(2);
-    expect(createSpy).toHaveBeenCalledTimes(3);
-  });
-
-  it('retrieves admin users via pool query', async () => {
-    const pool = mockPool();
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 'admin', email: 'admin@example.com' }] });
-    const service = new NotificationService(pool);
-
-    const admins = await (service as any).getAdminUsers();
-    expect(admins).toEqual([{ id: 'admin', email: 'admin@example.com' }]);
+    expect(pool.query).toHaveBeenCalledTimes(3);
   });
 });

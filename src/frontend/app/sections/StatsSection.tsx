@@ -1,9 +1,7 @@
 'use client';
 
 import React from 'react';
-import type { components } from '@/api/schema';
-
-type PlatformStats = components['schemas']['PlatformStats'];
+import type { PlatformStats } from '@aws-community-hub/shared';
 
 type StatsSectionProps = {
   stats: PlatformStats | null;

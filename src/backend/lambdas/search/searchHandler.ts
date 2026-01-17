@@ -5,32 +5,14 @@ import { getEmbeddingService } from '../../services/EmbeddingService';
 import { getSearchService } from '../../services/SearchService';
 import { ContentType, BadgeType, Visibility } from '@aws-community-hub/shared';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
-import { consumeRateLimit } from '../../services/rateLimiter';
 import { buildCorsHeaders } from '../../services/cors';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
-interface RateLimitConfig {
-  anonymousLimit: number;
-  authenticatedLimit: number;
-  windowMs: number;
-}
-
-const parsePositiveInt = (value: string | undefined, fallback: number): number => {
-  const parsed = Number.parseInt(value ?? '', 10);
-  if (Number.isNaN(parsed) || parsed <= 0) {
-    return fallback;
+const requireAwsRegion = (): string => {
+  if (!process.env.AWS_REGION || process.env.AWS_REGION.trim().length === 0) {
+    throw new Error('AWS_REGION must be set');
   }
-  return parsed;
-};
-
-const getRateLimitConfig = (): RateLimitConfig => {
-  const anonymousLimit = parsePositiveInt(process.env.RATE_LIMIT_ANONYMOUS, 100);
-  const authenticatedLimit = parsePositiveInt(process.env.RATE_LIMIT_AUTHENTICATED, 1000);
-  const windowMinutes = parsePositiveInt(process.env.RATE_LIMIT_WINDOW_MINUTES, 1);
-  return {
-    anonymousLimit,
-    authenticatedLimit,
-    windowMs: Math.max(windowMinutes, 1) * 60_000,
-  };
+  return process.env.AWS_REGION.trim();
 };
 
 interface ViewerContext {
@@ -40,7 +22,7 @@ interface ViewerContext {
   sourceIp: string;
 }
 
-const normalizeParams = (event: APIGatewayProxyEvent): Record<string, string> => {
+const normalizeParams = (event: APIGatewayProxyEvent): Record<string, string | undefined> => {
   return event.queryStringParameters ?? {};
 };
 
@@ -125,17 +107,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   };
   const params = normalizeParams(event);
   const viewer = getViewerContext(event);
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
-    const rateLimitConfig = getRateLimitConfig();
-    const activeLimit = viewer.viewerId ? rateLimitConfig.authenticatedLimit : rateLimitConfig.anonymousLimit;
-    const rateLimitKey = viewer.viewerId ? `search:user:${viewer.viewerId}` : `search:ip:${viewer.sourceIp}`;
-    const rateLimitPrefix = viewer.viewerId ? 'auth' : 'anon';
+    rateLimit = await applyRateLimit(event, { resource: 'search' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
 
-    const rateLimit = await consumeRateLimit(rateLimitKey, activeLimit, rateLimitConfig.windowMs, rateLimitPrefix);
-
-    if (!rateLimit.allowed) {
-      return {
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit({
         statusCode: 429,
         headers,
         body: JSON.stringify({
@@ -144,19 +124,12 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             message: 'Too many search requests from this IP address',
           },
         }),
-      };
+      });
     }
-
-    const responseHeaders = {
-      ...headers,
-      'X-RateLimit-Remaining': rateLimit.remaining.toString(),
-      'X-RateLimit-Reset': rateLimit.reset.toString(),
-      'X-RateLimit-Limit': activeLimit.toString(),
-    };
 
     const query = params.q;
     if (!query || query.trim().length === 0) {
-      return {
+      return withRateLimit({
         statusCode: 400,
         headers,
         body: JSON.stringify({
@@ -165,7 +138,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             message: 'Missing required query parameter: q',
           },
         }),
-      };
+      });
     }
 
     const limit = params.limit ? Number.parseInt(params.limit, 10) : 10;
@@ -173,7 +146,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const sortBy = params.sortBy ? params.sortBy.toLowerCase() : undefined;
 
     if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
-      return {
+      return withRateLimit({
         statusCode: 400,
         headers,
         body: JSON.stringify({
@@ -182,11 +155,11 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             message: 'limit must be between 1 and 100',
           },
         }),
-      };
+      });
     }
 
     if (sortBy && sortBy !== 'relevance' && sortBy !== 'date') {
-      return {
+      return withRateLimit({
         statusCode: 400,
         headers,
         body: JSON.stringify({
@@ -195,7 +168,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             message: 'sortBy must be either relevance or date',
           },
         }),
-      };
+      });
     }
 
     const filters: Record<string, unknown> = {};
@@ -206,7 +179,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       const invalidTypes = types.filter((value) => !validTypes.includes(value as ContentType));
 
       if (invalidTypes.length > 0) {
-        return {
+        return withRateLimit({
           statusCode: 400,
           headers,
           body: JSON.stringify({
@@ -215,7 +188,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
               message: `Invalid content type(s): ${invalidTypes.join(', ')}. Valid types: ${validTypes.join(', ')}`,
             },
           }),
-        };
+        });
       }
 
       filters.contentTypes = types as ContentType[];
@@ -230,7 +203,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         .filter(Boolean);
 
       if (sanitizedTags.length === 0) {
-        return {
+        return withRateLimit({
           statusCode: 400,
           headers,
           body: JSON.stringify({
@@ -239,7 +212,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
               message: 'Tags filter must include at least one valid tag',
             },
           }),
-        };
+        });
       }
 
       filters.tags = sanitizedTags;
@@ -251,7 +224,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       const invalidBadges = badges.filter((badge) => !validBadges.includes(badge as BadgeType));
 
       if (invalidBadges.length > 0) {
-        return {
+        return withRateLimit({
           statusCode: 400,
           headers,
           body: JSON.stringify({
@@ -260,7 +233,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
               message: `Invalid badge(s): ${invalidBadges.join(', ')}. Valid badges: ${validBadges.join(', ')}`,
             },
           }),
-        };
+        });
       }
 
       filters.badges = badges as BadgeType[];
@@ -268,7 +241,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     const dateRange = parseDateRange(params.startDate, params.endDate);
     if (dateRange.error) {
-      return {
+      return withRateLimit({
         statusCode: 400,
         headers,
         body: JSON.stringify({
@@ -277,7 +250,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
             message: dateRange.error,
           },
         }),
-      };
+      });
     }
     if (dateRange.value) {
       filters.dateRange = dateRange.value;
@@ -289,7 +262,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       const invalidVisibility = visibilityValues.filter((value) => !validVisibility.includes(value as Visibility));
 
       if (invalidVisibility.length > 0) {
-        return {
+        return withRateLimit({
           statusCode: 400,
           headers,
           body: JSON.stringify({
@@ -298,7 +271,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
               message: `Invalid visibility value(s): ${invalidVisibility.join(', ')}`,
             },
           }),
-        };
+        });
       }
 
       filters.visibility = visibilityValues as Visibility[];
@@ -314,7 +287,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const pool = await getDatabasePool();
     const contentRepo = new ContentRepository(pool);
     const embeddingService = getEmbeddingService();
-    const cloudwatch = new CloudWatchClient({ region: process.env.AWS_REGION || 'us-east-1' });
+    const cloudwatch = new CloudWatchClient({ region: requireAwsRegion() });
     const searchService = getSearchService(contentRepo, embeddingService, cloudwatch);
 
     const results = await searchService.search(
@@ -343,15 +316,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       console.warn('Failed to log search analytics:', err.message);
     });
 
-    return {
+    return withRateLimit({
       statusCode: 200,
-      headers: responseHeaders,
+      headers,
       body: JSON.stringify(results),
-    };
+    });
   } catch (error: any) {
     console.error('Search error:', error);
 
-    return {
+    return attachRateLimitHeaders({
       statusCode: 500,
       headers,
       body: JSON.stringify({
@@ -360,7 +333,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           message: 'An error occurred while performing the search',
         },
       }),
-    };
+    }, rateLimit);
   }
 };
 
@@ -375,8 +348,12 @@ export async function logSearchAnalytics(analytics: {
   filters: any;
   timestamp: Date;
 }, client?: CloudWatchClient): Promise<void> {
+  if (process.env.DISABLE_CLOUDWATCH_METRICS === 'true' || process.env.LOCAL_AUTH_MODE === 'true') {
+    return;
+  }
+
   const cloudwatch = client ?? new CloudWatchClient({
-    region: process.env.AWS_REGION || 'us-east-1'
+    region: requireAwsRegion()
   });
 
   const namespace = 'CommunityContentHub/Search';

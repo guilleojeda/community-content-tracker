@@ -1,5 +1,17 @@
 import { Metadata } from 'next';
 import HomePageContent from './HomePageContent';
+import { getClientEnvironment } from '@/config/environment';
+
+const {
+  NEXT_PUBLIC_SITE_URL: siteUrl,
+  NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION: googleVerification,
+  NEXT_PUBLIC_YANDEX_SITE_VERIFICATION: yandexVerification,
+} = getClientEnvironment();
+
+const verification = {
+  ...(googleVerification ? { google: googleVerification } : {}),
+  ...(yandexVerification ? { yandex: yandexVerification } : {}),
+};
 
 export const metadata: Metadata = {
   title: 'AWS Community Content Hub - Discover AWS Community Contributors',
@@ -29,7 +41,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'AWS Community Content Hub',
     description: 'Discover and track community-generated content from AWS Heroes, Community Builders, and Ambassadors worldwide.',
-    url: process.env.NEXT_PUBLIC_SITE_URL || 'https://aws-community-hub.com',
+    url: siteUrl,
     siteName: 'AWS Community Content Hub',
     locale: 'en_US',
     type: 'website',
@@ -60,12 +72,9 @@ export const metadata: Metadata = {
       'max-snippet': -1,
     },
   },
-  verification: {
-    google: 'your-google-verification-code',
-    yandex: 'your-yandex-verification-code',
-  },
+  verification: Object.keys(verification).length > 0 ? verification : undefined,
   alternates: {
-    canonical: process.env.NEXT_PUBLIC_SITE_URL || 'https://aws-community-hub.com',
+    canonical: siteUrl,
   },
   category: 'technology',
 };

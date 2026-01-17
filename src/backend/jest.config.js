@@ -2,7 +2,6 @@
 const path = require('path');
 
 module.exports = {
-  passWithNoTests: true,
   preset: 'ts-jest',
   testEnvironment: 'node',
   displayName: 'Backend Tests',
@@ -38,13 +37,10 @@ module.exports = {
     'services/SearchService.ts',
     'scripts/bootstrap-admin.ts'
   ],
-  coverageDirectory: 'coverage',
-  coverageReporters: [
-    'text',
-    'lcov',
-    'html',
-    'json-summary'
+  coveragePathIgnorePatterns: [
+    'src/database/config/database\\.ts$',
   ],
+  coverageDirectory: 'coverage',
   coverageThreshold: {
     global: {
       functions: 90,
@@ -56,11 +52,10 @@ module.exports = {
     path.resolve(__dirname, '../../tests/setup/backendEnv.js'),
     path.resolve(__dirname, '../../tests/setup/consoleMock.js'),
   ],
+  globalTeardown: path.resolve(__dirname, '../../tests/setup/globalTeardown.js'),
   // globalSetup: '<rootDir>/tests/setup/global.setup.ts',
   // globalTeardown: '<rootDir>/tests/setup/global.teardown.ts',
-  testTimeout: 30000,
   maxWorkers: 1, // Serialize database tests
-  forceExit: true,
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@tests/(.*)$': '<rootDir>/../tests/backend/$1',

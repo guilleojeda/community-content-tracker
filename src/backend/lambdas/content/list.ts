@@ -4,6 +4,7 @@ import { UserRepository } from '../../repositories/UserRepository';
 import { ContentType, Visibility } from '@aws-community-hub/shared';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 interface ListQueryParams {
   limit?: string;
@@ -39,17 +40,26 @@ export const handler = async (
   context: Context
 ): Promise<APIGatewayProxyResult> => {
   console.log('List Content Lambda invoked', {
-    requestId: context.requestId,
+    requestId: context.awsRequestId,
     path: event.path,
   });
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'content:list' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Extract user ID from authorizer
     const userId = event.requestContext.authorizer?.claims?.sub;
 
     if (!userId) {
-    return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
-  }
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
+    }
 
     // Get database pool
     const dbPool = await getDatabasePool();
@@ -59,7 +69,7 @@ export const handler = async (
     // Get user information for visibility filtering
     const user = await userRepo.findById(userId);
     if (!user) {
-      return createErrorResponse(404, 'NOT_FOUND', 'User not found');
+      return withRateLimit(createErrorResponse(404, 'NOT_FOUND', 'User not found'));
     }
 
     // Parse query parameters
@@ -70,20 +80,20 @@ export const handler = async (
     if (queryParams.limit) {
       const parsedLimit = parseInt(queryParams.limit, 10);
       if (isNaN(parsedLimit) || parsedLimit < 1) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Invalid limit parameter',
           { limit: 'Must be a positive integer' }
-        );
+        ));
       }
       if (parsedLimit > 100) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Limit exceeds maximum allowed value',
           { limit: 'Maximum is 100' }
-        );
+        ));
       }
       limit = parsedLimit;
     }
@@ -93,12 +103,12 @@ export const handler = async (
     if (queryParams.offset) {
       const parsedOffset = parseInt(queryParams.offset, 10);
       if (isNaN(parsedOffset) || parsedOffset < 0) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Invalid offset parameter',
           { offset: 'Must be non-negative' }
-        );
+        ));
       }
       offset = parsedOffset;
     }
@@ -173,21 +183,27 @@ export const handler = async (
       };
     });
 
-    return createSuccessResponse(200, {
+    return withRateLimit(createSuccessResponse(200, {
       items: transformedItems,
       total,
       limit,
       offset,
-    });
+    }));
 
   } catch (error: any) {
     console.error('Error listing content:', error);
 
     // Handle specific error cases
     if (error.code === '42P01') {
-      return createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found');
+      return attachRateLimitHeaders(
+        createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found'),
+        rateLimit
+      );
     }
 
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error'),
+      rateLimit
+    );
   }
 };

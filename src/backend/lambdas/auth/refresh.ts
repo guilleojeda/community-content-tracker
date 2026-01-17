@@ -1,5 +1,11 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider';
+import {
+  AuthFlowType,
+  CognitoIdentityProviderClient,
+  InitiateAuthCommand,
+  InitiateAuthCommandInput,
+  InitiateAuthCommandOutput,
+} from '@aws-sdk/client-cognito-identity-provider';
 import { RefreshTokenRequest, RefreshTokenResponse } from '../../../shared/types';
 import {
   validateRefreshTokenInput,
@@ -9,6 +15,7 @@ import {
   mapCognitoError,
 } from './utils';
 import { getAuthEnvironment } from './config';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Get Cognito client instance
@@ -27,21 +34,31 @@ export async function handler(
   console.log('Refresh token request:', JSON.stringify(event, null, 2));
 
   try {
+    const rateLimit = await applyRateLimit(event, { resource: 'auth:refresh', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(
+        createErrorResponse(429, 'RATE_LIMITED', 'Too many requests')
+      );
+    }
+
     // Parse and validate request body
     const { data: requestBody, error: parseError } = parseRequestBody<RefreshTokenRequest>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     // Validate input
     const validation = validateRefreshTokenInput(requestBody!);
     if (!validation.isValid) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Validation failed',
         { fields: validation.errors }
-      );
+      ));
     }
 
     const { refreshToken } = requestBody!;
@@ -52,8 +69,8 @@ export async function handler(
     const cognitoClient = getCognitoClient(authEnv.region);
 
     try {
-      const refreshCommandInput = {
-        AuthFlow: 'REFRESH_TOKEN_AUTH',
+      const refreshCommandInput: InitiateAuthCommandInput = {
+        AuthFlow: AuthFlowType.REFRESH_TOKEN_AUTH,
         ClientId: authEnv.clientId,
         AuthParameters: {
           REFRESH_TOKEN: refreshToken,
@@ -65,24 +82,24 @@ export async function handler(
           ? (refreshCommandInput as any)
           : new InitiateAuthCommand(refreshCommandInput)
       );
-      const authResult = cognitoResponse.AuthenticationResult;
+      const authResult = (cognitoResponse as InitiateAuthCommandOutput).AuthenticationResult;
 
       if (!authResult) {
         console.error('No authentication result returned from Cognito refresh');
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           500,
           'INTERNAL_ERROR',
           'Failed to refresh tokens'
-        );
+        ));
       }
 
       if (!authResult.AccessToken) {
         console.error('No access token in Cognito refresh response');
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           500,
           'INTERNAL_ERROR',
           'Invalid token refresh response'
-        );
+        ));
       }
 
       // Prepare response
@@ -97,11 +114,11 @@ export async function handler(
       }
 
       console.log('Token refresh successful');
-      return createSuccessResponse(200, response);
+      return withRateLimit(createSuccessResponse(200, response));
 
     } catch (cognitoError: any) {
       console.error('Cognito token refresh error:', cognitoError);
-      return mapCognitoError(cognitoError);
+      return withRateLimit(mapCognitoError(cognitoError));
     }
 
   } catch (error: any) {

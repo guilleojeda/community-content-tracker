@@ -349,6 +349,20 @@ export interface UserDataExport {
     tags?: string[];
   }
 
+  export interface PlatformStats {
+    totalUsers: number;
+    totalContent: number;
+    topContributors: number;
+    contentByType: Record<string, number>;
+    recentActivity: {
+      last24h: number;
+      last7d: number;
+      last30d: number;
+    };
+    uptime: string;
+    lastUpdated: string;
+  }
+
   // Admin Dashboard Types (Sprint 7 - Task 7.1)
   export interface RecentRegistration {
     id: string;

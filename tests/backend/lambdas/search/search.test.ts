@@ -778,8 +778,8 @@ describe('GET /search Lambda handler', () => {
     });
   });
 
-  describe('rate limit configuration defaults', () => {
-    it('falls back to documented defaults when environment values are invalid', async () => {
+  describe('rate limit configuration validation', () => {
+    it('returns 500 when environment values are invalid', async () => {
       process.env.RATE_LIMIT_ANONYMOUS = '-1';
       process.env.RATE_LIMIT_AUTHENTICATED = '0';
       process.env.RATE_LIMIT_WINDOW_MINUTES = '0';
@@ -794,14 +794,11 @@ describe('GET /search Lambda handler', () => {
 
       mockSearchService.search = jest.fn().mockResolvedValue(mockResults);
 
-      await handler(event);
+      const response = await handler(event) as APIGatewayProxyResult;
 
-      expect(mockConsumeRateLimit).toHaveBeenCalledWith(
-        expect.stringMatching(/^search:ip:/),
-        100,
-        60_000,
-        'anon'
-      );
+      expect(response.statusCode).toBe(500);
+      const body = JSON.parse(response.body);
+      expect(body.error.code).toBe('INTERNAL_ERROR');
     });
   });
 
@@ -824,7 +821,7 @@ describe('GET /search Lambda handler', () => {
       // Assert
       expect(response.headers).toMatchObject({
         'Access-Control-Allow-Origin': 'http://localhost:3000',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+        'Access-Control-Allow-Headers': process.env.CORS_ALLOW_HEADERS,
         'Content-Type': 'application/json',
         Vary: 'Origin',
       });

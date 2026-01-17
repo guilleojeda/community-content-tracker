@@ -14,7 +14,7 @@ export interface StaticSiteStackProps extends cdk.StackProps {
   /**
    * Environment name (dev, staging, prod)
    */
-  environment?: string;
+  environment: string;
 
   /**
    * Custom domain name for the site
@@ -54,14 +54,14 @@ export class StaticSiteStack extends cdk.Stack {
   public readonly webAcl?: wafv2.CfnWebACL;
   public readonly websiteUrl: string;
 
-  constructor(scope: Construct, id: string, props?: StaticSiteStackProps) {
+  constructor(scope: Construct, id: string, props: StaticSiteStackProps) {
     super(scope, id, props);
 
     // Add cost tags
     cdk.Tags.of(this).add('Project', 'community-content-hub');
-    cdk.Tags.of(this).add('Environment', props?.environment || 'dev');
+    cdk.Tags.of(this).add('Environment', props.environment);
 
-    const environment = props?.environment || 'dev';
+    const environment = props.environment;
     const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
     const isProductionLike = productionLikeEnvs.has(environment);
 
@@ -115,27 +115,62 @@ export class StaticSiteStack extends cdk.Stack {
       cookieBehavior: cloudfront.CacheCookieBehavior.none(),
     });
 
+    const staticPageCachePolicy = new cloudfront.CachePolicy(this, 'StaticPageCachePolicy', {
+      cachePolicyName: `CommunityContentHub-${environment}-StaticPage`,
+      comment: 'Longer caching for static legal pages',
+      defaultTtl: cdk.Duration.days(1),
+      minTtl: cdk.Duration.seconds(0),
+      maxTtl: cdk.Duration.days(1),
+      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+      queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
+      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+    });
+
+    const contentSecurityPolicy =
+      "default-src 'self'; img-src 'self' data: https:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';";
+
     // Create security headers policy
+    const securityHeadersBehavior: cloudfront.ResponseHeadersPolicyProps['securityHeadersBehavior'] = {
+      strictTransportSecurity: {
+        accessControlMaxAge: cdk.Duration.seconds(63072000), // 2 years
+        includeSubdomains: true,
+        override: true,
+      },
+      contentTypeOptions: {
+        override: true,
+      },
+      frameOptions: {
+        frameOption: cloudfront.HeadersFrameOption.DENY,
+        override: true,
+      },
+      referrerPolicy: {
+        referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+        override: true,
+      },
+      contentSecurityPolicy: {
+        contentSecurityPolicy,
+        override: true,
+      },
+    };
+
     const securityHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeadersPolicy', {
       responseHeadersPolicyName: `CommunityContentHub-${environment}-SecurityHeaders`,
       comment: 'Security headers for Community Content Hub',
-      securityHeadersBehavior: {
-        strictTransportSecurity: {
-          accessControlMaxAge: cdk.Duration.seconds(63072000), // 2 years
-          includeSubdomains: true,
-          override: true,
-        },
-        contentTypeOptions: {
-          override: true,
-        },
-        frameOptions: {
-          frameOption: cloudfront.HeadersFrameOption.DENY,
-          override: true,
-        },
-        referrerPolicy: {
-          referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
-          override: true,
-        },
+      securityHeadersBehavior,
+    });
+
+    const staticPageHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, 'StaticPageHeadersPolicy', {
+      responseHeadersPolicyName: `CommunityContentHub-${environment}-StaticPageHeaders`,
+      comment: 'Security headers and cache control for static legal pages',
+      securityHeadersBehavior,
+      customHeadersBehavior: {
+        customHeaders: [
+          {
+            header: 'Cache-Control',
+            value: 'public, max-age=86400, stale-while-revalidate=43200',
+            override: true,
+          },
+        ],
       },
     });
 
@@ -214,10 +249,18 @@ export class StaticSiteStack extends cdk.Stack {
         compress: true,
       },
       additionalBehaviors: {
-        '/api/*': {
+        '/privacy*': {
           origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          cachePolicy: noCachePolicy,
+          cachePolicy: staticPageCachePolicy,
+          responseHeadersPolicy: staticPageHeadersPolicy,
+          compress: true,
+        },
+        '/terms*': {
+          origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: staticPageCachePolicy,
+          responseHeadersPolicy: staticPageHeadersPolicy,
           compress: true,
         },
         '*.js': {

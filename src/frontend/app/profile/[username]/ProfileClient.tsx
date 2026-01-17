@@ -24,7 +24,7 @@ export default function ProfileClient({ user, badges, content }: ProfileClientPr
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-aws-blue mb-2">{user.username}</h1>
-            <p className="text-gray-600">{user.email}</p>
+            {user.email && <p className="text-gray-600">{user.email}</p>}
             {user.bio && <p className="text-gray-600 mt-2">{user.bio}</p>}
           </div>
         </div>
@@ -114,21 +114,23 @@ export default function ProfileClient({ user, badges, content }: ProfileClientPr
           })}
         </div>
 
-        <div className="mt-6">
-          <a
-            href={`mailto:${user.email}?subject=AWS Community - Contact from ${user.username}'s profile`}
-            className="inline-flex items-center px-4 py-2 bg-aws-blue text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
-          >
-            Contact {user.username}
-          </a>
-        </div>
+        {user.email && (
+          <div className="mt-6">
+            <a
+              href={`mailto:${user.email}?subject=AWS Community - Contact from ${user.username}'s profile`}
+              className="inline-flex items-center px-4 py-2 bg-aws-blue text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+            >
+              Contact {user.username}
+            </a>
+          </div>
+        )}
       </div>
 
       <ProfileContentSection content={content} username={user.username} />
 
       <div className="mt-8 text-center">
         <a href="/dashboard/search" className="text-aws-blue hover:text-aws-orange transition-colors font-medium">
-          ← Back to Search
+          Back to Search
         </a>
       </div>
     </div>

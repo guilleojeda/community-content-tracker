@@ -438,6 +438,14 @@ describe('ApiClient', () => {
       expect(result).toBe('');
     });
 
+    it('should omit empty arrays outside filters', () => {
+      const result = (client as any).buildQueryString({
+        tags: [],
+      });
+
+      expect(result).toBe('');
+    });
+
     it('serializes nested objects outside filters', () => {
       const result = (client as any).buildQueryString({
         paging: { limit: 10, offset: 5 },
@@ -1174,9 +1182,9 @@ describe('ApiClient', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(10);
       const exportCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 2];
-      expect(exportCall[0]).toBe('http://localhost:3001/api/users/me/export');
+      expect(exportCall[0]).toBe('http://localhost:3001/users/me/export');
       const deleteCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(deleteCall[0]).toBe('http://localhost:3001/api/users/me');
+      expect(deleteCall[0]).toBe('http://localhost:3001/users/me');
     });
   });
 
@@ -1319,6 +1327,57 @@ describe('ApiClient', () => {
       );
     });
 
+    it('should unwrap badge lists from object responses', async () => {
+      const badges = [{ id: 'badge-1', type: 'hero' }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ badges }),
+      });
+
+      const result = await client.getUserBadges();
+
+      expect(result).toEqual(badges);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3001/users/me/badges',
+        expect.any(Object)
+      );
+    });
+
+    it('should unwrap badge lists from data responses', async () => {
+      const badges = [{ id: 'badge-2', type: 'ambassador' }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ data: badges }),
+      });
+
+      const result = await client.getUserBadges();
+
+      expect(result).toEqual(badges);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3001/users/me/badges',
+        expect.any(Object)
+      );
+    });
+
+    it('should unwrap badge lists by user ID from data responses', async () => {
+      const badges = [{ id: 'badge-3', type: 'community_builder' }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ data: badges }),
+      });
+
+      const result = await client.getUserBadgesByUserId('user-123');
+
+      expect(result).toEqual(badges);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3001/users/user-123/badges',
+        expect.any(Object)
+      );
+    });
+
     it('should update user profile', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -1332,7 +1391,7 @@ describe('ApiClient', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3001/api/users/user-123',
+        'http://localhost:3001/users/user-123',
         expect.objectContaining({
           method: 'PATCH',
           body: JSON.stringify({
@@ -1341,6 +1400,21 @@ describe('ApiClient', () => {
           }),
         })
       );
+    });
+
+    it('should return wrapped user payloads when present', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ user: { id: 'user-123', username: 'wrappeduser' } }),
+      });
+
+      const result = await client.updateUserProfile('user-123', {
+        username: 'wrappeduser',
+        defaultVisibility: Visibility.PUBLIC,
+      });
+
+      expect(result).toEqual({ id: 'user-123', username: 'wrappeduser' });
     });
 
     it('should update consent preferences', async () => {
@@ -1373,6 +1447,21 @@ describe('ApiClient', () => {
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:3001/user/consent',
         expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('should request user content without query params when omitted', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => ({ content: [], total: 0 }),
+      });
+
+      await client.getUserContent('user-123');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3001/users/user-123/content',
+        expect.any(Object)
       );
     });
   });

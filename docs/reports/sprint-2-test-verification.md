@@ -5,20 +5,20 @@ Date: 2026-02-15
 ---
 
 ## Executive Summary
-- ✅ All Sprint 2 scope is behaviourally covered and compliant. Infrastructure assertions capture the required Cognito configuration, database migrations run against pgvector-enabled Postgres, and the authentication endpoints are exercised with end-to-end flows.
-- ✅ Runtime checks confirm 93.14 % statements / 95.45 % functions coverage for the tracked Lambda handlers and bootstrap script after executing `npm run test:coverage --workspace=src/backend`.
-- ⚠️ Observation: coverage collection is currently limited to the sprint Lambda/script targets (`src/backend/jest.config.js:29`). Repository suites execute, but their files are excluded from the numeric report.
+- [PASS] All Sprint 2 scope is behaviourally covered and compliant. Infrastructure assertions capture the required Cognito configuration, database migrations run against pgvector-enabled Postgres, and the authentication endpoints are exercised with end-to-end flows.
+- [PASS] Runtime checks confirm 93.14 % statements / 95.45 % functions coverage for the tracked Lambda handlers and bootstrap script after executing `npm run test:coverage --workspace=src/backend`.
+- WARNING Observation: coverage collection is currently limited to the sprint Lambda/script targets (`src/backend/jest.config.js:29`). Repository suites execute, but their files are excluded from the numeric report.
 
 ---
 
 ## Validation Commands
-- `npm test` → PASS (Jest + Playwright; Testcontainers Postgres migrations logged during backend suite).  
-- `npm run test:coverage --workspace=src/backend` → PASS with statements 93.14 %, branches 80.80 %, functions 95.45 %, lines 93.11 %.  
-- `npm run typecheck` → PASS across backend, frontend, infrastructure, shared.  
-- `npm run build` → PASS (Next.js build/export plus backend/infrastructure TypeScript builds).  
-- `npm run synth --workspace=src/infrastructure` → PASS (re-build + CDK synth of all stacks).  
-- `npm audit --audit-level=high` → PASS (0 vulnerabilities).  
-- `npm run db:migrate` → PASS (pg-mem validation path when Docker unavailable).
+- `npm test` -> PASS (Jest + Playwright; Testcontainers Postgres migrations logged during backend suite).  
+- `npm run test:coverage --workspace=src/backend` -> PASS with statements 93.14 %, branches 80.80 %, functions 95.45 %, lines 93.11 %.  
+- `npm run typecheck` -> PASS across backend, frontend, infrastructure, shared.  
+- `npm run build` -> PASS (Next.js build/export plus backend/infrastructure TypeScript builds).  
+- `npm run synth --workspace=src/infrastructure` -> PASS (re-build + CDK synth of all stacks).  
+- `npm audit --audit-level=high` -> PASS (0 vulnerabilities).  
+- `npm run db:migrate` -> PASS (pg-mem validation path when Docker unavailable).
 
 ---
 
@@ -48,7 +48,7 @@ Date: 2026-02-15
 - Registration handler tests assert success flow, AWS employee detection, validation errors, duplicate email/username handling, slug generation fallback, and error responses conforming to API error format (`tests/backend/lambdas/auth/register.test.ts:118`, `tests/backend/lambdas/auth/register.test.ts:185`, `tests/backend/lambdas/auth/register.test.ts:209`, `tests/backend/lambdas/auth/register.test.ts:323`, `tests/backend/lambdas/auth/register.test.ts:380`).
 - Login handler verifies admin propagation and expected tokens, while refresh handler checks success and validation failures (`tests/backend/lambdas/auth/login.test.ts:119`, `tests/backend/lambdas/auth/login.test.ts:177`, `tests/backend/lambdas/auth/refresh.test.ts:91`, `tests/backend/lambdas/auth/refresh.test.ts:156`).
 - Verify-email Lambda tests cover success plus missing parameters and invalid input (`tests/backend/lambdas/auth/verify-email.test.ts:103`, `tests/backend/lambdas/auth/verify-email.test.ts:162`).
-- Integration test drives register → login → refresh → verify email against the real handlers with mocked Cognito (`tests/backend/lambdas/auth/integration.test.ts:413`).
+- Integration test drives register -> login -> refresh -> verify email against the real handlers with mocked Cognito (`tests/backend/lambdas/auth/integration.test.ts:413`).
 
 ### Task 2.6 – Admin Bootstrap Script
 - CLI parsing, password policy checks, Cognito creation/add-to-group, idempotent reruns, and promotion of existing users are verified (`tests/backend/scripts/bootstrap-admin.test.ts:258`, `tests/backend/scripts/bootstrap-admin.test.ts:335`, `tests/backend/scripts/bootstrap-admin.test.ts:387`).

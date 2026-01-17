@@ -38,6 +38,6 @@
 - Use CloudFront tiered caching for static assets to lower egress by ~25%.
 
 ## Next steps
-1. Run full staging load test against deployed API once blue/green rollout is available.
+1. Run full staging load test against deployed API now that blue/green routing is available.
 2. Implement AWS Application Auto Scaling policy for Lambda based on `ConcurrentExecutions` (scale between 10–100 reserved concurrency).
 3. Review cost anomalies weekly using Cost Explorer (threshold: +15% week-over-week).

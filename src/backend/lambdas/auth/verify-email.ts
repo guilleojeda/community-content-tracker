@@ -2,12 +2,15 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { CognitoIdentityProviderClient, ConfirmSignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { VerifyEmailRequest, VerifyEmailResponse } from '../../../shared/types';
 import {
+  parseRequestBody,
+  parseQueryParams,
   validateVerifyEmailInput,
   createErrorResponse,
   createSuccessResponse,
   mapCognitoError,
 } from './utils';
 import { getAuthEnvironment } from './config';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Get Cognito client instance
@@ -26,27 +29,56 @@ export async function handler(
   console.log('Verify email request:', JSON.stringify(event, null, 2));
 
   try {
-    // Parse and validate query parameters
-    const email = event.queryStringParameters?.email;
-    const code = event.queryStringParameters?.code;
+    const isLocalAuthMode = process.env.LOCAL_AUTH_MODE === 'true';
+    const rateLimit = await applyRateLimit(event, { resource: 'auth:verify-email', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
 
-    if (!email || !code) {
-      return createErrorResponse(
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(
+        createErrorResponse(429, 'RATE_LIMITED', 'Too many requests')
+      );
+    }
+
+    const hasBody = typeof event.body === 'string' && event.body.trim().length > 0;
+    const isPost = (event.httpMethod || '').toUpperCase() === 'POST';
+
+    let decodedEmail: string | undefined;
+    let decodedCode: string | undefined;
+
+    if (isPost || hasBody) {
+      const parsedBody = parseRequestBody<VerifyEmailRequest>(event.body || null);
+      if (parsedBody.error) {
+        return withRateLimit(parsedBody.error);
+      }
+
+      decodedEmail = parsedBody.data?.email?.trim();
+      decodedCode = parsedBody.data?.confirmationCode?.trim();
+    } else {
+      const parsedQuery = parseQueryParams(event.queryStringParameters);
+      if (parsedQuery.error) {
+        return withRateLimit(parsedQuery.error);
+      }
+
+      decodedEmail = parsedQuery.email;
+      const queryParams = event.queryStringParameters || {};
+      const codeParam = queryParams.code || queryParams.confirmationCode;
+      decodedCode = codeParam ? decodeURIComponent(codeParam).trim() : parsedQuery.code;
+    }
+
+    if (!decodedEmail || !decodedCode) {
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Missing required parameters',
         {
           fields: {
-            email: !email ? 'Email is required' : undefined,
-            code: !code ? 'Confirmation code is required' : undefined
+            email: !decodedEmail ? 'Email is required' : undefined,
+            code: !decodedCode ? 'Confirmation code is required' : undefined
           }
         }
-      );
+      ));
     }
-
-    // Decode and trim parameters
-    const decodedEmail = decodeURIComponent(email).trim();
-    const decodedCode = decodeURIComponent(code).trim();
 
     // Create request object for validation
     const requestData: VerifyEmailRequest = {
@@ -57,12 +89,21 @@ export async function handler(
     // Validate input
     const validation = validateVerifyEmailInput(requestData);
     if (!validation.isValid) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Validation failed',
         { fields: validation.errors }
-      );
+      ));
+    }
+
+    if (isLocalAuthMode) {
+      const response: VerifyEmailResponse = {
+        verified: true,
+        message: 'Email verified successfully. You can now log in.',
+      };
+
+      return withRateLimit(createSuccessResponse(200, response));
     }
 
     const authEnv = getAuthEnvironment();
@@ -83,7 +124,7 @@ export async function handler(
           : new ConfirmSignUpCommand(confirmCommandInput)
       );
 
-      console.log('Email verification successful for user:', email);
+      console.log('Email verification successful for user:', decodedEmail);
 
       // Prepare success response
       const response: VerifyEmailResponse = {
@@ -91,11 +132,11 @@ export async function handler(
         message: 'Email verified successfully. You can now log in.',
       };
 
-      return createSuccessResponse(200, response);
+      return withRateLimit(createSuccessResponse(200, response));
 
     } catch (cognitoError: any) {
       console.error('Cognito email verification error:', cognitoError);
-      return mapCognitoError(cognitoError);
+      return withRateLimit(mapCognitoError(cognitoError));
     }
 
   } catch (error: any) {

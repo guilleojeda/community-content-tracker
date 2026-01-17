@@ -1,12 +1,16 @@
 /* istanbul ignore file */
 
-import { db } from '../config/database';
+import { config as loadDotenv } from 'dotenv';
+import { Pool } from 'pg';
+import { closeDatabasePool, getDatabasePool } from '../config/database';
 import { Visibility, ContentType, BadgeType } from '@aws-community-hub/shared';
 
 /**
  * Development seed data script
  * Creates test data including admin user for local development
  */
+
+loadDotenv();
 
 export interface SeedUser {
   cognitoSub: string;
@@ -163,7 +167,7 @@ const seedBadgesByUser: Record<string, SeedBadge[]> = {
   ],
 };
 
-async function clearExistingData(): Promise<void> {
+async function clearExistingData(db: Pool): Promise<void> {
   console.log('Clearing existing seed data...');
 
   // Delete in correct order due to foreign key constraints
@@ -178,7 +182,7 @@ async function clearExistingData(): Promise<void> {
   console.log('Existing seed data cleared.');
 }
 
-async function seedUsersData(): Promise<Map<string, string>> {
+async function seedUsersData(db: Pool): Promise<Map<string, string>> {
   console.log('Seeding users...');
   const userIdMap = new Map<string, string>();
 
@@ -204,7 +208,7 @@ async function seedUsersData(): Promise<Map<string, string>> {
   return userIdMap;
 }
 
-async function seedContentData(userIdMap: Map<string, string>): Promise<Map<string, string>> {
+async function seedContentData(db: Pool, userIdMap: Map<string, string>): Promise<Map<string, string>> {
   console.log('Seeding content...');
   const contentIdMap = new Map<string, string>();
 
@@ -264,7 +268,7 @@ async function seedContentData(userIdMap: Map<string, string>): Promise<Map<stri
   return contentIdMap;
 }
 
-async function seedBadgesData(userIdMap: Map<string, string>): Promise<void> {
+async function seedBadgesData(db: Pool, userIdMap: Map<string, string>): Promise<void> {
   console.log('Seeding badges...');
 
   const adminUserId = userIdMap.get('admin');
@@ -293,7 +297,7 @@ async function seedBadgesData(userIdMap: Map<string, string>): Promise<void> {
   }
 }
 
-async function seedSocialData(userIdMap: Map<string, string>, contentIdMap: Map<string, string>): Promise<void> {
+async function seedSocialData(db: Pool, userIdMap: Map<string, string>, contentIdMap: Map<string, string>): Promise<void> {
   console.log('Seeding social data (follows, bookmarks)...');
 
   const userIds = Array.from(userIdMap.values());
@@ -330,14 +334,16 @@ async function seedSocialData(userIdMap: Map<string, string>, contentIdMap: Map<
 }
 
 export async function seedDatabase(): Promise<void> {
+  let db: Pool | null = null;
   try {
     console.log('Starting database seeding...');
 
-    await clearExistingData();
-    const userIdMap = await seedUsersData();
-    const contentIdMap = await seedContentData(userIdMap);
-    await seedBadgesData(userIdMap);
-    await seedSocialData(userIdMap, contentIdMap);
+    db = await getDatabasePool();
+    await clearExistingData(db);
+    const userIdMap = await seedUsersData(db);
+    const contentIdMap = await seedContentData(db, userIdMap);
+    await seedBadgesData(db, userIdMap);
+    await seedSocialData(db, userIdMap, contentIdMap);
 
     console.log('Database seeding completed successfully!');
     console.log('\\n=== Seed Data Summary ===');
@@ -351,6 +357,8 @@ export async function seedDatabase(): Promise<void> {
   } catch (error) {
     console.error('Error seeding database:', error);
     throw error;
+  } finally {
+    await closeDatabasePool();
   }
 }
 

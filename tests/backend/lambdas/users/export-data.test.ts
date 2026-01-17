@@ -6,7 +6,6 @@ import { Visibility } from '@aws-community-hub/shared';
 jest.mock('../../../../src/backend/services/database', () => ({
   getDatabasePool: jest.fn(),
 }));
-jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier');
 jest.mock('../../../../src/backend/services/AuditLogService', () => {
   const mockLog = jest.fn();
   return {
@@ -21,13 +20,13 @@ const mockPool = {
   query: jest.fn(),
 };
 
-const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
 const { getDatabasePool } = require('../../../../src/backend/services/database');
 const { AuditLogService, __mockLog: mockAuditLog } = require('../../../../src/backend/services/AuditLogService');
 
 describe('Export Data Lambda', () => {
   const validUserId = 'user-123';
   const validAccessToken = 'valid-access-token';
+  const originalTestDbInMemory = process.env.TEST_DB_INMEMORY;
 
   const mockUser = {
     id: validUserId,
@@ -144,16 +143,9 @@ describe('Export Data Lambda', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.TEST_DB_INMEMORY = 'false';
     mockPool.query.mockReset();
     (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
-    verifyJwtToken.mockResolvedValue({
-      isValid: true,
-      user: {
-        ...mockUser,
-        createdAt: new Date('2024-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2024-01-01T00:00:00.000Z'),
-      },
-    });
     (AuditLogService as jest.Mock).mockClear();
     (AuditLogService as jest.Mock).mockImplementation(() => ({
       log: mockAuditLog,
@@ -162,9 +154,28 @@ describe('Export Data Lambda', () => {
     mockAuditLog.mockResolvedValue('audit-log-entry');
   });
 
-  const createEvent = (userId?: string, authHeader?: string): Partial<APIGatewayProxyEvent> => ({
+  afterEach(() => {
+    if (originalTestDbInMemory === undefined) {
+      delete process.env.TEST_DB_INMEMORY;
+    } else {
+      process.env.TEST_DB_INMEMORY = originalTestDbInMemory;
+    }
+  });
+
+  const createEvent = (
+    userId?: string,
+    authHeader?: string,
+    authorizerUserId: string | null = validUserId,
+    authorizerIsAdmin: boolean | undefined = undefined
+  ): Partial<APIGatewayProxyEvent> => ({
     pathParameters: userId ? { id: userId } : undefined,
     headers: authHeader ? { Authorization: authHeader } : {},
+    requestContext: {
+      authorizer: authorizerUserId ? {
+        userId: authorizerUserId,
+        isAdmin: authorizerIsAdmin,
+      } : undefined,
+    } as any,
   });
 
   describe('Validation', () => {
@@ -180,7 +191,7 @@ describe('Export Data Lambda', () => {
     });
 
     it('should return 401 if authorization token is missing', async () => {
-      const event = createEvent(validUserId);
+      const event = createEvent(validUserId, undefined, null);
 
       const result = await handler(event as APIGatewayProxyEvent);
 
@@ -200,16 +211,11 @@ describe('Export Data Lambda', () => {
     });
 
     it('should allow admin to export any user data', async () => {
-      verifyJwtToken.mockResolvedValueOnce({
-        isValid: true,
-        user: { ...mockUser, isAdmin: true },
-      });
-
       mockPool.query.mockResolvedValue({
         rows: [{ data: mockExportData }],
       });
 
-      const event = createEvent('other-user-id', `Bearer ${validAccessToken}`);
+      const event = createEvent('other-user-id', undefined, validUserId, true);
 
       const result = await handler(event as APIGatewayProxyEvent);
 
@@ -364,21 +370,6 @@ describe('Export Data Lambda', () => {
       expect(result.statusCode).toBe(404);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('NOT_FOUND');
-    });
-
-    it('should return 401 for invalid token', async () => {
-      verifyJwtToken.mockResolvedValueOnce({
-        isValid: false,
-        error: { code: 'AUTH_INVALID' },
-      });
-
-      const event = createEvent(validUserId, `Bearer invalid-token`);
-
-      const result = await handler(event as APIGatewayProxyEvent);
-
-      expect(result.statusCode).toBe(401);
-      const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('AUTH_INVALID');
     });
 
     it('should return 500 for database errors', async () => {

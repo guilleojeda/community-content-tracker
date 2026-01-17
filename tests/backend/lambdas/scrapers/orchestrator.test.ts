@@ -104,6 +104,8 @@ describe('Scraper Orchestrator Lambda', () => {
     jest.clearAllMocks();
     setTimeoutDelays.length = 0; // Clear delay tracking
     mockContext = {} as Context;
+    mockLambdaClient.mockImplementation(() => ({ send: mockLambdaSend }) as any);
+    mockCloudWatchClientClass.mockImplementation(() => ({ send: mockCloudWatchSend }) as any);
   });
 
   const createEvent = (): ScheduledEvent => ({
@@ -358,9 +360,12 @@ describe('Scraper Orchestrator Lambda', () => {
   });
 
   describe('Edge Cases', () => {
-    // Note: This test is skipped because env vars are read at module load time
-    // Deleting them in the test doesn't affect the module-level constants
-    it.skip('should handle no scrapers configured (all env vars missing)', async () => {
+    it('should handle no scrapers configured (all env vars missing)', async () => {
+      const originalEnv = {
+        blog: process.env.BLOG_SCRAPER_FUNCTION_NAME,
+        youtube: process.env.YOUTUBE_SCRAPER_FUNCTION_NAME,
+        github: process.env.GITHUB_SCRAPER_FUNCTION_NAME,
+      };
       mockFindAllActiveForSync.mockResolvedValue([
         { id: '1', channelType: ChannelType.BLOG, userId: 'user1', url: 'https://blog.com/feed', enabled: true, syncFrequency: 'daily' as const, metadata: {}, createdAt: new Date(), updatedAt: new Date() },
         { id: '2', channelType: ChannelType.YOUTUBE, userId: 'user1', url: 'https://youtube.com/channel/123', enabled: true, syncFrequency: 'daily' as const, metadata: {}, createdAt: new Date(), updatedAt: new Date() },
@@ -385,11 +390,28 @@ describe('Scraper Orchestrator Lambda', () => {
         call => call[0].input?.MetricData?.[0]?.MetricName === 'ScrapersInvoked'
       );
       expect(invokedMetric[0].input.MetricData[0].Value).toBe(0);
+
+      if (originalEnv.blog === undefined) {
+        delete process.env.BLOG_SCRAPER_FUNCTION_NAME;
+      } else {
+        process.env.BLOG_SCRAPER_FUNCTION_NAME = originalEnv.blog;
+      }
+      if (originalEnv.youtube === undefined) {
+        delete process.env.YOUTUBE_SCRAPER_FUNCTION_NAME;
+      } else {
+        process.env.YOUTUBE_SCRAPER_FUNCTION_NAME = originalEnv.youtube;
+      }
+      if (originalEnv.github === undefined) {
+        delete process.env.GITHUB_SCRAPER_FUNCTION_NAME;
+      } else {
+        process.env.GITHUB_SCRAPER_FUNCTION_NAME = originalEnv.github;
+      }
     });
 
-    // Note: This test is skipped because env vars are read at module load time
-    // Deleting them in the test doesn't affect the module-level constants
-    it.skip('should handle partial scraper configuration', async () => {
+    it('should handle partial scraper configuration', async () => {
+      const originalEnv = {
+        youtube: process.env.YOUTUBE_SCRAPER_FUNCTION_NAME,
+      };
       mockFindAllActiveForSync.mockResolvedValue([
         { id: '1', channelType: ChannelType.BLOG, userId: 'user1', url: 'https://blog.com/feed', enabled: true, syncFrequency: 'daily' as const, metadata: {}, createdAt: new Date(), updatedAt: new Date() },
         { id: '2', channelType: ChannelType.YOUTUBE, userId: 'user1', url: 'https://youtube.com/channel/123', enabled: true, syncFrequency: 'daily' as const, metadata: {}, createdAt: new Date(), updatedAt: new Date() },
@@ -412,6 +434,12 @@ describe('Scraper Orchestrator Lambda', () => {
         call => call[0].input?.MetricData?.[0]?.MetricName === 'ScrapersInvoked'
       );
       expect(invokedMetric[0].input.MetricData[0].Value).toBe(2);
+
+      if (originalEnv.youtube === undefined) {
+        delete process.env.YOUTUBE_SCRAPER_FUNCTION_NAME;
+      } else {
+        process.env.YOUTUBE_SCRAPER_FUNCTION_NAME = originalEnv.youtube;
+      }
     });
 
     it('should handle mixed success/failure scenarios', async () => {
@@ -448,15 +476,14 @@ describe('Scraper Orchestrator Lambda', () => {
       expect(Math.abs(successRateMetric[0].input.MetricData[0].Value - 33.33)).toBeLessThan(0.1);
     });
 
-    // Note: This test is skipped because ENVIRONMENT env var is set in beforeAll
-    // Deleting it in the test doesn't affect the module-level constant
-    it.skip('should handle default environment values', async () => {
+    it('should handle default environment values', async () => {
+      const originalEnvironment = process.env.ENVIRONMENT;
       mockFindAllActiveForSync.mockResolvedValue([
         { id: '1', channelType: ChannelType.BLOG, userId: 'user1', url: 'https://blog.com/feed', enabled: true, syncFrequency: 'daily' as const, metadata: {}, createdAt: new Date(), updatedAt: new Date() },
       ]);
 
       delete process.env.ENVIRONMENT;
-      delete process.env.AWS_REGION;
+      process.env.AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 
       mockLambdaSend.mockResolvedValue({ StatusCode: 202 });
       mockCloudWatchSend.mockResolvedValue({});
@@ -470,10 +497,16 @@ describe('Scraper Orchestrator Lambda', () => {
         expect(call[0].input.MetricData[0].Dimensions).toEqual([
           {
             Name: 'Environment',
-            Value: 'dev', // Default value
+            Value: 'test', // Default value from NODE_ENV in test runs
           },
         ]);
       });
+
+      if (originalEnvironment === undefined) {
+        delete process.env.ENVIRONMENT;
+      } else {
+        process.env.ENVIRONMENT = originalEnvironment;
+      }
     });
   });
 

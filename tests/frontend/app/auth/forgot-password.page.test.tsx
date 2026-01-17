@@ -9,10 +9,10 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-jest.mock('@/api/client', () => ({
-  getPublicApiClient: () => ({
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadPublicApiClient: jest.fn(() => Promise.resolve({
     forgotPassword: mockForgotPassword,
-  }),
+  })),
 }));
 
 describe('ForgotPasswordPage', () => {
@@ -34,7 +34,7 @@ describe('ForgotPasswordPage', () => {
     fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'user@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: /send reset code/i }));
 
-    expect(mockForgotPassword).toHaveBeenCalledWith({ email: 'user@example.com' });
+    await waitFor(() => expect(mockForgotPassword).toHaveBeenCalledWith({ email: 'user@example.com' }));
 
     await waitFor(() => expect(screen.getByText(/reset code sent/i)).toBeInTheDocument());
     jest.runOnlyPendingTimers();

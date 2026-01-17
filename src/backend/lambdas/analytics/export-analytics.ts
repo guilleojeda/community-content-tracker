@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse } from '../auth/utils';
 import { logExportEvent } from '../export/utils';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 interface ExportRequest {
   startDate?: string;
@@ -17,11 +18,21 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'analytics:export' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Check authentication
     const authorizer: any = event.requestContext?.authorizer;
     if (!authorizer || !authorizer.userId) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
     }
 
     const userId = authorizer.userId;
@@ -75,17 +86,20 @@ export async function handler(
       console.error('Failed to log analytics export event:', error);
     }
 
-    return {
+    return withRateLimit({
       statusCode: 200,
       headers: {
         'Content-Type': 'text/csv',
         'Content-Disposition': 'attachment; filename="analytics_export.csv"',
       },
       body: csvContent,
-    };
+    });
   } catch (error: any) {
     console.error('Analytics export error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to export analytics');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to export analytics'),
+      rateLimit
+    );
   }
 }
 

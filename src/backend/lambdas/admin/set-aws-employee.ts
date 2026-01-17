@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Extract admin context from API Gateway event
@@ -135,15 +136,27 @@ export async function handler(
 ): Promise<APIGatewayProxyResult> {
   const path = event.path || '';
   const method = (event.httpMethod || 'GET').toUpperCase();
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
-    if (method === 'PUT' && /^\/admin\/users\/[^/]+\/aws-employee$/.test(path)) {
-      return await handleSetAwsEmployee(event);
+    rateLimit = await applyRateLimit(event, { resource: 'admin:set-aws-employee' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
     }
 
-    return createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`);
+    if (method === 'PUT' && /^\/admin\/users\/[^/]+\/aws-employee$/.test(path)) {
+      return withRateLimit(await handleSetAwsEmployee(event));
+    }
+
+    return withRateLimit(createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`));
   } catch (error) {
     console.error('Unhandled set-aws-employee error', { path, method, error });
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred'),
+      rateLimit
+    );
   }
 }

@@ -96,7 +96,7 @@ export default function SearchResults({
           const likes = getMetricValue(metrics, 'likes');
 
           return (
-            <div
+            <article
               key={item.id}
               className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow border border-gray-200"
             >
@@ -229,7 +229,7 @@ export default function SearchResults({
                 )}
               </div>
             </div>
-          </div>
+            </article>
           );
         })}
       </div>

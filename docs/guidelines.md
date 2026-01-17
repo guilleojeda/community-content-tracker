@@ -2,11 +2,11 @@ Implementation Guidelines for AI Development
 Critical Path Dependencies
 The following tasks are on the critical path and must be completed in order:
 
-Task 1.1 → 1.2 → 1.4 → 2.2 → 2.3 (Foundation)
-Task 2.1 → 2.4 → 2.5 (Authentication)
-Task 3.1 → 3.2 (Content CRUD)
-Task 5.1 → 5.2 (Search)
-Task 1.5 → 5.3 (Frontend deployment)
+Task 1.1 -> 1.2 -> 1.4 -> 2.2 -> 2.3 (Foundation)
+Task 2.1 -> 2.4 -> 2.5 (Authentication)
+Task 3.1 -> 3.2 (Content CRUD)
+Task 5.1 -> 5.2 (Search)
+Task 1.5 -> 5.3 (Frontend deployment)
 
 For Each Task:
 

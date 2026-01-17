@@ -6,6 +6,7 @@ import { getDatabasePool } from '../../services/database';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { EmbeddingService } from '../../services/EmbeddingService';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 const MAX_TITLE_LENGTH = 500;
 const MAX_DESCRIPTION_LENGTH = 5000;
@@ -142,18 +143,27 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     methods: 'OPTIONS,PUT',
     allowCredentials: true,
   };
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   const respondError = (
     statusCode: number,
     code: string,
     message: string,
     details?: Record<string, unknown>
-  ) => createErrorResponse(statusCode, code, message, details, corsOptions);
+  ) => attachRateLimitHeaders(
+    createErrorResponse(statusCode, code, message, details, corsOptions),
+    rateLimit
+  );
 
   const respondSuccess = (statusCode: number, body: Record<string, unknown>) =>
-    createSuccessResponse(statusCode, body, corsOptions);
+    attachRateLimitHeaders(createSuccessResponse(statusCode, body, corsOptions), rateLimit);
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'content:update' });
+    if (rateLimit && !rateLimit.allowed) {
+      return respondError(429, 'RATE_LIMITED', 'Too many requests');
+    }
+
     const userId = getUserIdFromEvent(event);
     if (!userId) {
       return respondError(401, 'AUTH_REQUIRED', 'Authentication required');

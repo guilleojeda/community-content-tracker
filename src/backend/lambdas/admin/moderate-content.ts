@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Extract admin context from API Gateway event
@@ -387,31 +388,43 @@ export async function handler(
 ): Promise<APIGatewayProxyResult> {
   const path = event.path || '';
   const method = (event.httpMethod || 'GET').toUpperCase();
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'admin:moderate-content' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // GET /admin/content/flagged
     if (method === 'GET' && path === '/admin/content/flagged') {
-      return await handleListFlaggedContent(event);
+      return withRateLimit(await handleListFlaggedContent(event));
     }
 
     // PUT /admin/content/:id/flag
     if (method === 'PUT' && /^\/admin\/content\/[^/]+\/flag$/.test(path)) {
-      return await handleFlagContent(event);
+      return withRateLimit(await handleFlagContent(event));
     }
 
     // PUT /admin/content/:id/moderate
     if (method === 'PUT' && /^\/admin\/content\/[^/]+\/moderate$/.test(path)) {
-      return await handleModerateContent(event);
+      return withRateLimit(await handleModerateContent(event));
     }
 
     // DELETE /admin/content/:id
     if (method === 'DELETE' && /^\/admin\/content\/[^/]+$/.test(path)) {
-      return await handleDeleteContent(event);
+      return withRateLimit(await handleDeleteContent(event));
     }
 
-    return createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`);
+    return withRateLimit(createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`));
   } catch (error) {
     console.error('Unhandled content moderation error', { path, method, error });
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred'),
+      rateLimit
+    );
   }
 }

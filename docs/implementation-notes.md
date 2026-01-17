@@ -75,12 +75,12 @@ typescriptexport const handler = async (event: APIGatewayProxyEvent): Promise<AP
 
 - Critical API responses (e.g., platform statistics) are cached through `CacheService`, which uses Redis when `REDIS_URL` is provided and gracefully degrades to a no-op cache otherwise.
 - Enabling `ENABLE_QUERY_PROFILING=true` records `EXPLAIN ANALYZE` plans for search queries to help diagnose slow database execution paths without changing application logic.
-- Next.js enforces a 200KB asset/entrypoint budget and applies long-lived cache headers to static policy pages so CDN distributions keep them warm.
+- Next.js enforces a 500KB asset/entrypoint budget and applies long-lived cache headers to static policy pages so CDN distributions keep them warm.
 
 ## CORS Configuration
 
 - Build response headers with `createSuccessResponse` / `createErrorResponse` (or `buildCorsHeaders` for custom handlers) to ensure only approved origins are served.
-- Configure allowed origins via the `CORS_ORIGIN` environment variable (comma-separated). When unset, the helper defaults to `http://localhost:3000` for local development.
+- Configure allowed origins via the `CORS_ORIGIN` environment variable (comma-separated). This value is required; set it to `http://localhost:3000` for local development when needed.
 - Override header lists with `CORS_ALLOW_HEADERS` and caching with `CORS_MAX_AGE`. Set `CORS_CREDENTIALS=true` to add `Access-Control-Allow-Credentials` automatically.
 - For bespoke responses (e.g., manual `OPTIONS` handlers), import `buildCorsHeaders` from `src/shared/cors.ts` so infrastructure and Lambda placeholders stay in sync.
 Testing Requirements:

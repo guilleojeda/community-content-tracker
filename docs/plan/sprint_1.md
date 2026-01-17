@@ -98,7 +98,7 @@ Acceptance Criteria:
  Database secrets stored in Secrets Manager
  VPC and security groups properly configured
  Database proxy configured for connection pooling
- Dev database accessible via bastion host for debugging
+ Dev database accessible via RDS Data API (no bastion host)
  Automated backup configuration with 7-day retention
  Point-in-time recovery enabled
 Verification Query:

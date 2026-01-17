@@ -1,46 +1,85 @@
 import { test, expect } from '@playwright/test';
-import { createMockState, registerApiMocks } from './helpers/mockApi';
-import { ContentType } from '../../../src/shared/types';
+import { BadgeType, ContentType } from '../../../src/shared/types';
 
 const contentTypes = Object.values(ContentType);
+const PROJECT_ORDER = ['chromium', 'firefox', 'webkit'];
+const UNCLAIMED_CONTENT_TYPES: ContentType[] = [
+  ContentType.BLOG,
+  ContentType.YOUTUBE,
+  ContentType.GITHUB,
+  ContentType.CONFERENCE_TALK,
+  ContentType.PODCAST,
+];
+const BADGE_TYPES: BadgeType[] = [
+  BadgeType.COMMUNITY_BUILDER,
+  BadgeType.HERO,
+  BadgeType.AMBASSADOR,
+  BadgeType.USER_GROUP_LEADER,
+];
+const BADGE_LABELS: Record<BadgeType, string> = {
+  [BadgeType.COMMUNITY_BUILDER]: 'Community Builder',
+  [BadgeType.HERO]: 'Hero',
+  [BadgeType.AMBASSADOR]: 'Ambassador',
+  [BadgeType.USER_GROUP_LEADER]: 'User Group Leader',
+};
+
+const normalizeProjectName = (name: string) =>
+  name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+const getProjectConfig = (projectName: string) => {
+  const slug = normalizeProjectName(projectName || 'default');
+  const index = Math.max(PROJECT_ORDER.indexOf(slug), 0);
+  const unclaimedContentType = UNCLAIMED_CONTENT_TYPES[index % UNCLAIMED_CONTENT_TYPES.length];
+  const badgeType = BADGE_TYPES[index % BADGE_TYPES.length];
+
+  return {
+    slug,
+    testToken: `test-token-${slug}`,
+    adminToken: `admin-token-${slug}`,
+    unclaimedContentType,
+    unclaimedTitle: `Unclaimed ${slug} ${unclaimedContentType}`,
+    badgeType,
+    badgeLabel: BADGE_LABELS[badgeType],
+  };
+};
 
 const withAuthToken = async (page: any, token = 'test-token') => {
   await page.addInitScript((value: string) => {
     window.localStorage.setItem('accessToken', value);
+    window.localStorage.setItem('cookie-consent', 'accepted');
   }, token);
 };
 
-const setupMockedPage = async (page: any, state: ReturnType<typeof createMockState>) => {
+const setupConsent = async (page: any) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('cookie-consent', 'accepted');
   });
-  await registerApiMocks(page, state);
-};
-
-const buildAdminState = () => {
-  const state = createMockState();
-  state.currentUser = {
-    ...state.currentUser,
-    id: 'admin-1',
-    email: 'admin@example.com',
-    username: 'admin',
-    profileSlug: 'admin',
-    isAdmin: true,
-  };
-  return state;
 };
 
 test.describe('Sprint 8 E2E flows', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupConsent(page);
+  });
+
   test('user registration and verification flow', async ({ page }) => {
-    const state = createMockState();
-    await setupMockedPage(page, state);
+    const { slug } = getProjectConfig(test.info().project.name);
+    const uniqueSuffix = `${Date.now()}-${test.info().workerIndex}`;
+    const email = `creator-${slug}-${uniqueSuffix}@example.com`;
+    const username = `power_creator_${slug}_${uniqueSuffix}`;
 
     await page.goto('/auth/register');
+    await page.waitForLoadState('networkidle');
 
-    await page.getByLabel('Email').fill('creator@example.com');
-    await page.getByLabel('Username').fill('power_creator');
-    await page.getByLabel('Password', { exact: true }).fill('StrongPassword123!');
-    await page.getByLabel('Confirm Password').fill('StrongPassword123!');
+    const emailInput = page.locator('#email');
+    const usernameInput = page.locator('#username');
+    const passwordInput = page.locator('#password');
+    const confirmPasswordInput = page.locator('#confirmPassword');
+
+    await usernameInput.fill(username);
+    await passwordInput.fill('StrongPassword123!');
+    await confirmPasswordInput.fill('StrongPassword123!');
+    await emailInput.fill(email);
+    await expect(emailInput).toHaveValue(email);
     await page.getByRole('checkbox').check();
 
     await page.getByRole('button', { name: 'Create Account' }).click();
@@ -53,9 +92,6 @@ test.describe('Sprint 8 E2E flows', () => {
   });
 
   test('anonymous search flow shows public results', async ({ page }) => {
-    const state = createMockState();
-    await setupMockedPage(page, state);
-
     await page.goto('/search?q=lambda');
 
     await expect(page.getByText('AWS Lambda Deep Dive')).toBeVisible();
@@ -64,9 +100,8 @@ test.describe('Sprint 8 E2E flows', () => {
 
   test('authenticated creator flows: content, channels, claiming, search', async ({ page }) => {
     test.slow();
-    const state = createMockState();
-    await withAuthToken(page);
-    await setupMockedPage(page, state);
+    const project = getProjectConfig(test.info().project.name);
+    await withAuthToken(page, project.testToken);
 
     await page.goto('/dashboard/content');
     await expect(page.getByRole('heading', { name: 'Content Management' })).toBeVisible();
@@ -106,6 +141,8 @@ test.describe('Sprint 8 E2E flows', () => {
 
     await page.goto('/dashboard/claim-content');
     await expect(page.getByRole('heading', { name: 'Claim Content' })).toBeVisible();
+    await page.getByLabel('Content Type').selectOption(project.unclaimedContentType);
+    await expect(page.getByText(project.unclaimedTitle)).toBeVisible();
     await page.getByRole('button', { name: 'Claim', exact: true }).first().click();
     await expect(page.getByText('Confirm Claim')).toBeVisible();
     await page.getByRole('button', { name: 'Confirm' }).click();
@@ -116,28 +153,26 @@ test.describe('Sprint 8 E2E flows', () => {
   });
 
   test('admin badge granting flow', async ({ page }) => {
-    const state = buildAdminState();
-    await withAuthToken(page, 'admin-token');
-    await setupMockedPage(page, state);
+    const project = getProjectConfig(test.info().project.name);
+    await withAuthToken(page, project.adminToken);
 
     await page.goto('/admin/users');
     await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible();
 
-    await page.getByRole('row', { name: /builder/ }).click();
+    await page.getByRole('row', { name: new RegExp(`builder-${project.slug}`, 'i') }).click();
     await expect(page.getByText('Username:')).toBeVisible();
 
     await page.getByRole('button', { name: 'Grant Badge' }).click();
-    await page.locator('#modal-badge-type').selectOption('community_builder');
+    await page.locator('#modal-badge-type').selectOption(project.badgeType);
     await page.getByRole('button', { name: 'Confirm' }).click();
 
     await expect(page.getByText('Badge granted successfully.')).toBeVisible();
-    await expect(page.locator('li', { hasText: 'Community Builder' })).toBeVisible();
+    await expect(page.locator('li', { hasText: project.badgeLabel })).toBeVisible();
   });
 
   test('program exports and GDPR data flows', async ({ page }) => {
-    const state = createMockState();
-    await withAuthToken(page);
-    await setupMockedPage(page, state);
+    const project = getProjectConfig(test.info().project.name);
+    await withAuthToken(page, project.testToken);
 
     await page.goto('/dashboard/analytics');
     await expect(page.getByRole('heading', { name: 'Analytics Dashboard' })).toBeVisible();
@@ -167,7 +202,7 @@ test.describe('Sprint 8 E2E flows', () => {
 
     await Promise.all([
       page.waitForResponse((resp) =>
-        resp.url().includes('/api/users/') && resp.url().endsWith('/export') && resp.request().method() === 'GET'
+        resp.url().includes('/users/') && resp.url().endsWith('/export') && resp.request().method() === 'GET'
       ),
       page.getByRole('button', { name: 'Export My Data' }).click(),
     ]);
@@ -176,7 +211,7 @@ test.describe('Sprint 8 E2E flows', () => {
 
     await Promise.all([
       page.waitForResponse((resp) =>
-        resp.url().includes('/api/users/') && resp.request().method() === 'DELETE'
+        resp.url().includes('/users/') && resp.request().method() === 'DELETE'
       ),
       page.getByRole('button', { name: 'Delete My Account' }).click(),
     ]);

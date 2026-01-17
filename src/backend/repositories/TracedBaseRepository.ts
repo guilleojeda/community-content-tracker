@@ -299,7 +299,12 @@ export abstract class TracedBaseRepository extends BaseRepository {
     averageRowSize?: number;
     indexCount?: number;
   }> {
-    const stats = {
+    const stats: {
+      tableName: string;
+      rowCount: number;
+      averageRowSize?: number;
+      indexCount?: number;
+    } = {
       tableName: this.tableName,
       rowCount: await this.count(),
     };

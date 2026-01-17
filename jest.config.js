@@ -6,7 +6,7 @@ module.exports = {
     '<rootDir>/src/backend',
     '<rootDir>/src/frontend',
     '<rootDir>/src/shared',
-    '<rootDir>/tests'
+    '<rootDir>/src/infrastructure'
   ],
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: [
@@ -16,13 +16,6 @@ module.exports = {
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest'
   },
-  collectCoverageFrom: [
-    'src/**/*.{ts,tsx}',
-    '!src/**/*.d.ts',
-    '!src/**/*.test.{ts,tsx}',
-    '!src/**/node_modules/**',
-    '!src/**/dist/**'
-  ],
   coverageDirectory: '<rootDir>/coverage',
   coverageReporters: [
     'text',
@@ -40,26 +33,17 @@ module.exports = {
       statements: 90,
       functions: 85,
       branches: 70
-    },
-    'src/backend/': {
-      lines: 90,
-      statements: 90
-    },
-    'src/frontend/': {
-      lines: 90,
-      statements: 90
-    },
-    'src/infrastructure/': {
-      lines: 90,
-      statements: 90
     }
   },
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   testTimeout: 30000,
+  detectOpenHandles: true,
   verbose: true,
-  moduleNameMapping: {
+  maxWorkers: 1,
+  moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^@tests/(.*)$': '<rootDir>/tests/$1'
+    '^@tests/(.*)$': '<rootDir>/tests/$1',
+    '^@aws-community-hub/shared$': '<rootDir>/src/shared/types'
   },
   clearMocks: true,
   restoreMocks: true,

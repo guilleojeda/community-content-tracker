@@ -3,6 +3,7 @@ import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { BadgeType } from '@aws-community-hub/shared';
 import { PoolClient } from 'pg';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Extract admin context from API Gateway event
@@ -43,37 +44,50 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+  const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+    attachRateLimitHeaders(response, rateLimit);
+  const respondError = (...args: Parameters<typeof createErrorResponse>) =>
+    withRateLimit(createErrorResponse(...args));
+  const respondSuccess = (...args: Parameters<typeof createSuccessResponse>) =>
+    withRateLimit(createSuccessResponse(...args));
+
+  rateLimit = await applyRateLimit(event, { resource: 'admin:revoke-badge' });
+  if (rateLimit && !rateLimit.allowed) {
+    return respondError(429, 'RATE_LIMITED', 'Too many requests');
+  }
+
   const admin = extractAdminContext(event);
 
   // Check admin privileges
   if (!admin.isAdmin) {
-    return createErrorResponse(403, 'PERMISSION_DENIED', 'Admin privileges required');
+    return respondError(403, 'PERMISSION_DENIED', 'Admin privileges required');
   }
 
   // Parse and validate request body
   let requestBody: RevokeBadgeRequest;
   try {
     if (!event.body) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Request body is required');
+      return respondError(400, 'VALIDATION_ERROR', 'Request body is required');
     }
     requestBody = JSON.parse(event.body);
   } catch (error) {
-    return createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid JSON in request body');
+    return respondError(400, 'VALIDATION_ERROR', 'Invalid JSON in request body');
   }
 
   // Validate required fields
   if (!requestBody.userId) {
-    return createErrorResponse(400, 'VALIDATION_ERROR', 'userId is required');
+    return respondError(400, 'VALIDATION_ERROR', 'userId is required');
   }
 
   if (!requestBody.badgeType) {
-    return createErrorResponse(400, 'VALIDATION_ERROR', 'badgeType is required');
+    return respondError(400, 'VALIDATION_ERROR', 'badgeType is required');
   }
 
   // Validate badge type enum
   const validBadgeTypes = Object.values(BadgeType);
   if (!validBadgeTypes.includes(requestBody.badgeType)) {
-    return createErrorResponse(
+    return respondError(
       400,
       'VALIDATION_ERROR',
       `Invalid badge type. Must be one of: ${validBadgeTypes.join(', ')}`
@@ -96,13 +110,13 @@ export async function handler(
 
     if (badgeCheck.rows.length === 0) {
       await client.query('ROLLBACK');
-      return createErrorResponse(404, 'NOT_FOUND', 'Badge not found for this user');
+      return respondError(404, 'NOT_FOUND', 'Badge not found for this user');
     }
 
     const badge = badgeCheck.rows[0];
     if (!badge.is_active) {
       await client.query('ROLLBACK');
-      return createErrorResponse(404, 'NOT_FOUND', 'Badge is already revoked');
+      return respondError(404, 'NOT_FOUND', 'Badge is already revoked');
     }
 
     // Revoke the badge by marking it as inactive
@@ -145,7 +159,7 @@ export async function handler(
       reason: requestBody.reason,
     });
 
-    return createSuccessResponse(200, {
+    return respondSuccess(200, {
       success: true,
       data: {
         badgeId: badge.id,
@@ -168,7 +182,7 @@ export async function handler(
     }
 
     console.error('Revoke badge error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to revoke badge');
+    return respondError(500, 'INTERNAL_ERROR', 'Failed to revoke badge');
   } finally {
     if (client) {
       client.release();

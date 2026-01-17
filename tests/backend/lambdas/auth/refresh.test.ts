@@ -4,8 +4,15 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 // Mock AWS Cognito
 jest.mock('@aws-sdk/client-cognito-identity-provider');
 
+jest.mock('../../../../src/backend/services/rateLimitPolicy', () => ({
+  applyRateLimit: jest.fn(),
+  attachRateLimitHeaders: jest.fn(),
+}));
+
 describe('Refresh Token Lambda Handler', () => {
   let mockCognitoClient: any;
+  let mockApplyRateLimit: jest.Mock;
+  let mockAttachRateLimitHeaders: jest.Mock;
 
   beforeAll(() => {
     // Set required environment variables
@@ -24,6 +31,12 @@ describe('Refresh Token Lambda Handler', () => {
 
     const { CognitoIdentityProviderClient } = require('@aws-sdk/client-cognito-identity-provider');
     (CognitoIdentityProviderClient as jest.Mock).mockImplementation(() => mockCognitoClient);
+
+    const rateLimitPolicy = require('../../../../src/backend/services/rateLimitPolicy');
+    mockApplyRateLimit = rateLimitPolicy.applyRateLimit as jest.Mock;
+    mockAttachRateLimitHeaders = rateLimitPolicy.attachRateLimitHeaders as jest.Mock;
+    mockApplyRateLimit.mockResolvedValue(null);
+    mockAttachRateLimitHeaders.mockImplementation((response: APIGatewayProxyResult) => response);
   });
 
   const createEvent = (body: any): APIGatewayProxyEvent => ({
@@ -124,6 +137,31 @@ describe('Refresh Token Lambda Handler', () => {
           }
         })
       );
+    });
+
+    it('should default expiresIn when missing from response', async () => {
+      const requestBody = {
+        refreshToken: 'valid-refresh-token'
+      };
+
+      mockCognitoClient.send.mockResolvedValue({
+        AuthenticationResult: {
+          AccessToken: 'new-access-token',
+          IdToken: 'new-id-token'
+        }
+      });
+
+      const event = createEvent(requestBody);
+      const context = createContext();
+
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(200);
+
+      const body = JSON.parse(result.body);
+      expect(body).toHaveProperty('accessToken', 'new-access-token');
+      expect(body).toHaveProperty('idToken', 'new-id-token');
+      expect(body).toHaveProperty('expiresIn', 3600);
     });
 
     it('should handle refresh token response without IdToken', async () => {
@@ -349,6 +387,31 @@ describe('Refresh Token Lambda Handler', () => {
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('RATE_LIMITED');
       expect(body.error.message).toContain('Too many requests');
+    });
+
+    it('should reject requests when rate limit is exceeded before Cognito call', async () => {
+      const requestBody = {
+        refreshToken: 'rate-limited-token'
+      };
+
+      mockApplyRateLimit.mockResolvedValueOnce({
+        allowed: false,
+        remaining: 0,
+        reset: Date.now(),
+        limit: 1,
+        key: 'auth:refresh:ip:127.0.0.1',
+      });
+
+      const event = createEvent(requestBody);
+      const context = createContext();
+
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(429);
+
+      const body = JSON.parse(result.body);
+      expect(body.error.code).toBe('RATE_LIMITED');
+      expect(mockCognitoClient.send).not.toHaveBeenCalled();
     });
   });
 

@@ -131,6 +131,29 @@ describe('Verify Email Lambda Handler', () => {
       );
     });
 
+    it('should verify email using POST body payloads', async () => {
+      mockCognitoClient.send.mockResolvedValue({});
+
+      const event = createEvent();
+      event.httpMethod = 'POST';
+      event.queryStringParameters = null;
+      event.body = JSON.stringify({
+        email: 'post@example.com',
+        confirmationCode: '654321'
+      });
+
+      const context = createContext();
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(200);
+      expect(mockCognitoClient.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Username: 'post@example.com',
+          ConfirmationCode: '654321'
+        })
+      );
+    });
+
     it('should handle verification with different email formats', async () => {
       const queryParams = {
         email: 'User.Test+123@Example.COM',
@@ -159,6 +182,23 @@ describe('Verify Email Lambda Handler', () => {
   });
 
   describe('validation errors', () => {
+    it('should return 400 for invalid JSON body', async () => {
+      const event = createEvent();
+      event.httpMethod = 'POST';
+      event.queryStringParameters = null;
+      event.body = '{invalid-json';
+
+      const context = createContext();
+
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(400);
+
+      const body = JSON.parse(result.body);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.message).toBe('Invalid JSON in request body');
+    });
+
     it('should return 400 for missing email parameter', async () => {
       const queryParams = {
         code: '123456'

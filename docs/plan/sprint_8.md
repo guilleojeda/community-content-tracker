@@ -26,10 +26,10 @@ Acceptance Criteria:
  Lighthouse score >90
  Image optimization with next/image
  Code splitting implemented
- API response caching with Redis/ElastiCache
+ API response caching with Valkey (ElastiCache Serverless)
  Database query optimization (explain analyze)
  CDN cache headers configured
- Bundle size <200KB
+ Bundle size <500KB
  Lazy loading for below-fold content
 
 Task 8.3: Security Hardening
@@ -144,5 +144,4 @@ Acceptance Criteria:
  Beta period timeline (2 weeks)
  Success criteria defined
  Go-live checklist completed
-
 

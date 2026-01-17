@@ -7,7 +7,7 @@ type PreSignupHandler = (
   callback: (error: any, result?: any) => void
 ) => Promise<void>;
 
-function createHandler(): PreSignupHandler {
+function createHandler(listUsersMock: jest.Mock): PreSignupHandler {
   const sandbox: Record<string, any> = {
     console,
     exports: {},
@@ -15,7 +15,9 @@ function createHandler(): PreSignupHandler {
     require: (moduleName: string) => {
       if (moduleName === 'aws-sdk') {
         return {
-          CognitoIdentityServiceProvider: jest.fn().mockImplementation(() => ({})),
+          CognitoIdentityServiceProvider: jest.fn().mockImplementation(() => ({
+            listUsers: listUsersMock,
+          })),
         };
       }
 
@@ -36,9 +38,13 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
   let handler: PreSignupHandler;
   let consoleLogSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
+  let listUsersMock: jest.Mock;
 
   beforeEach(() => {
-    handler = createHandler();
+    listUsersMock = jest.fn().mockReturnValue({
+      promise: jest.fn().mockResolvedValue({ Users: [] }),
+    });
+    handler = createHandler(listUsersMock);
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -50,6 +56,7 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
 
   it('accepts valid username and visibility attributes', async () => {
     const event = {
+      userPoolId: 'us-east-1_test',
       request: {
         userAttributes: {
           'custom:username': 'Valid_User123',
@@ -64,6 +71,11 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
     await handler(event, {}, callback);
 
     expect(callback).toHaveBeenCalledWith(null, event);
+    expect(listUsersMock).toHaveBeenCalledWith({
+      UserPoolId: 'us-east-1_test',
+      Filter: 'custom:username = "Valid_User123"',
+      Limit: 1,
+    });
     expect(event.response.autoConfirmUser).toBe(false);
     expect(event.response.autoVerifyEmail).toBe(true);
     expect(consoleErrorSpy).not.toHaveBeenCalled();
@@ -71,6 +83,7 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
 
   it('rejects invalid username formats', async () => {
     const event = {
+      userPoolId: 'us-east-1_test',
       request: {
         userAttributes: {
           'custom:username': '_invalid',
@@ -94,6 +107,7 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
 
   it('rejects unsupported default visibility values', async () => {
     const event = {
+      userPoolId: 'us-east-1_test',
       request: {
         userAttributes: {
           'custom:username': 'ValidUser',
@@ -117,6 +131,7 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
 
   it('rejects invalid is_admin flag values', async () => {
     const event = {
+      userPoolId: 'us-east-1_test',
       request: {
         userAttributes: {
           'custom:username': 'ValidUser',
@@ -136,5 +151,29 @@ describe('Pre-signup Lambda Handler (behavioural)', () => {
     const [message, loggedError] = consoleErrorSpy.mock.calls[0];
     expect(message).toBe('Pre-signup validation failed:');
     expect(loggedError).toBe(error);
+  });
+
+  it('rejects duplicate usernames', async () => {
+    listUsersMock.mockReturnValueOnce({
+      promise: jest.fn().mockResolvedValue({ Users: [{ Username: 'existing-user' }] }),
+    });
+
+    const event = {
+      userPoolId: 'us-east-1_test',
+      request: {
+        userAttributes: {
+          'custom:username': 'ValidUser',
+        },
+      },
+      response: {},
+    };
+    const callback = jest.fn();
+
+    await handler(event, {}, callback);
+
+    const error = callback.mock.calls[0][0];
+    expect(error?.name).toBe('InvalidParameterException');
+    expect(error?.message).toContain('Username already exists');
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
   });
 });

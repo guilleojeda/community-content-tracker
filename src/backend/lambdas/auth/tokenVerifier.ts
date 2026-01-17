@@ -1,7 +1,14 @@
-import jwt, { JwtHeader } from 'jsonwebtoken';
+import jwt, { JwtHeader, JwtPayload, VerifyErrors, VerifyOptions } from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 import { UserRepository } from '../../repositories/UserRepository';
 import { User } from '../../../shared/types';
+import {
+  AuthFlowType,
+  CognitoIdentityProviderClient,
+  InitiateAuthCommand,
+  InitiateAuthCommandInput,
+} from '@aws-sdk/client-cognito-identity-provider';
+import { getAuthEnvironment } from './config';
 
 /**
  * Cognito JWT token claims interface
@@ -25,9 +32,7 @@ export interface CognitoTokenClaims {
  * Token verification error types
  */
 export interface TokenVerificationError {
-  code: 'TOKEN_EXPIRED' | 'INVALID_TOKEN' | 'MISSING_TOKEN' | 'USER_NOT_FOUND' |
-        'DATABASE_ERROR' | 'NETWORK_ERROR' | 'INVALID_CONFIG' | 'VERIFICATION_ERROR' |
-        'INVALID_TOKEN_USE' | 'EMAIL_NOT_VERIFIED' | 'INVALID_CLAIMS';
+  code: 'AUTH_REQUIRED' | 'AUTH_INVALID' | 'INTERNAL_ERROR';
   message: string;
   details: string;
 }
@@ -128,7 +133,7 @@ function validateConfig(config: TokenVerifierConfig): void {
 function validateClaims(claims: any): TokenVerificationError | null {
   if (!claims) {
     return {
-      code: 'INVALID_CLAIMS',
+      code: 'AUTH_INVALID',
       message: 'Token claims are missing',
       details: 'No claims found in token',
     };
@@ -136,7 +141,7 @@ function validateClaims(claims: any): TokenVerificationError | null {
 
   if (!claims.sub) {
     return {
-      code: 'INVALID_CLAIMS',
+      code: 'AUTH_INVALID',
       message: 'Token is missing required subject claim',
       details: 'Sub claim is required',
     };
@@ -144,7 +149,7 @@ function validateClaims(claims: any): TokenVerificationError | null {
 
   if (!claims.email) {
     return {
-      code: 'INVALID_CLAIMS',
+      code: 'AUTH_INVALID',
       message: 'Token is missing required email claim',
       details: 'Email claim is required',
     };
@@ -152,7 +157,7 @@ function validateClaims(claims: any): TokenVerificationError | null {
 
   if (!claims.aud) {
     return {
-      code: 'INVALID_CLAIMS',
+      code: 'AUTH_INVALID',
       message: 'Token is missing required audience claim',
       details: 'Audience claim is required',
     };
@@ -160,7 +165,7 @@ function validateClaims(claims: any): TokenVerificationError | null {
 
   if (!claims.iss) {
     return {
-      code: 'INVALID_CLAIMS',
+      code: 'AUTH_INVALID',
       message: 'Token is missing required issuer claim',
       details: 'Issuer claim is required',
     };
@@ -168,7 +173,7 @@ function validateClaims(claims: any): TokenVerificationError | null {
 
   if (claims.token_use !== 'access') {
     return {
-      code: 'INVALID_TOKEN_USE',
+      code: 'AUTH_INVALID',
       message: 'Invalid token type',
       details: `Expected access token, got ${claims.token_use}`,
     };
@@ -176,7 +181,7 @@ function validateClaims(claims: any): TokenVerificationError | null {
 
   if (claims.email_verified === false) {
     return {
-      code: 'EMAIL_NOT_VERIFIED',
+      code: 'AUTH_INVALID',
       message: 'Email address not verified',
       details: 'User email must be verified to access the API',
     };
@@ -199,8 +204,8 @@ export async function verifyJwtToken(
       return {
         isValid: false,
         error: {
-          code: 'MISSING_TOKEN',
-          message: 'Token is required',
+          code: 'AUTH_REQUIRED',
+          message: 'Authentication token is required',
           details: 'No token provided',
         },
       };
@@ -210,7 +215,7 @@ export async function verifyJwtToken(
       return {
         isValid: false,
         error: {
-          code: 'INVALID_TOKEN',
+          code: 'AUTH_INVALID',
           message: 'Token is invalid or malformed',
           details: 'Token length exceeds maximum supported size',
         },
@@ -224,7 +229,7 @@ export async function verifyJwtToken(
       return {
         isValid: false,
         error: {
-          code: 'INVALID_CONFIG',
+          code: 'INTERNAL_ERROR',
           message: 'Invalid token verifier configuration',
           details: configError.message,
         },
@@ -249,15 +254,22 @@ export async function verifyJwtToken(
     let claims: CognitoTokenClaims;
     try {
       claims = await new Promise<CognitoTokenClaims>((resolve, reject) => {
+        const audiences = config.allowedAudiences.filter(
+          (audience): audience is string => typeof audience === 'string' && audience.trim().length > 0
+        );
+        const verifyOptions: VerifyOptions = {
+          algorithms: ['RS256'],
+          issuer: config.issuer,
+        };
+        if (audiences.length > 0) {
+          verifyOptions.audience = audiences as [string, ...string[]];
+        }
+
         jwt.verify(
           token,
           signingKeyResolver as any,
-          {
-            algorithms: ['RS256'],
-            audience: config.allowedAudiences,
-            issuer: config.issuer,
-          },
-          (err, decoded) => {
+          verifyOptions,
+          (err: VerifyErrors | null, decoded: string | JwtPayload | undefined) => {
             if (err) {
               reject(err);
             } else {
@@ -271,7 +283,7 @@ export async function verifyJwtToken(
         return {
           isValid: false,
           error: {
-            code: 'NETWORK_ERROR',
+            code: 'INTERNAL_ERROR',
             message: 'Network error while retrieving signing key',
             details: verifyError.message,
           },
@@ -282,7 +294,7 @@ export async function verifyJwtToken(
         return {
           isValid: false,
           error: {
-            code: 'INVALID_TOKEN',
+            code: 'AUTH_INVALID',
             message: 'Token is invalid or malformed',
             details: verifyError.message,
           },
@@ -293,7 +305,7 @@ export async function verifyJwtToken(
         return {
           isValid: false,
           error: {
-            code: 'TOKEN_EXPIRED',
+            code: 'AUTH_INVALID',
             message: 'Token has expired',
             details: verifyError.message,
           },
@@ -304,7 +316,7 @@ export async function verifyJwtToken(
         return {
           isValid: false,
           error: {
-            code: 'INVALID_TOKEN',
+            code: 'AUTH_INVALID',
             message: 'Token is invalid or malformed',
             details: verifyError.message,
           },
@@ -315,7 +327,7 @@ export async function verifyJwtToken(
         return {
           isValid: false,
           error: {
-            code: 'NETWORK_ERROR',
+            code: 'INTERNAL_ERROR',
             message: 'Network timeout during token verification',
             details: verifyError.message,
           },
@@ -325,7 +337,7 @@ export async function verifyJwtToken(
       return {
         isValid: false,
         error: {
-          code: 'VERIFICATION_ERROR',
+          code: 'INTERNAL_ERROR',
           message: 'Unexpected error during token verification',
           details: verifyError.message,
         },
@@ -349,7 +361,7 @@ export async function verifyJwtToken(
       return {
         isValid: false,
         error: {
-          code: 'DATABASE_ERROR',
+          code: 'INTERNAL_ERROR',
           message: 'Failed to retrieve user data',
           details: dbError.message,
         },
@@ -361,7 +373,7 @@ export async function verifyJwtToken(
       return {
         isValid: false,
         error: {
-          code: 'USER_NOT_FOUND',
+          code: 'AUTH_INVALID',
           message: 'User not found in database',
           details: 'Cognito user exists but not found in application database',
         },
@@ -378,7 +390,7 @@ export async function verifyJwtToken(
     return {
       isValid: false,
       error: {
-        code: 'VERIFICATION_ERROR',
+        code: 'INTERNAL_ERROR',
         message: 'Unexpected error during token verification',
         details: error.message,
       },
@@ -461,24 +473,24 @@ export async function handleTokenRefresh(
   event: TokenRefreshEvent
 ): Promise<TokenRefreshResult> {
   try {
-    const { CognitoIdentityServiceProvider } = await import('aws-sdk');
-    const cognito = new CognitoIdentityServiceProvider();
+    const authEnv = getAuthEnvironment();
+    const cognito = new CognitoIdentityProviderClient({ region: authEnv.region });
 
-    const params = {
-      AuthFlow: 'REFRESH_TOKEN_AUTH',
+    const params: InitiateAuthCommandInput = {
+      AuthFlow: AuthFlowType.REFRESH_TOKEN_AUTH,
       ClientId: event.clientId,
       AuthParameters: {
         REFRESH_TOKEN: event.refreshToken,
       },
     };
 
-    const result = await cognito.initiateAuth(params).promise();
+    const result = await cognito.send(new InitiateAuthCommand(params));
 
     if (!result.AuthenticationResult) {
       return {
         success: false,
         error: {
-          code: 'REFRESH_FAILED',
+          code: 'INTERNAL_ERROR',
           message: 'Failed to refresh token',
           details: 'No authentication result returned',
         },
@@ -496,7 +508,7 @@ export async function handleTokenRefresh(
     return {
       success: false,
       error: {
-        code: 'REFRESH_ERROR',
+        code: 'INTERNAL_ERROR',
         message: 'Error refreshing token',
         details: error.message,
       },

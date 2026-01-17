@@ -223,4 +223,47 @@ describe('Content Merge Lambda Handler (integration)', () => {
     );
     expect(historyEntry.rows[0].can_undo).toBe(false);
   });
+
+  it('rejects unmerge when the undo deadline has passed', async () => {
+    const primary = await createTestContent(pool, ownerId, {
+      title: 'Primary content',
+      publishDate: new Date('2024-03-01T00:00:00Z'),
+      isClaimed: true,
+    });
+    await insertUrl(primary.id, 'https://example.com/primary');
+
+    const secondary = await createTestContent(pool, ownerId, {
+      title: 'Secondary content',
+      publishDate: new Date('2024-02-15T00:00:00Z'),
+      isClaimed: true,
+    });
+    await insertUrl(secondary.id, 'https://example.com/secondary');
+
+    const mergeEvent = createMergeEvent(ownerId, {
+      contentIds: [primary.id, secondary.id],
+      primaryId: primary.id,
+      reason: 'Duplicate entries',
+    });
+
+    const mergeResponse = await mergeHandler(mergeEvent, createContext());
+    expect(mergeResponse.statusCode).toBe(200);
+
+    const mergeBody = JSON.parse(mergeResponse.body);
+    const mergeHistoryId = mergeBody.mergeHistory.id;
+
+    const expiredDeadline = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await pool.query(
+      'UPDATE content_merge_history SET undo_deadline = $1 WHERE id = $2',
+      [expiredDeadline, mergeHistoryId]
+    );
+
+    const unmergeResponse = await unmergeHandler(
+      createUnmergeEvent(ownerId, mergeHistoryId),
+      createContext()
+    );
+    expect(unmergeResponse.statusCode).toBe(400);
+    const unmergeBody = JSON.parse(unmergeResponse.body);
+    expect(unmergeBody.error.code).toBe('VALIDATION_ERROR');
+    expect(unmergeBody.error.message).toBe('The 30-day undo window for this merge has expired');
+  });
 });

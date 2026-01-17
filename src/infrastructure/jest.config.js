@@ -14,7 +14,6 @@ module.exports = {
     '!lib/**/*.d.ts',
   ],
   coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'lcov', 'html'],
   coverageThreshold: {
     global: {
       lines: 90,
@@ -23,6 +22,6 @@ module.exports = {
   },
   setupFiles: [path.resolve(__dirname, '../../tests/infrastructure/setup-tests.ts')],
   setupFilesAfterEnv: [path.resolve(__dirname, '../../tests/setup/consoleMock.js')],
-  forceExit: true,
+  globalTeardown: path.resolve(__dirname, '../../tests/setup/globalTeardown.js'),
   maxWorkers: '50%'
 };

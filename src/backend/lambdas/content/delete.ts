@@ -3,6 +3,7 @@ import { getDatabasePool } from '../../services/database';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { buildCorsHeaders } from '../../services/cors';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 interface AuthorizerPayload {
   userId?: string;
@@ -77,18 +78,27 @@ export async function handler(
   _context: Context
 ): Promise<APIGatewayProxyResult> {
   console.log('Delete content request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
     const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
+    const respondError = (statusCode: number, code: string, message: string) =>
+      attachRateLimitHeaders(errorResponse(statusCode, code, message, originHeader), rateLimit);
+
+    rateLimit = await applyRateLimit(event, { resource: 'content:delete' });
+    if (rateLimit && !rateLimit.allowed) {
+      return respondError(429, 'RATE_LIMITED', 'Too many requests');
+    }
+
     const { userId, isAdmin } = extractUserContext(event.requestContext.authorizer as AuthorizerPayload);
 
     if (!userId) {
-      return errorResponse(401, 'AUTH_REQUIRED', 'Authentication required', originHeader);
+      return respondError(401, 'AUTH_REQUIRED', 'Authentication required');
     }
 
     const contentId = event.pathParameters?.id;
     if (!contentId) {
-      return errorResponse(400, 'VALIDATION_ERROR', 'Content ID is required', originHeader);
+      return respondError(400, 'VALIDATION_ERROR', 'Content ID is required');
     }
 
     // Get database pool and repositories
@@ -99,7 +109,7 @@ export async function handler(
     // Verify user exists and get their admin status from database
     const user = await userRepository.findById(userId);
     if (!user) {
-      return errorResponse(401, 'AUTH_INVALID', 'User not found', originHeader);
+      return respondError(401, 'AUTH_INVALID', 'User not found');
     }
 
     // Combine authorizer admin flag with database admin flag
@@ -109,30 +119,38 @@ export async function handler(
     const content = await contentRepository.findById(contentId);
 
     if (!content) {
-      return errorResponse(404, 'NOT_FOUND', 'Content not found', originHeader);
+      return respondError(404, 'NOT_FOUND', 'Content not found');
     }
 
     // Check if already deleted (for soft-deleted content)
     if (content.deletedAt) {
       const forceDelete = event.queryStringParameters?.force === 'true';
       if (!forceDelete) {
-        return errorResponse(404, 'NOT_FOUND', 'Content already deleted', originHeader);
+        return respondError(404, 'NOT_FOUND', 'Content already deleted');
       }
     }
 
     // Check ownership
     const isOwner = content.userId === userId;
     if (!isOwner && !isUserAdmin) {
-      return errorResponse(403, 'PERMISSION_DENIED', 'You are not authorized to delete this content', originHeader);
+      return respondError(403, 'PERMISSION_DENIED', 'You are not authorized to delete this content');
     }
 
     // Determine delete type
     const forceDelete = event.queryStringParameters?.force === 'true';
-    const softDeleteEnabled = process.env.ENABLE_SOFT_DELETE !== 'false'; // Default to true
+    const softDeleteRaw = process.env.ENABLE_SOFT_DELETE;
+    if (!softDeleteRaw || softDeleteRaw.trim().length === 0) {
+      return respondError(500, 'INTERNAL_ERROR', 'ENABLE_SOFT_DELETE must be set');
+    }
+    const softDeleteValue = softDeleteRaw.trim().toLowerCase();
+    if (softDeleteValue !== 'true' && softDeleteValue !== 'false') {
+      return respondError(500, 'INTERNAL_ERROR', 'ENABLE_SOFT_DELETE must be set to true or false');
+    }
+    const softDeleteEnabled = softDeleteValue === 'true';
 
     // Only admins can force delete
     if (forceDelete && !isUserAdmin) {
-      return errorResponse(403, 'PERMISSION_DENIED', 'Force delete requires admin privileges', originHeader);
+      return respondError(403, 'PERMISSION_DENIED', 'Force delete requires admin privileges');
     }
 
     const softDelete = !forceDelete && softDeleteEnabled;
@@ -143,28 +161,30 @@ export async function handler(
       const success = await contentRepository.deleteContent(contentId, softDelete);
 
       if (!success) {
-        return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content', originHeader);
+        return respondError(500, 'INTERNAL_ERROR', 'Failed to delete content');
       }
 
       console.log(`Content ${softDelete ? 'soft' : 'hard'} deleted successfully:`, contentId);
 
-      const headers = responseHeaders(originHeader);
-      delete headers['Content-Type'];
-      return {
+      const { ['Content-Type']: _contentType, ...headers } = responseHeaders(originHeader);
+      return attachRateLimitHeaders({
         statusCode: 204,
         headers: {
           ...headers,
           'Content-Length': '0',
         },
         body: '',
-      };
+      }, rateLimit);
     } catch (deleteError) {
       console.error('Error during delete operation:', deleteError);
-      return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content', originHeader);
+      return respondError(500, 'INTERNAL_ERROR', 'Failed to delete content');
     }
   } catch (error: any) {
     console.error('Unexpected delete error:', error);
     const origin = event.headers?.Origin || event.headers?.origin || undefined;
-    return errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content', origin);
+    return attachRateLimitHeaders(
+      errorResponse(500, 'INTERNAL_ERROR', 'Failed to delete content', origin),
+      rateLimit
+    );
   }
 }

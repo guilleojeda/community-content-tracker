@@ -103,9 +103,23 @@ describe('Export Analytics Lambda', () => {
     expect(csvLines[1]).toContain('50');
     expect(csvLines[1]).toContain('12');
 
-    const analyticsCall = mockPool.query.mock.calls[1];
-    expect(analyticsCall[0]).toContain('INSERT INTO analytics_events');
-    const metadata = JSON.parse(analyticsCall[1][4]);
+    const analyticsCall = mockPool.query.mock.calls.find(call => {
+      const params = call[1];
+      if (!Array.isArray(params) || params.length < 5) {
+        return false;
+      }
+      if (typeof params[4] !== 'string') {
+        return false;
+      }
+      try {
+        const parsed = JSON.parse(params[4]);
+        return parsed.exportType === 'analytics';
+      } catch {
+        return false;
+      }
+    });
+    expect(analyticsCall).toBeDefined();
+    const metadata = JSON.parse(analyticsCall?.[1][4]);
     expect(metadata.exportType).toBe('analytics');
     expect(metadata.rowCount).toBe(2);
   });

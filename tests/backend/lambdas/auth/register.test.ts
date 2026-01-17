@@ -7,6 +7,11 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 // Mock AWS Cognito
 jest.mock('@aws-sdk/client-cognito-identity-provider');
 
+jest.mock('../../../../src/backend/services/rateLimitPolicy', () => ({
+  applyRateLimit: jest.fn(),
+  attachRateLimitHeaders: jest.fn(),
+}));
+
 // Mock only specific utils, let others pass through
 jest.mock('../../../../src/backend/lambdas/auth/utils', () => {
   const actual = jest.requireActual('../../../../src/backend/lambdas/auth/utils');
@@ -20,6 +25,8 @@ jest.mock('../../../../src/backend/lambdas/auth/utils', () => {
 describe('Register Lambda Handler', () => {
   let pool: Pool;
   let mockCognitoClient: any;
+  let mockApplyRateLimit: jest.Mock;
+  let mockAttachRateLimitHeaders: jest.Mock;
 
   beforeAll(async () => {
     const setup = await setupTestDatabase();
@@ -46,6 +53,12 @@ describe('Register Lambda Handler', () => {
 
     const { CognitoIdentityProviderClient } = require('@aws-sdk/client-cognito-identity-provider');
     (CognitoIdentityProviderClient as jest.Mock).mockImplementation(() => mockCognitoClient);
+
+    const rateLimitPolicy = require('../../../../src/backend/services/rateLimitPolicy');
+    mockApplyRateLimit = rateLimitPolicy.applyRateLimit as jest.Mock;
+    mockAttachRateLimitHeaders = rateLimitPolicy.attachRateLimitHeaders as jest.Mock;
+    mockApplyRateLimit.mockResolvedValue(null);
+    mockAttachRateLimitHeaders.mockImplementation((response: APIGatewayProxyResult) => response);
 
     // Default mock implementations
     const { validateRegistrationInput, generateProfileSlug } = require('../../../../src/backend/lambdas/auth/utils');
@@ -113,6 +126,34 @@ describe('Register Lambda Handler', () => {
     done: () => {},
     fail: () => {},
     succeed: () => {},
+  });
+
+  describe('rate limiting', () => {
+    it('should return 429 when registration is rate limited', async () => {
+      mockApplyRateLimit.mockResolvedValue({
+        allowed: false,
+        remaining: 0,
+        reset: Date.now() + 60_000,
+        limit: 100,
+        key: 'auth:register:ip:127.0.0.1'
+      });
+
+      const requestBody = {
+        email: 'rate-limited@example.com',
+        password: 'SecurePassword123!',
+        username: 'ratelimited'
+      };
+
+      const event = createEvent(requestBody);
+      const context = createContext();
+
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(429);
+      const body = JSON.parse(result.body);
+      expect(body.error.code).toBe('RATE_LIMITED');
+      expect(mockAttachRateLimitHeaders).toHaveBeenCalled();
+    });
   });
 
   describe('successful registration', () => {
@@ -259,7 +300,7 @@ describe('Register Lambda Handler', () => {
       const { validateRegistrationInput } = require('../../../../src/backend/lambdas/auth/utils');
       validateRegistrationInput.mockReturnValue({
         isValid: false,
-        errors: { username: 'Username can only contain letters, numbers, and underscores' }
+        errors: { username: 'Username can only contain letters, numbers, hyphens, and underscores' }
       });
 
       const requestBody = {
@@ -277,7 +318,7 @@ describe('Register Lambda Handler', () => {
 
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(body.error.details.fields.username).toBe('Username can only contain letters, numbers, and underscores');
+      expect(body.error.details.fields.username).toBe('Username can only contain letters, numbers, hyphens, and underscores');
     });
   });
 

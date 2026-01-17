@@ -24,6 +24,11 @@ export interface PgVectorEnablerProps {
   vpc: ec2.IVpc;
 
   /**
+   * Subnets for the Lambda function
+   */
+  vpcSubnets?: ec2.SubnetSelection;
+
+  /**
    * Security groups for the Lambda function
    */
   securityGroups: ec2.ISecurityGroup[];
@@ -31,7 +36,7 @@ export interface PgVectorEnablerProps {
   /**
    * Database name to connect to
    */
-  databaseName?: string;
+  databaseName: string;
 }
 
 /**
@@ -86,11 +91,12 @@ export class PgVectorEnabler extends Construct {
       role: lambdaRole,
       timeout: cdk.Duration.minutes(5),
       vpc: props.vpc,
+      vpcSubnets: props.vpcSubnets,
       securityGroups: props.securityGroups,
       environment: {
         CLUSTER_ARN: props.cluster.clusterArn,
         SECRET_ARN: props.databaseSecret.secretArn,
-        DATABASE_NAME: props.databaseName || 'postgres',
+        DATABASE_NAME: props.databaseName,
         CLUSTER_IDENTIFIER: props.cluster.clusterIdentifier,
       },
       code: lambda.Code.fromInline(`
@@ -191,7 +197,7 @@ def send_response(event, context, response_status, response_data):
       properties: {
         ClusterEndpoint: props.cluster.clusterEndpoint.socketAddress,
         SecretArn: props.databaseSecret.secretArn,
-        DatabaseName: props.databaseName || 'postgres',
+        DatabaseName: props.databaseName,
         // Add timestamp to force updates when needed
         Timestamp: Date.now().toString(),
       },

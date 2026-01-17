@@ -14,6 +14,9 @@ export interface ApiGatewayStackProps extends cdk.StackProps {
   loginLambda: lambda.IFunction;
   refreshLambda: lambda.IFunction;
   verifyEmailLambda: lambda.IFunction;
+  resendVerificationLambda: lambda.IFunction;
+  forgotPasswordLambda: lambda.IFunction;
+  resetPasswordLambda: lambda.IFunction;
   channelCreateLambda: lambda.IFunction;
   channelListLambda: lambda.IFunction;
   channelUpdateLambda: lambda.IFunction;
@@ -21,7 +24,7 @@ export interface ApiGatewayStackProps extends cdk.StackProps {
   channelSyncLambda: lambda.IFunction;
   searchLambda?: lambda.IFunction;
   statsLambda?: lambda.IFunction;
-  environment?: string;
+  environment: string;
   enableTracing?: boolean;
   adminDashboardLambda: lambda.IFunction;
   adminUserManagementLambda: lambda.IFunction;
@@ -40,6 +43,9 @@ export interface ApiGatewayStackProps extends cdk.StackProps {
   userUpdatePreferencesLambda: lambda.IFunction;
   userManageConsentLambda: lambda.IFunction;
   userBadgesLambda: lambda.IFunction;
+  userGetCurrentLambda: lambda.IFunction;
+  userGetByUsernameLambda: lambda.IFunction;
+  userContentLambda: lambda.IFunction;
   feedbackIngestLambda: lambda.IFunction;
   allowedOrigins?: string[];
 }
@@ -52,15 +58,60 @@ export class ApiGatewayStack extends cdk.Stack {
   private readonly loginLambda: lambda.IFunction;
   private readonly refreshLambda: lambda.IFunction;
   private readonly verifyEmailLambda: lambda.IFunction;
+  private readonly resendVerificationLambda: lambda.IFunction;
+  private readonly forgotPasswordLambda: lambda.IFunction;
+  private readonly resetPasswordLambda: lambda.IFunction;
   private readonly envName: string;
 
   constructor(scope: Construct, id: string, props: ApiGatewayStackProps) {
     super(scope, id, props);
 
-    this.envName = props.environment || 'dev';
+    this.envName = props.environment;
     const enableTracing = props.enableTracing ?? true;
+    const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
+    const isProductionLike = productionLikeEnvs.has(this.envName);
 
-    if (!props.authorizerLambda || !props.registerLambda || !props.loginLambda || !props.refreshLambda || !props.verifyEmailLambda) {
+    const parseBooleanEnv = (name: string): boolean | null => {
+      const value = process.env[name];
+      if (!value || value.trim().length === 0) {
+        return null;
+      }
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1', 'yes'].includes(normalized)) {
+        return true;
+      }
+      if (['false', '0', 'no'].includes(normalized)) {
+        return false;
+      }
+      throw new Error(`${name} must be a boolean value`);
+    };
+
+    const parseNumberEnv = (name: string): number | null => {
+      const raw = process.env[name];
+      if (!raw || raw.trim().length === 0) {
+        return null;
+      }
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(`${name} must be a valid number`);
+      }
+      return parsed;
+    };
+
+    const dataTraceEnabled = parseBooleanEnv('API_GW_DATA_TRACE_ENABLED') ?? !isProductionLike;
+    const throttlingRateLimit = parseNumberEnv('API_GW_THROTTLE_RATE_LIMIT') ?? 100;
+    const throttlingBurstLimit = parseNumberEnv('API_GW_THROTTLE_BURST_LIMIT') ?? 200;
+
+    if (
+      !props.authorizerLambda ||
+      !props.registerLambda ||
+      !props.loginLambda ||
+      !props.refreshLambda ||
+      !props.verifyEmailLambda ||
+      !props.resendVerificationLambda ||
+      !props.forgotPasswordLambda ||
+      !props.resetPasswordLambda
+    ) {
       throw new Error('ApiGatewayStack requires auth lambda integrations');
     }
 
@@ -82,6 +133,9 @@ export class ApiGatewayStack extends cdk.Stack {
     this.loginLambda = importLambda('LoginLambdaImport', props.loginLambda);
     this.refreshLambda = importLambda('RefreshLambdaImport', props.refreshLambda);
     this.verifyEmailLambda = importLambda('VerifyEmailLambdaImport', props.verifyEmailLambda);
+    this.resendVerificationLambda = importLambda('ResendVerificationLambdaImport', props.resendVerificationLambda);
+    this.forgotPasswordLambda = importLambda('ForgotPasswordLambdaImport', props.forgotPasswordLambda);
+    this.resetPasswordLambda = importLambda('ResetPasswordLambdaImport', props.resetPasswordLambda);
 
     const channelCreateLambda = importLambda('ChannelCreateLambdaImport', props.channelCreateLambda);
     const channelListLambda = importLambda('ChannelListLambdaImport', props.channelListLambda);
@@ -107,14 +161,12 @@ export class ApiGatewayStack extends cdk.Stack {
     const userUpdatePreferencesLambda = importLambda('UserUpdatePreferencesLambdaImport', props.userUpdatePreferencesLambda);
     const userManageConsentLambda = importLambda('UserManageConsentLambdaImport', props.userManageConsentLambda);
     const userBadgesLambda = importLambda('UserBadgesLambdaImport', props.userBadgesLambda);
+    const userGetCurrentLambda = importLambda('UserGetCurrentLambdaImport', props.userGetCurrentLambda);
+    const userGetByUsernameLambda = importLambda('UserGetByUsernameLambdaImport', props.userGetByUsernameLambda);
+    const userContentLambda = importLambda('UserContentLambdaImport', props.userContentLambda);
     const feedbackIngestLambda = importLambda('FeedbackIngestLambdaImport', props.feedbackIngestLambda);
 
-    const allowedOrigins =
-      props.allowedOrigins && props.allowedOrigins.length > 0
-        ? props.allowedOrigins
-        : (process.env.CORS_ORIGIN
-            ? process.env.CORS_ORIGIN.split(',').map(value => value.trim()).filter(Boolean)
-            : ['http://localhost:3000']);
+    const allowedOrigins = this.resolveAllowedOrigins(props.allowedOrigins);
 
     // Create API Gateway REST API with X-Ray tracing
     this.api = new apigateway.RestApi(this, 'CommunityContentTrackerApi', {
@@ -124,10 +176,10 @@ export class ApiGatewayStack extends cdk.Stack {
         stageName: this.envName,
         tracingEnabled: enableTracing,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: true,
+        dataTraceEnabled,
         metricsEnabled: true,
-        throttlingRateLimit: 100,
-        throttlingBurstLimit: 200,
+        throttlingRateLimit,
+        throttlingBurstLimit,
       },
       defaultCorsPreflightOptions: {
         allowOrigins: allowedOrigins,
@@ -216,6 +268,71 @@ export class ApiGatewayStack extends cdk.Stack {
         properties: {
           refreshToken: {
             type: apigateway.JsonSchemaType.STRING,
+          },
+        },
+      },
+    });
+
+    const verifyEmailModel = new apigateway.Model(this, 'VerifyEmailRequestModel', {
+      restApi: this.api,
+      contentType: 'application/json',
+      modelName: 'VerifyEmailRequest',
+      schema: {
+        type: apigateway.JsonSchemaType.OBJECT,
+        required: ['email', 'confirmationCode'],
+        properties: {
+          email: {
+            type: apigateway.JsonSchemaType.STRING,
+            format: 'email',
+          },
+          confirmationCode: {
+            type: apigateway.JsonSchemaType.STRING,
+            minLength: 6,
+            maxLength: 6,
+            pattern: '^[0-9]{6}$',
+          },
+        },
+      },
+    });
+
+    const emailOnlyModel = new apigateway.Model(this, 'EmailOnlyRequestModel', {
+      restApi: this.api,
+      contentType: 'application/json',
+      modelName: 'EmailOnlyRequest',
+      schema: {
+        type: apigateway.JsonSchemaType.OBJECT,
+        required: ['email'],
+        properties: {
+          email: {
+            type: apigateway.JsonSchemaType.STRING,
+            format: 'email',
+          },
+        },
+      },
+    });
+
+    const resetPasswordModel = new apigateway.Model(this, 'ResetPasswordRequestModel', {
+      restApi: this.api,
+      contentType: 'application/json',
+      modelName: 'ResetPasswordRequest',
+      schema: {
+        type: apigateway.JsonSchemaType.OBJECT,
+        required: ['email', 'confirmationCode', 'newPassword'],
+        properties: {
+          email: {
+            type: apigateway.JsonSchemaType.STRING,
+            format: 'email',
+          },
+          confirmationCode: {
+            type: apigateway.JsonSchemaType.STRING,
+            minLength: 6,
+            maxLength: 6,
+            pattern: '^[0-9]{6}$',
+          },
+          newPassword: {
+            type: apigateway.JsonSchemaType.STRING,
+            minLength: 12,
+            maxLength: 128,
           },
         },
       },
@@ -314,9 +431,121 @@ export class ApiGatewayStack extends cdk.Stack {
       }],
     }), {
       requestParameters: {
-        'method.request.querystring.token': true,
+        'method.request.querystring.email': true,
+        'method.request.querystring.code': true,
       },
       requestValidator,
+      methodResponses: [
+        {
+          statusCode: '200',
+          responseModels: {
+            'application/json': apigateway.Model.EMPTY_MODEL,
+          },
+        },
+        {
+          statusCode: '400',
+          responseModels: {
+            'application/json': apigateway.Model.ERROR_MODEL,
+          },
+        },
+      ],
+    });
+
+    // POST /auth/verify-email
+    verifyEmailResource.addMethod('POST', new apigateway.LambdaIntegration(this.verifyEmailLambda, {
+      proxy: true,
+      integrationResponses: [{
+        statusCode: '200',
+      }],
+    }), {
+      requestValidator,
+      requestModels: {
+        'application/json': verifyEmailModel,
+      },
+      methodResponses: [
+        {
+          statusCode: '200',
+          responseModels: {
+            'application/json': apigateway.Model.EMPTY_MODEL,
+          },
+        },
+        {
+          statusCode: '400',
+          responseModels: {
+            'application/json': apigateway.Model.ERROR_MODEL,
+          },
+        },
+      ],
+    });
+
+    // POST /auth/resend-verification
+    const resendVerificationResource = authResource.addResource('resend-verification');
+    resendVerificationResource.addMethod('POST', new apigateway.LambdaIntegration(this.resendVerificationLambda, {
+      proxy: true,
+      integrationResponses: [{
+        statusCode: '200',
+      }],
+    }), {
+      requestValidator,
+      requestModels: {
+        'application/json': emailOnlyModel,
+      },
+      methodResponses: [
+        {
+          statusCode: '200',
+          responseModels: {
+            'application/json': apigateway.Model.EMPTY_MODEL,
+          },
+        },
+        {
+          statusCode: '400',
+          responseModels: {
+            'application/json': apigateway.Model.ERROR_MODEL,
+          },
+        },
+      ],
+    });
+
+    // POST /auth/forgot-password
+    const forgotPasswordResource = authResource.addResource('forgot-password');
+    forgotPasswordResource.addMethod('POST', new apigateway.LambdaIntegration(this.forgotPasswordLambda, {
+      proxy: true,
+      integrationResponses: [{
+        statusCode: '200',
+      }],
+    }), {
+      requestValidator,
+      requestModels: {
+        'application/json': emailOnlyModel,
+      },
+      methodResponses: [
+        {
+          statusCode: '200',
+          responseModels: {
+            'application/json': apigateway.Model.EMPTY_MODEL,
+          },
+        },
+        {
+          statusCode: '400',
+          responseModels: {
+            'application/json': apigateway.Model.ERROR_MODEL,
+          },
+        },
+      ],
+    });
+
+    // POST /auth/reset-password
+    const resetPasswordResource = authResource.addResource('reset-password');
+    resetPasswordResource.addMethod('POST', new apigateway.LambdaIntegration(this.resetPasswordLambda, {
+      proxy: true,
+      integrationResponses: [{
+        statusCode: '200',
+      }],
+    }), {
+      requestValidator,
+      requestModels: {
+        'application/json': resetPasswordModel,
+      },
       methodResponses: [
         {
           statusCode: '200',
@@ -597,7 +826,14 @@ export class ApiGatewayStack extends cdk.Stack {
     );
 
     const usersResource = this.api.root.addResource('users');
+    const userMeResource = usersResource.addResource('me');
     const userIdResource = usersResource.addResource('{id}');
+
+    userMeResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(userGetCurrentLambda, { proxy: true }),
+      protectedOptions()
+    );
 
     userIdResource.addMethod(
       'DELETE',
@@ -633,6 +869,45 @@ export class ApiGatewayStack extends cdk.Stack {
     userBadgesResource.addMethod(
       'GET',
       new apigateway.LambdaIntegration(userBadgesLambda, { proxy: true }),
+      {
+        authorizationType: apigateway.AuthorizationType.NONE,
+        methodResponses: [
+          { statusCode: '200', responseModels: { 'application/json': apigateway.Model.EMPTY_MODEL } },
+          { statusCode: '400', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+          { statusCode: '404', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+          { statusCode: '500', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+        ],
+      }
+    );
+
+    const userMeBadgesResource = userMeResource.addResource('badges');
+    userMeBadgesResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(userBadgesLambda, { proxy: true }),
+      protectedOptions()
+    );
+
+    const userContentResource = userIdResource.addResource('content');
+    userContentResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(userContentLambda, { proxy: true }),
+      {
+        authorizationType: apigateway.AuthorizationType.NONE,
+        methodResponses: [
+          { statusCode: '200', responseModels: { 'application/json': apigateway.Model.EMPTY_MODEL } },
+          { statusCode: '400', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+          { statusCode: '401', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+          { statusCode: '404', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+          { statusCode: '500', responseModels: { 'application/json': apigateway.Model.ERROR_MODEL } },
+        ],
+      }
+    );
+
+    const userUsernameResource = usersResource.addResource('username');
+    const userByUsernameResource = userUsernameResource.addResource('{username}');
+    userByUsernameResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(userGetByUsernameLambda, { proxy: true }),
       {
         authorizationType: apigateway.AuthorizationType.NONE,
         methodResponses: [
@@ -731,6 +1006,28 @@ export class ApiGatewayStack extends cdk.Stack {
     cdk.Tags.of(this).add('Project', 'CommunityContentTracker');
     cdk.Tags.of(this).add('Component', 'ApiGateway');
     cdk.Tags.of(this).add('Environment', this.envName);
+  }
+
+  private resolveAllowedOrigins(override?: string[]): string[] {
+    if (override && override.length > 0) {
+      return override;
+    }
+
+    const raw = process.env.CORS_ORIGIN || process.env.NEXT_PUBLIC_SITE_URL;
+    if (!raw || raw.trim().length === 0) {
+      throw new Error('CORS_ORIGIN must be set');
+    }
+
+    const origins = raw
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+
+    if (origins.length === 0) {
+      throw new Error('CORS_ORIGIN must include at least one origin');
+    }
+
+    return origins;
   }
 
   /**

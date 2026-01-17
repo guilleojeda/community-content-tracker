@@ -33,7 +33,7 @@ Created all 4 missing migration files (338 lines of SQL):
 
 Fixed test-setup.ts to handle missing tables gracefully (content_bookmarks, user_follows, content_analytics not part of Sprint 6.5).
 
-**Result**: Test pass rate improved from 62% → 96%
+**Result**: Test pass rate improved from 62% -> 96%
 
 ### 3. Database Setup Automation
 

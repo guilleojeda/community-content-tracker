@@ -275,7 +275,7 @@ describe('Content Claim Handler', () => {
       expect(body.error.code).toBe('AUTH_REQUIRED');
     });
 
-    it('should return 400 if content does not exist', async () => {
+    it('should return 404 if content does not exist', async () => {
       const nonexistentId = '880e8400-e29b-41d4-a716-446655440099';
       const event: Partial<APIGatewayProxyEvent> = {
         httpMethod: 'POST',
@@ -301,12 +301,13 @@ describe('Content Claim Handler', () => {
 
       const response = await handler(event as APIGatewayProxyEvent, mockContext);
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(404);
       const body = JSON.parse(response.body);
+      expect(body.error.code).toBe('NOT_FOUND');
       expect(body.error.message).toContain('not found');
     });
 
-    it('should return 400 if content is already claimed by another user', async () => {
+    it('should return 403 if content is already claimed by another user', async () => {
       const event: Partial<APIGatewayProxyEvent> = {
         httpMethod: 'POST',
         pathParameters: { id: validContentId },
@@ -336,12 +337,13 @@ describe('Content Claim Handler', () => {
 
       const response = await handler(event as APIGatewayProxyEvent, mockContext);
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(403);
       const body = JSON.parse(response.body);
+      expect(body.error.code).toBe('PERMISSION_DENIED');
       expect(body.error.message).toContain('already claimed');
     });
 
-    it('should return 400 if author name does not match', async () => {
+    it('should return 403 if author name does not match', async () => {
       const event: Partial<APIGatewayProxyEvent> = {
         httpMethod: 'POST',
         pathParameters: { id: validContentId },
@@ -371,8 +373,9 @@ describe('Content Claim Handler', () => {
 
       const response = await handler(event as APIGatewayProxyEvent, mockContext);
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(403);
       const body = JSON.parse(response.body);
+      expect(body.error.code).toBe('PERMISSION_DENIED');
       expect(body.error.message).toContain('mismatch');
     });
   });

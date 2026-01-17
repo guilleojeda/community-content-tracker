@@ -1,14 +1,29 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/users/delete-account';
-import { CognitoIdentityProviderClient, DeleteUserCommand, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { mockClient } from 'aws-sdk-client-mock';
+import { DeleteUserCommand, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { Visibility } from '@aws-community-hub/shared';
+
+jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
+  const actual = jest.requireActual('@aws-sdk/client-cognito-identity-provider');
+  const sendMock = jest.fn();
+  return {
+    ...actual,
+    CognitoIdentityProviderClient: jest.fn(() => ({ send: sendMock })),
+    __cognitoSendMock: sendMock,
+  };
+});
+
+const cognitoSendMock = (jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  __cognitoSendMock: jest.Mock;
+}).__cognitoSendMock;
+const { CognitoIdentityProviderClient } = jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  CognitoIdentityProviderClient: jest.Mock;
+};
 
 // Mock dependencies
 jest.mock('../../../../src/backend/services/database', () => ({
   getDatabasePool: jest.fn(),
 }));
-jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier');
 jest.mock('../../../../src/backend/services/AuditLogService', () => {
   const mockLog = jest.fn();
   return {
@@ -19,13 +34,10 @@ jest.mock('../../../../src/backend/services/AuditLogService', () => {
   };
 });
 
-const cognitoMock = mockClient(CognitoIdentityProviderClient);
-
 const mockPool = {
   query: jest.fn(),
 };
 
-const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
 const { getDatabasePool } = require('../../../../src/backend/services/database');
 const { AuditLogService, __mockLog: mockAuditLog } = require('../../../../src/backend/services/AuditLogService');
 
@@ -39,11 +51,13 @@ describe('Delete Account Lambda', () => {
     region: process.env.COGNITO_REGION,
     clientId: process.env.COGNITO_CLIENT_ID,
   };
+  const originalTestDbInMemory = process.env.TEST_DB_INMEMORY;
 
   beforeAll(() => {
     process.env.COGNITO_USER_POOL_ID = 'us-east-1_testPool';
     process.env.COGNITO_REGION = 'us-east-1';
     process.env.COGNITO_CLIENT_ID = 'test-client';
+    process.env.TEST_DB_INMEMORY = 'false';
   });
 
   afterAll(() => {
@@ -62,6 +76,11 @@ describe('Delete Account Lambda', () => {
     } else {
       process.env.COGNITO_CLIENT_ID = originalEnv.clientId;
     }
+    if (originalTestDbInMemory === undefined) {
+      delete process.env.TEST_DB_INMEMORY;
+    } else {
+      process.env.TEST_DB_INMEMORY = originalTestDbInMemory;
+    }
   });
 
   const mockUser = {
@@ -79,15 +98,11 @@ describe('Delete Account Lambda', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    cognitoMock.reset();
-    cognitoMock.on(DeleteUserCommand).resolves({});
-    cognitoMock.on(AdminDeleteUserCommand).resolves({});
+    cognitoSendMock.mockReset();
+    CognitoIdentityProviderClient.mockImplementation(() => ({ send: cognitoSendMock }));
+    cognitoSendMock.mockResolvedValue({});
     mockPool.query.mockReset();
     (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
-    verifyJwtToken.mockResolvedValue({
-      isValid: true,
-      user: mockUser,
-    });
     (AuditLogService as jest.Mock).mockClear();
     (AuditLogService as jest.Mock).mockImplementation(() => ({
       log: mockAuditLog,
@@ -96,9 +111,20 @@ describe('Delete Account Lambda', () => {
     mockAuditLog.mockResolvedValue('audit-log-entry');
   });
 
-  const createEvent = (userId?: string, authHeader?: string): Partial<APIGatewayProxyEvent> => ({
+  const createEvent = (
+    userId?: string,
+    authHeader?: string,
+    authorizerUserId: string | null = validUserId,
+    authorizerIsAdmin: boolean | undefined = undefined
+  ): Partial<APIGatewayProxyEvent> => ({
     pathParameters: userId ? { id: userId } : undefined,
     headers: authHeader ? { Authorization: authHeader } : {},
+    requestContext: {
+      authorizer: authorizerUserId ? {
+        userId: authorizerUserId,
+        isAdmin: authorizerIsAdmin,
+      } : undefined,
+    } as any,
   });
 
   describe('Validation', () => {
@@ -114,7 +140,7 @@ describe('Delete Account Lambda', () => {
     });
 
     it('should return 401 if authorization token is missing', async () => {
-      const event = createEvent(validUserId);
+      const event = createEvent(validUserId, undefined, null);
 
       const result = await handler(event as APIGatewayProxyEvent);
 
@@ -135,11 +161,6 @@ describe('Delete Account Lambda', () => {
     });
 
     it('should allow admin to delete any user account', async () => {
-      verifyJwtToken.mockResolvedValueOnce({
-        isValid: true,
-        user: { ...mockUser, isAdmin: true },
-      });
-
       // Mock finding user
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: otherUserId, cognito_sub: 'cognito-other', email: 'other@example.com', username: 'otheruser', profile_slug: 'otheruser', default_visibility: mockUser.defaultVisibility, is_admin: false, is_aws_employee: false, created_at: new Date(), updated_at: new Date() }],
@@ -148,19 +169,24 @@ describe('Delete Account Lambda', () => {
       // Mock delete_user_data function
       mockPool.query.mockResolvedValueOnce({ rows: [{ deleted: true }] });
 
-      const event = createEvent(otherUserId, `Bearer ${validAccessToken}`);
+      const event = createEvent(otherUserId, undefined, validUserId, true);
 
       const result = await handler(event as APIGatewayProxyEvent);
 
       expect(result.statusCode).toBe(200);
-      const adminDeleteCalls = cognitoMock.commandCalls(AdminDeleteUserCommand);
-      expect(adminDeleteCalls.length).toBe(1);
-      expect(adminDeleteCalls[0].args[0].input).toEqual(
+      const adminDeleteCommands = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof AdminDeleteUserCommand);
+      expect(adminDeleteCommands.length).toBe(1);
+      expect(adminDeleteCommands[0].input).toEqual(
         expect.objectContaining({
           Username: 'cognito-other',
         })
       );
-      expect(cognitoMock.commandCalls(DeleteUserCommand).length).toBe(0);
+      const deleteCommands = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof DeleteUserCommand);
+      expect(deleteCommands.length).toBe(0);
       expect(mockAuditLog).toHaveBeenCalledWith(expect.objectContaining({
         action: 'user.account.delete',
         resourceId: otherUserId,
@@ -207,9 +233,6 @@ describe('Delete Account Lambda', () => {
         ],
       });
 
-      // Mock Cognito deletion
-      cognitoMock.on(DeleteUserCommand).resolves({});
-
       // Mock database deletion (delete_user_data function)
       mockPool.query.mockResolvedValueOnce({ rows: [{ deleted: true }] });
 
@@ -222,9 +245,11 @@ describe('Delete Account Lambda', () => {
       expect(body.message).toBe('Account deleted successfully');
 
       // Verify Cognito was called
-      const cognitoCalls = cognitoMock.commandCalls(DeleteUserCommand);
-      expect(cognitoCalls.length).toBe(1);
-      expect(cognitoCalls[0].args[0].input.AccessToken).toBe(validAccessToken);
+      const cognitoCommands = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof DeleteUserCommand);
+      expect(cognitoCommands.length).toBe(1);
+      expect(cognitoCommands[0].input.AccessToken).toBe(validAccessToken);
 
       // Verify database deletion was called
       const deleteCalls = mockPool.query.mock.calls.filter((call) =>
@@ -263,7 +288,6 @@ describe('Delete Account Lambda', () => {
         ],
       });
 
-      cognitoMock.on(DeleteUserCommand).resolves({});
       mockPool.query.mockResolvedValueOnce({ rows: [{ deleted: true }] });
 
       const event = createEvent('me', `Bearer ${validAccessToken}`);
@@ -307,7 +331,7 @@ describe('Delete Account Lambda', () => {
       });
 
       // Mock Cognito deletion failure
-      cognitoMock.on(DeleteUserCommand).rejects(new Error('Cognito error'));
+      cognitoSendMock.mockRejectedValueOnce(new Error('Cognito error'));
 
       // Mock database deletion still succeeds
       mockPool.query.mockResolvedValueOnce({ rows: [{ deleted: true }] });
@@ -358,9 +382,6 @@ describe('Delete Account Lambda', () => {
         ],
       });
 
-      // Mock Cognito deletion succeeds
-      cognitoMock.on(DeleteUserCommand).resolves({});
-
       // Mock database deletion fails
       mockPool.query.mockResolvedValueOnce({ rows: [{ deleted: false }] });
 
@@ -372,21 +393,6 @@ describe('Delete Account Lambda', () => {
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('INTERNAL_ERROR');
       expect(body.error.message).toContain('Failed to delete user data');
-    });
-
-    it('should return 401 for invalid token', async () => {
-      verifyJwtToken.mockResolvedValueOnce({
-        isValid: false,
-        error: { code: 'AUTH_INVALID' },
-      });
-
-      const event = createEvent(validUserId, `Bearer invalid-token`);
-
-      const result = await handler(event as APIGatewayProxyEvent);
-
-      expect(result.statusCode).toBe(401);
-      const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('AUTH_INVALID');
     });
 
     it('should return 500 for unexpected errors', async () => {
@@ -425,7 +431,6 @@ describe('Delete Account Lambda', () => {
         ],
       });
 
-      cognitoMock.on(DeleteUserCommand).resolves({});
       mockPool.query.mockResolvedValueOnce({ rows: [{ deleted: true }] });
 
       const event = createEvent(validUserId, `Bearer ${validAccessToken}`);

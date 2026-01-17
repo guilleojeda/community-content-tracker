@@ -1,5 +1,11 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
-import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider';
+import {
+  AuthFlowType,
+  CognitoIdentityProviderClient,
+  InitiateAuthCommand,
+  InitiateAuthCommandInput,
+  InitiateAuthCommandOutput,
+} from '@aws-sdk/client-cognito-identity-provider';
 import { UserRepository } from '../../repositories/UserRepository';
 import { LoginRequest, LoginResponse } from '../../../shared/types';
 import { verifyJwtToken, TokenVerifierConfig } from './tokenVerifier';
@@ -12,6 +18,7 @@ import {
 } from './utils';
 import { getDatabasePool } from '../../services/database';
 import { getAuthEnvironment } from './config';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Get Cognito client instance
@@ -45,21 +52,31 @@ export async function handler(
   console.log('Login request:', JSON.stringify(event, null, 2));
 
   try {
+    const rateLimit = await applyRateLimit(event, { resource: 'auth:login', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(
+        createErrorResponse(429, 'RATE_LIMITED', 'Too many requests')
+      );
+    }
+
     // Parse and validate request body
     const { data: requestBody, error: parseError } = parseRequestBody<LoginRequest>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     // Validate input
     const validation = validateLoginInput(requestBody!);
     if (!validation.isValid) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Validation failed',
         { fields: validation.errors }
-      );
+      ));
     }
 
     const { email, password } = requestBody!;
@@ -67,11 +84,11 @@ export async function handler(
 
     // Authenticate with Cognito
     const cognitoClient = getCognitoClient(authEnv.region);
-    let authResult: any;
+    let authResult: InitiateAuthCommandOutput['AuthenticationResult'];
 
     try {
-      const authCommandInput = {
-        AuthFlow: 'USER_PASSWORD_AUTH',
+      const authCommandInput: InitiateAuthCommandInput = {
+        AuthFlow: AuthFlowType.USER_PASSWORD_AUTH,
         ClientId: authEnv.clientId,
         AuthParameters: {
           USERNAME: email,
@@ -84,7 +101,7 @@ export async function handler(
           ? (authCommandInput as any)
           : new InitiateAuthCommand(authCommandInput)
       );
-      authResult = cognitoResponse.AuthenticationResult;
+      authResult = (cognitoResponse as InitiateAuthCommandOutput).AuthenticationResult;
 
       if (!authResult) {
         throw new Error('No authentication result returned from Cognito');
@@ -93,14 +110,22 @@ export async function handler(
       console.log('Cognito authentication successful for user:', email);
     } catch (cognitoError: any) {
       console.error('Cognito authentication error:', cognitoError);
-      return mapCognitoError(cognitoError, {
+      return withRateLimit(mapCognitoError(cognitoError, {
         userNotFound: {
           statusCode: 404,
           code: 'NOT_FOUND',
           message: 'User account does not exist',
         },
-      });
+      }));
     }
+
+    if (!authResult?.AccessToken || !authResult.IdToken || !authResult.RefreshToken) {
+      throw new Error('Incomplete authentication result returned from Cognito');
+    }
+
+    const accessToken = authResult.AccessToken;
+    const idToken = authResult.IdToken;
+    const refreshToken = authResult.RefreshToken;
 
     // Verify the returned access token and get user data
     const dbPool = await getDatabasePool();
@@ -109,7 +134,7 @@ export async function handler(
 
     try {
       const verificationResult = await verifyJwtToken(
-        authResult.AccessToken,
+        accessToken,
         tokenConfig,
         userRepository
       );
@@ -117,28 +142,19 @@ export async function handler(
       if (!verificationResult.isValid || !verificationResult.user) {
         console.error('Token verification failed:', verificationResult.error);
 
-        // Map specific verification errors
-        if (verificationResult.error?.code === 'USER_NOT_FOUND') {
-          return createErrorResponse(
-            401,
-            'AUTH_INVALID',
-            'User account not found in system'
-          );
-        }
-
-        if (verificationResult.error?.code === 'DATABASE_ERROR') {
-          return createErrorResponse(
+        if (verificationResult.error?.code === 'INTERNAL_ERROR') {
+          return withRateLimit(createErrorResponse(
             500,
             'INTERNAL_ERROR',
             'Failed to retrieve user information'
-          );
+          ));
         }
 
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           401,
           'AUTH_INVALID',
           'Authentication failed'
-        );
+        ));
       }
 
       const user = verificationResult.user;
@@ -146,9 +162,9 @@ export async function handler(
 
       // Prepare login response
       const response: LoginResponse = {
-        accessToken: authResult.AccessToken,
-        idToken: authResult.IdToken,
-        refreshToken: authResult.RefreshToken,
+        accessToken,
+        idToken,
+        refreshToken,
         expiresIn: authResult.ExpiresIn || 3600,
         user: {
           id: user.id,
@@ -161,15 +177,15 @@ export async function handler(
       };
 
       console.log('Login successful for user:', user.id);
-      return createSuccessResponse(200, response);
+      return withRateLimit(createSuccessResponse(200, response));
 
     } catch (verificationError: any) {
       console.error('Token verification error:', verificationError);
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         500,
         'INTERNAL_ERROR',
         'Failed to verify authentication'
-      );
+      ));
     }
 
   } catch (error: any) {

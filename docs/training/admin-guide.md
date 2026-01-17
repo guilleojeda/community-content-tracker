@@ -10,19 +10,19 @@
 - **System Health:** realtime status from `/admin/system-health` endpoint.
 
 ## 3. User management
-1. Open **Admin → Users**.
+1. Open **Admin -> Users**.
 2. Search by username/email, filter by badge.
 3. View user details (content count, badges, recent activity).
 4. Grant/Revoke badges individually or in bulk.
 5. Export user list to CSV (auditable event stored in `export_history`).
 
 ## 4. Moderation workflow
-- Flagged content automatically surfaces on **Admin → Moderation**.
+- Flagged content automatically surfaces on **Admin -> Moderation**.
 - Actions: Approve (clears flag), Remove (marks as removed), Delete (hard delete).
 - Each action records an audit entry with actor, IP, and timestamp.
 
 ## 5. Audit log
-- Accessible under **Admin → Audit Log**.
+- Accessible under **Admin -> Audit Log**.
 - Filters: action type, actor, date range.
 - Export via **Download JSON** for compliance audits.
 

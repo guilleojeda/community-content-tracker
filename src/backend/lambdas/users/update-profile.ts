@@ -8,9 +8,10 @@ import {
   extractTokenFromHeader,
   isValidEmail,
 } from '../auth/utils';
-import { verifyJwtToken, TokenVerifierConfig } from '../auth/tokenVerifier';
 import { getDatabasePool } from '../../services/database';
 import { getAuthEnvironment } from '../auth/config';
+import { resolveAuthorizerContext } from '../../services/authorizerContext';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 import {
   CognitoIdentityProviderClient,
   UpdateUserAttributesCommand,
@@ -25,21 +26,6 @@ function getCognitoClient(region: string): CognitoIdentityProviderClient {
     cognitoRegion = region;
   }
   return cognitoClient;
-}
-
-/**
- * Get token verifier configuration
- */
-function getTokenVerifierConfig(): TokenVerifierConfig {
-  const authEnv = getAuthEnvironment();
-  const allowedAudiences = authEnv.allowedAudiences.length > 0 ? authEnv.allowedAudiences : [authEnv.clientId];
-
-  return {
-    cognitoUserPoolId: authEnv.userPoolId,
-    cognitoRegion: authEnv.region,
-    allowedAudiences,
-    issuer: `https://cognito-idp.${authEnv.region}.amazonaws.com/${authEnv.userPoolId}`,
-  };
 }
 
 function isValidUrl(url: string): boolean {
@@ -74,10 +60,10 @@ function validateProfileInput(input: UpdateUserRequest): { isValid: boolean; err
   if (input.username !== undefined) {
     if (input.username.trim() === '') {
       errors.username = 'Username cannot be empty';
-    } else if (input.username.length < 3 || input.username.length > 30) {
-      errors.username = 'Username must be between 3 and 30 characters';
-    } else if (!/^[a-zA-Z0-9_]+$/.test(input.username)) {
-      errors.username = 'Username can only contain letters, numbers, and underscores';
+    } else if (input.username.length < 3 || input.username.length > 100) {
+      errors.username = 'Username must be between 3 and 100 characters';
+    } else if (!/^[a-zA-Z0-9_-]+$/.test(input.username)) {
+      errors.username = 'Username can only contain letters, numbers, hyphens, and underscores';
     } else if (containsUnsafeMarkup(input.username)) {
       errors.username = 'Username cannot include HTML or script tags';
     }
@@ -139,52 +125,54 @@ function validateProfileInput(input: UpdateUserRequest): { isValid: boolean; err
  */
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('Update profile request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
     const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
     const corsOptions = { origin: originHeader, methods: 'PATCH,OPTIONS', allowCredentials: true };
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+    const respondError = (
+      statusCode: number,
+      code: string,
+      message: string,
+      details?: Record<string, unknown>
+    ) => withRateLimit(createErrorResponse(statusCode, code, message, details, corsOptions));
+    const respondSuccess = (statusCode: number, body: Record<string, unknown>) =>
+      withRateLimit(createSuccessResponse(statusCode, body, corsOptions));
+
+    rateLimit = await applyRateLimit(event, { resource: 'users:update-profile' });
+    if (rateLimit && !rateLimit.allowed) {
+      return respondError(429, 'RATE_LIMITED', 'Too many requests');
+    }
+
+    const authContext = resolveAuthorizerContext(event.requestContext?.authorizer as any);
+    if (!authContext.userId) {
+      return respondError(401, 'AUTH_REQUIRED', 'Authentication required');
+    }
 
     // Extract user ID from path parameters
-    const userId = event.pathParameters?.id;
-    if (!userId) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required', undefined, corsOptions);
+    const rawUserId = event.pathParameters?.id;
+    if (!rawUserId) {
+      return respondError(400, 'VALIDATION_ERROR', 'User ID is required');
     }
-
-    // Extract and verify access token
-    const accessToken = extractTokenFromHeader(event.headers.Authorization);
-    if (!accessToken) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required', undefined, corsOptions);
-    }
-
-    // Verify token and get user
-    const dbPool = await getDatabasePool();
-    const userRepository = new UserRepository(dbPool);
-    const tokenConfig = getTokenVerifierConfig();
-
-    const verificationResult = await verifyJwtToken(accessToken, tokenConfig, userRepository);
-
-    if (!verificationResult.isValid || !verificationResult.user) {
-      console.error('Token verification failed:', verificationResult.error);
-      return createErrorResponse(401, 'AUTH_INVALID', 'Invalid authentication token', undefined, corsOptions);
-    }
-
-    const authenticatedUser = verificationResult.user;
+    const targetUserId = rawUserId === 'me' ? authContext.userId : rawUserId;
 
     // Check if authenticated user is updating their own profile
-    if (authenticatedUser.id !== userId) {
-      return createErrorResponse(403, 'PERMISSION_DENIED', 'You can only update your own profile', undefined, corsOptions);
+    if (authContext.userId !== targetUserId) {
+      return respondError(403, 'PERMISSION_DENIED', 'You can only update your own profile');
     }
 
     // Parse request body
     const { data: requestBody, error: parseError } = parseRequestBody<UpdateUserRequest>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     // Validate input
     const validation = validateProfileInput(requestBody!);
     if (!validation.isValid) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Validation failed', { fields: validation.errors }, corsOptions);
+      return respondError(400, 'VALIDATION_ERROR', 'Validation failed', { fields: validation.errors });
     }
 
     // Update user profile using repository
@@ -192,7 +180,6 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     let normalizedEmail: string | undefined;
     if (requestBody!.email !== undefined) {
       normalizedEmail = requestBody!.email.trim();
-      updateData.email = normalizedEmail;
     }
     if (requestBody!.username !== undefined) {
       updateData.username = requestBody!.username;
@@ -218,40 +205,55 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
 
     // If email change requested, sync with Cognito before updating DB
-    if (normalizedEmail && normalizedEmail !== authenticatedUser.email) {
+    if (normalizedEmail) {
+      const accessToken = extractTokenFromHeader(event.headers.Authorization);
+      if (!accessToken) {
+        return respondError(401, 'AUTH_REQUIRED', 'Authentication token is required to update email');
+      }
+
       try {
-        const authEnv = getAuthEnvironment();
-        const client = getCognitoClient(authEnv.region);
-        await client.send(
-          new UpdateUserAttributesCommand({
-            AccessToken: accessToken,
-            UserAttributes: [
-              { Name: 'email', Value: normalizedEmail },
-            ],
-          })
-        );
+        const dbPool = await getDatabasePool();
+        const userRepository = new UserRepository(dbPool);
+        const existingUser = await userRepository.findById(targetUserId);
+        if (!existingUser) {
+          return respondError(404, 'NOT_FOUND', 'User not found');
+        }
+        if (normalizedEmail === existingUser.email) {
+          normalizedEmail = undefined;
+        } else {
+          const authEnv = getAuthEnvironment();
+          const client = getCognitoClient(authEnv.region);
+          await client.send(
+            new UpdateUserAttributesCommand({
+              AccessToken: accessToken,
+              UserAttributes: [
+                { Name: 'email', Value: normalizedEmail },
+              ],
+            })
+          );
+        }
       } catch (cognitoError: any) {
         console.error('Cognito email update error:', cognitoError);
-        return createErrorResponse(
-          500,
-          'INTERNAL_ERROR',
-          'Failed to update email address. Please try again later.',
-          undefined,
-          corsOptions
-        );
+        return respondError(500, 'INTERNAL_ERROR', 'Failed to update email address. Please try again later.');
       }
     }
 
     try {
-      const updatedUser = await userRepository.updateUser(userId, updateData);
-
-      if (!updatedUser) {
-        return createErrorResponse(404, 'NOT_FOUND', 'User not found', undefined, corsOptions);
+      if (normalizedEmail) {
+        updateData.email = normalizedEmail;
       }
 
-      console.log('Profile updated successfully for user:', userId);
+      const dbPool = await getDatabasePool();
+      const userRepository = new UserRepository(dbPool);
+      const updatedUser = await userRepository.updateUser(targetUserId, updateData);
 
-      return createSuccessResponse(200, {
+      if (!updatedUser) {
+        return respondError(404, 'NOT_FOUND', 'User not found');
+      }
+
+      console.log('Profile updated successfully for user:', targetUserId);
+
+      return respondSuccess(200, {
         message: 'Profile updated successfully',
         user: {
           id: updatedUser.id,
@@ -263,22 +265,25 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
           socialLinks: updatedUser.socialLinks,
           updatedAt: updatedUser.updatedAt,
         },
-      }, corsOptions);
+      });
     } catch (repoError: any) {
       // Handle validation errors from repository
       if (repoError.validationErrors) {
-        return createErrorResponse(409, 'DUPLICATE_RESOURCE', 'Validation failed', {
+        return respondError(409, 'DUPLICATE_RESOURCE', 'Validation failed', {
           fields: repoError.validationErrors,
-        }, corsOptions);
+        });
       }
       throw repoError;
     }
   } catch (error: any) {
     console.error('Unexpected profile update error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while updating profile', undefined, {
-      origin: event.headers?.Origin || event.headers?.origin || undefined,
-      methods: 'PATCH,OPTIONS',
-      allowCredentials: true,
-    });
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while updating profile', undefined, {
+        origin: event.headers?.Origin || event.headers?.origin || undefined,
+        methods: 'PATCH,OPTIONS',
+        allowCredentials: true,
+      }),
+      rateLimit
+    );
   }
 }

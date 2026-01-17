@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { BadgeType } from '@aws-community-hub/shared';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Extract admin context from API Gateway event
@@ -62,7 +63,8 @@ async function handleDashboardStats(event: APIGatewayProxyEvent): Promise<APIGat
     const badgeStatsResult = await pool.query(badgeStatsQuery);
     const usersByBadgeType: Partial<Record<BadgeType, number>> = {};
     badgeStatsResult.rows.forEach((row: any) => {
-      usersByBadgeType[row.badge_type] = parseInt(row.count, 10);
+      const badgeType = row.badge_type as BadgeType;
+      usersByBadgeType[badgeType] = parseInt(row.count, 10);
     });
 
     // Get content statistics
@@ -267,19 +269,31 @@ export async function handler(
 ): Promise<APIGatewayProxyResult> {
   const path = event.path || '';
   const method = (event.httpMethod || 'GET').toUpperCase();
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'admin:dashboard' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     if (method === 'GET' && path === '/admin/dashboard/stats') {
-      return await handleDashboardStats(event);
+      return withRateLimit(await handleDashboardStats(event));
     }
 
     if (method === 'GET' && path === '/admin/dashboard/system-health') {
-      return await handleSystemHealth(event, context);
+      return withRateLimit(await handleSystemHealth(event, context));
     }
 
-    return createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`);
+    return withRateLimit(createErrorResponse(404, 'NOT_FOUND', `Route not found: ${method} ${path}`));
   } catch (error) {
     console.error('Unhandled admin dashboard error', { path, method, error });
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred'),
+      rateLimit
+    );
   }
 }

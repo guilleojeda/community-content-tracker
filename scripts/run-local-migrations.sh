@@ -31,7 +31,10 @@ if command -v docker >/dev/null 2>&1; then
   fi
 
   echo "Waiting for database readiness..."
-  until docker exec "${CONTAINER_ID}" pg_isready -U "${DB_USER}" >/dev/null 2>&1; do
+  until docker exec "${CONTAINER_ID}" pg_isready -U "${DB_USER}" -d "${DB_NAME}" >/dev/null 2>&1; do
+    sleep 2
+  done
+  until docker exec "${CONTAINER_ID}" psql -U "${DB_USER}" -d "${DB_NAME}" -c "SELECT 1" >/dev/null 2>&1; do
     sleep 2
   done
 

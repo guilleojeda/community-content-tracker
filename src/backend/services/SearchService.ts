@@ -113,8 +113,11 @@ export class SearchService {
         visibility: requestedVisibility && requestedVisibility.length > 0 ? requestedVisibility : undefined,
       };
 
-      // Generate embedding for semantic search
-      const queryEmbedding = await this.embeddingService.generateEmbedding(query.trim());
+      const disableSemanticSearch =
+        process.env.DISABLE_SEMANTIC_SEARCH === 'true' || process.env.TEST_DB_INMEMORY === 'true';
+      const queryEmbedding = disableSemanticSearch
+        ? null
+        : await this.embeddingService.generateEmbedding(query.trim());
 
       // Build search options from filters
       const searchOptions = {
@@ -131,7 +134,9 @@ export class SearchService {
 
       // Execute semantic and keyword searches in parallel
       const [semanticResults, keywordResults, totalCount] = await Promise.all([
-        this.contentRepo.semanticSearch(queryEmbedding, searchOptions),
+        disableSemanticSearch || !queryEmbedding
+          ? Promise.resolve([])
+          : this.contentRepo.semanticSearch(queryEmbedding, searchOptions),
         this.contentRepo.keywordSearch(query.trim(), searchOptions),
         this.contentRepo.countSearchResults({
           visibilityLevels: nonOwnerVisibilityLevels.length > 0 ? nonOwnerVisibilityLevels : visibilityLevels,
@@ -318,6 +323,9 @@ export class SearchService {
     isAuthenticated: boolean,
     badgeCount: number
   ): Promise<void> {
+    if (process.env.DISABLE_CLOUDWATCH_METRICS === 'true') {
+      return;
+    }
     const namespace = 'CommunityContentHub/Search';
     const timestamp = new Date();
 
@@ -392,6 +400,9 @@ export class SearchService {
    * @param errorMessage - Error message
    */
   private async trackSearchError(query: string, errorMessage: string): Promise<void> {
+    if (process.env.DISABLE_CLOUDWATCH_METRICS === 'true') {
+      return;
+    }
     const namespace = 'CommunityContentHub/Search';
     const timestamp = new Date();
 

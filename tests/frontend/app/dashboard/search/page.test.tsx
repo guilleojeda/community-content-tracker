@@ -7,7 +7,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
-import SearchPage from '@/app/dashboard/search/page';
+import SearchPage from '@/app/dashboard/search/SearchPageClient';
 import { apiClient } from '@/api/client';
 import { BadgeType, Visibility, ContentType } from '@shared/types';
 
@@ -757,8 +757,7 @@ describe('Authenticated Search Interface', () => {
       const title = await screen.findByText('AWS Lambda Best Practices');
       expect(title).toBeInTheDocument();
 
-      const firstCard = title.closest('article') ||
-                        title.closest('div[class*="bg-white"]');
+      const firstCard = title.closest('article');
 
       expect(firstCard).toBeInTheDocument();
       expect(within(firstCard!).getByText(/learn serverless best practices/i)).toBeInTheDocument();

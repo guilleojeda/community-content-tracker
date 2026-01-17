@@ -12,7 +12,7 @@ set -e
 # Usage:
 #   ./scripts/deploy-frontend.sh [environment]
 #
-# Environment: dev, staging, prod (default: dev)
+# Environment: dev, staging, prod, blue, green, beta (default: dev)
 #############################################################################
 
 # Colors for output
@@ -43,9 +43,13 @@ log_warning() {
 ENVIRONMENT=${1:-dev}
 
 # Validate environment
-if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod)$ ]]; then
+if [[ "$ENVIRONMENT" == "production" ]]; then
+    ENVIRONMENT="prod"
+fi
+
+if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod|blue|green|beta)$ ]]; then
     log_error "Invalid environment: $ENVIRONMENT"
-    log_info "Usage: ./scripts/deploy-frontend.sh [dev|staging|prod]"
+    log_info "Usage: ./scripts/deploy-frontend.sh [dev|staging|prod|blue|green|beta]"
     exit 1
 fi
 
@@ -91,7 +95,8 @@ DISTRIBUTION_ID=$(aws ssm get-parameter \
 if [[ -z "$BUCKET_NAME" ]] || [[ -z "$DISTRIBUTION_ID" ]]; then
     log_warning "SSM parameters not found. Attempting to retrieve from CloudFormation..."
 
-    STACK_NAME="CommunityContentHub-StaticSite-${ENVIRONMENT}"
+    ENV_CAPITALIZED="$(tr '[:lower:]' '[:upper:]' <<< "${ENVIRONMENT:0:1}")${ENVIRONMENT:1}"
+    STACK_NAME="CommunityContentHub-StaticSite-${ENV_CAPITALIZED}"
 
     BUCKET_NAME=$(aws cloudformation describe-stacks \
         --stack-name "$STACK_NAME" \

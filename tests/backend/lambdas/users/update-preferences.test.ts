@@ -5,42 +5,40 @@ import { handler } from '../../../../src/backend/lambdas/users/update-preference
 jest.mock('../../../../src/backend/services/database', () => ({
   getDatabasePool: jest.fn(),
 }));
-jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier');
 
 const mockPool = {
   query: jest.fn(),
 };
 
-const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
 const { getDatabasePool } = require('../../../../src/backend/services/database');
 
 describe('Update Preferences Lambda', () => {
   const validUserId = 'user-123';
   const validAccessToken = 'valid-access-token';
-
   const mockUser = {
-    id: validUserId,
-    email: 'test@example.com',
+    email: 'testuser@example.com',
     username: 'testuser',
     profileSlug: 'testuser',
-    isAdmin: false,
-    isAwsEmployee: false,
   };
 
   beforeEach(() => {
     jest.clearAllMocks();
     mockPool.query.mockReset();
     (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
-    verifyJwtToken.mockResolvedValue({
-      isValid: true,
-      user: mockUser,
-    });
   });
 
-  const createEvent = (body: any, userId?: string, authHeader?: string): Partial<APIGatewayProxyEvent> => ({
+  const createEvent = (
+    body: any,
+    userId?: string,
+    authHeader?: string,
+    authorizerUserId: string | null = validUserId
+  ): Partial<APIGatewayProxyEvent> => ({
     pathParameters: userId ? { id: userId } : undefined,
     headers: authHeader ? { Authorization: authHeader } : {},
     body: JSON.stringify(body),
+    requestContext: {
+      authorizer: authorizerUserId ? { userId: authorizerUserId } : undefined,
+    } as any,
   });
 
   describe('Validation', () => {
@@ -58,8 +56,8 @@ describe('Update Preferences Lambda', () => {
       expect(body.error.code).toBe('VALIDATION_ERROR');
     });
 
-    it('should return 401 if authorization token is missing', async () => {
-      const event = createEvent({ receiveNewsletter: true }, validUserId);
+    it('should return 401 if authorization context is missing', async () => {
+      const event = createEvent({ receiveNewsletter: true }, validUserId, undefined, null);
 
       const result = await handler(event as APIGatewayProxyEvent);
 
@@ -146,10 +144,10 @@ describe('Update Preferences Lambda', () => {
 
       // Verify database query was called
       expect(mockPool.query).toHaveBeenCalled();
-      const queryCall = mockPool.query.mock.calls[0];
-      expect(queryCall[0]).toContain('UPDATE');
-      expect(queryCall[0]).toContain('users');
-      expect(queryCall[1]).toContain(validUserId);
+      const updateCall = mockPool.query.mock.calls.find(call =>
+        Array.isArray(call[1]) && call[1].includes(validUserId)
+      );
+      expect(updateCall).toBeDefined();
     });
 
     it('should successfully update content notifications preference', async () => {
@@ -259,32 +257,14 @@ describe('Update Preferences Lambda', () => {
 
       // Verify database query was called
       expect(mockPool.query).toHaveBeenCalled();
-      const queryCall = mockPool.query.mock.calls[0];
-      expect(queryCall[0]).toContain('UPDATE');
-      expect(queryCall[0]).toContain('users');
+      const updateCall = mockPool.query.mock.calls.find(call =>
+        Array.isArray(call[1]) && call[1].includes(validUserId)
+      );
+      expect(updateCall).toBeDefined();
     });
   });
 
   describe('Error Handling', () => {
-    it('should return 401 for invalid token', async () => {
-      verifyJwtToken.mockResolvedValueOnce({
-        isValid: false,
-        error: { code: 'AUTH_INVALID' },
-      });
-
-      const event = createEvent(
-        { receiveNewsletter: true },
-        validUserId,
-        `Bearer invalid-token`
-      );
-
-      const result = await handler(event as APIGatewayProxyEvent);
-
-      expect(result.statusCode).toBe(401);
-      const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('AUTH_INVALID');
-    });
-
     it('should return 500 for database errors', async () => {
       mockPool.query.mockRejectedValueOnce(new Error('Database error'));
 

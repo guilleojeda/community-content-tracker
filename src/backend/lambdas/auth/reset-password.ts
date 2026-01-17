@@ -6,13 +6,16 @@ import {
   createSuccessResponse,
   mapCognitoError,
 } from './utils';
+import { getAuthEnvironment } from './config';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Get Cognito client instance
  */
 function getCognitoClient(): CognitoIdentityProviderClient {
+  const authEnv = getAuthEnvironment();
   return new CognitoIdentityProviderClient({
-    region: process.env.COGNITO_REGION || 'us-east-1',
+    region: authEnv.region,
   });
 }
 
@@ -79,8 +82,17 @@ export async function handler(
   context: Context
 ): Promise<APIGatewayProxyResult> {
   console.log('Reset password request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'auth:reset-password', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Parse request body
     const { data: requestBody, error: parseError } = parseRequestBody<{
       email: string;
@@ -89,7 +101,7 @@ export async function handler(
     }>(event.body);
 
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     const { email, confirmationCode, newPassword } = requestBody!;
@@ -97,20 +109,27 @@ export async function handler(
     // Validate input
     const validation = validateResetPasswordInput({ email, confirmationCode, newPassword });
     if (!validation.isValid) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Validation failed',
         { fields: validation.errors }
-      );
+      ));
+    }
+
+    if (process.env.LOCAL_AUTH_MODE === 'true') {
+      return withRateLimit(createSuccessResponse(200, {
+        message: 'Password reset successful',
+      }));
     }
 
     // Confirm forgot password with Cognito
     const cognitoClient = getCognitoClient();
 
     try {
+      const authEnv = getAuthEnvironment();
       const confirmPasswordCommand = new ConfirmForgotPasswordCommand({
-        ClientId: process.env.COGNITO_CLIENT_ID!,
+        ClientId: authEnv.clientId,
         Username: email,
         ConfirmationCode: confirmationCode,
         Password: newPassword,
@@ -120,59 +139,59 @@ export async function handler(
 
       console.log('Password reset successful for user:', email);
 
-      return createSuccessResponse(200, {
+      return withRateLimit(createSuccessResponse(200, {
         message: 'Password reset successful',
-      });
+      }));
 
     } catch (cognitoError: any) {
       console.error('Cognito confirm password error:', cognitoError);
 
       // Handle specific Cognito errors
       if (cognitoError.name === 'CodeMismatchException') {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Invalid confirmation code',
           { field: 'confirmationCode' }
-        );
+        ));
       }
 
       if (cognitoError.name === 'ExpiredCodeException') {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Confirmation code has expired. Please request a new code.',
           { field: 'confirmationCode' }
-        );
+        ));
       }
 
       if (cognitoError.name === 'InvalidPasswordException') {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           400,
           'VALIDATION_ERROR',
           'Password does not meet requirements',
           { field: 'newPassword' }
-        );
+        ));
       }
 
       if (cognitoError.name === 'LimitExceededException') {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           429,
           'RATE_LIMITED',
           'Too many attempts. Please try again later.'
-        );
+        ));
       }
 
       // Map other Cognito errors
-      return mapCognitoError(cognitoError);
+      return withRateLimit(mapCognitoError(cognitoError));
     }
 
   } catch (error: any) {
     console.error('Unexpected reset password error:', error);
-    return createErrorResponse(
+    return attachRateLimitHeaders(createErrorResponse(
       500,
       'INTERNAL_ERROR',
       'An unexpected error occurred while resetting password'
-    );
+    ), rateLimit);
   }
 }

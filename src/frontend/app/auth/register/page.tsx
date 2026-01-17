@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RegisterRequest, RegisterResponse } from '@aws-community-hub/shared';
-import { getPublicApiClient } from '@/api/client';
+import { loadPublicApiClient } from '@/lib/api/lazyClient';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -54,7 +54,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const client = getPublicApiClient();
+      const client = await loadPublicApiClient();
       const requestBody: RegisterRequest = {
         email: formData.email,
         username: formData.username,
@@ -116,7 +116,6 @@ export default function RegisterPage() {
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                 className="input-field"
                 placeholder="Choose a username"
-                pattern="[a-zA-Z0-9_-]+"
               />
               <p className="text-xs text-gray-500 mt-1">
                 Letters, numbers, hyphens, and underscores only

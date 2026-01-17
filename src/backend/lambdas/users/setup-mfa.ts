@@ -13,6 +13,8 @@ import {
 } from '../auth/utils';
 import QRCode from 'qrcode';
 import { getAuthEnvironment } from '../auth/config';
+import { resolveAuthorizerContext } from '../../services/authorizerContext';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 // Cognito client instance
 let cognitoClient: CognitoIdentityProviderClient | null = null;
@@ -38,18 +40,36 @@ function getCognitoClient(): CognitoIdentityProviderClient {
  */
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('MFA setup request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'users:setup-mfa' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
+    const authContext = resolveAuthorizerContext(event.requestContext?.authorizer as any);
+    if (!authContext.userId) {
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
+    }
+
     // Extract user ID from path parameters
-    const userId = event.pathParameters?.id;
-    if (!userId) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required');
+    const rawUserId = event.pathParameters?.id;
+    if (!rawUserId) {
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required'));
+    }
+    const targetUserId = rawUserId === 'me' ? authContext.userId : rawUserId;
+    if (authContext.userId !== targetUserId) {
+      return withRateLimit(createErrorResponse(403, 'PERMISSION_DENIED', 'You can only configure your own MFA'));
     }
 
     // Extract access token from Authorization header
     const accessToken = extractTokenFromHeader(event.headers.Authorization);
     if (!accessToken) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required');
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required'));
     }
 
     // Parse request body (optional verificationCode for step 2)
@@ -71,7 +91,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
         );
 
         if (verifyResponse.Status !== 'SUCCESS') {
-          return createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid verification code');
+          return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'Invalid verification code'));
         }
 
         // Set MFA preference to SOFTWARE_TOKEN_MFA
@@ -85,15 +105,15 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
           })
         );
 
-        console.log('MFA enabled successfully for user:', userId);
+        console.log('MFA enabled successfully for user:', targetUserId);
 
-        return createSuccessResponse(200, {
+        return withRateLimit(createSuccessResponse(200, {
           message: 'MFA enabled successfully',
           enabled: true,
-        });
+        }));
       } catch (error: any) {
         console.error('MFA verification error:', error);
-        return mapCognitoError(error);
+        return withRateLimit(mapCognitoError(error));
       }
     }
 
@@ -114,25 +134,28 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
       // Generate TOTP URI for QR code
       const appName = 'AWS Community Hub';
-      const userIdentifier = username || userId;
+      const userIdentifier = username || targetUserId;
       const otpauthUri = `otpauth://totp/${encodeURIComponent(appName)}:${encodeURIComponent(userIdentifier)}?secret=${secret}&issuer=${encodeURIComponent(appName)}`;
 
       // Generate QR code as data URL
       const qrCodeDataUrl = await QRCode.toDataURL(otpauthUri);
       console.log('QR code generated:', qrCodeDataUrl);
 
-      console.log('MFA setup initiated for user:', userId);
+      console.log('MFA setup initiated for user:', targetUserId);
 
-      return createSuccessResponse(200, {
+      return withRateLimit(createSuccessResponse(200, {
         qrCode: qrCodeDataUrl,
         secret: secret,
-      });
+      }));
     } catch (error: any) {
       console.error('MFA setup error:', error);
-      return mapCognitoError(error);
+      return withRateLimit(mapCognitoError(error));
     }
   } catch (error: any) {
     console.error('Unexpected MFA setup error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred during MFA setup');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred during MFA setup'),
+      rateLimit
+    );
   }
 }

@@ -231,23 +231,23 @@ describe('ApiClient', () => {
     await client.deleteAccount('user-1');
 
     expect(fetchMock).toHaveBeenNthCalledWith(1,
-      'https://api.example.com/api/users/user-1/password',
+      'https://api.example.com/users/user-1/password',
       expect.objectContaining({ method: 'POST' })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(2,
-      'https://api.example.com/api/users/user-1/mfa/setup',
+      'https://api.example.com/users/user-1/mfa/setup',
       expect.objectContaining({ method: 'POST' })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(3,
-      'https://api.example.com/api/users/user-1/preferences',
+      'https://api.example.com/users/user-1/preferences',
       expect.objectContaining({ method: 'PATCH' })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(4,
-      'https://api.example.com/api/users/user-1/export',
+      'https://api.example.com/users/user-1/export',
       expect.objectContaining({ method: 'GET' })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(5,
-      'https://api.example.com/api/users/user-1',
+      'https://api.example.com/users/user-1',
       expect.objectContaining({ method: 'DELETE' })
     );
   });

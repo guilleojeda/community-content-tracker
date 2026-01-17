@@ -8,6 +8,9 @@ import {
   mapCognitoError,
   extractTokenFromHeader,
 } from '../auth/utils';
+import { getAuthEnvironment } from '../auth/config';
+import { resolveAuthorizerContext } from '../../services/authorizerContext';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 // Cognito client instance
 let cognitoClient: CognitoIdentityProviderClient | null = null;
@@ -17,8 +20,9 @@ let cognitoClient: CognitoIdentityProviderClient | null = null;
  */
 function getCognitoClient(): CognitoIdentityProviderClient {
   if (!cognitoClient) {
+    const authEnv = getAuthEnvironment();
     cognitoClient = new CognitoIdentityProviderClient({
-      region: process.env.COGNITO_REGION || 'us-east-1',
+      region: authEnv.region,
     });
   }
   return cognitoClient;
@@ -66,30 +70,52 @@ function validatePasswordChangeInput(input: ChangePasswordRequest): { isValid: b
  */
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   console.log('Change password request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'users:change-password' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
+    const authContext = resolveAuthorizerContext(event.requestContext?.authorizer as any);
+    if (!authContext.userId) {
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
+    }
+
     // Extract user ID from path parameters
-    const userId = event.pathParameters?.id;
-    if (!userId) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required');
+    const rawUserId = event.pathParameters?.id;
+    if (!rawUserId) {
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'User ID is required'));
+    }
+    const targetUserId = rawUserId === 'me' ? authContext.userId : rawUserId;
+    if (authContext.userId !== targetUserId) {
+      return withRateLimit(
+        createErrorResponse(403, 'PERMISSION_DENIED', 'You can only change your own password')
+      );
     }
 
     // Extract access token from Authorization header
     const accessToken = extractTokenFromHeader(event.headers.Authorization);
     if (!accessToken) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required');
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication token is required'));
     }
 
     // Parse request body
     const { data: requestBody, error: parseError } = parseRequestBody<ChangePasswordRequest>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     // Validate input
     const validation = validatePasswordChangeInput(requestBody!);
     if (!validation.isValid) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Validation failed', { fields: validation.errors });
+      return withRateLimit(
+        createErrorResponse(400, 'VALIDATION_ERROR', 'Validation failed', { fields: validation.errors })
+      );
     }
 
     const { currentPassword, newPassword } = requestBody!;
@@ -106,19 +132,22 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
         })
       );
 
-      console.log('Password changed successfully for user:', userId);
+      console.log('Password changed successfully for user:', targetUserId);
 
       const response: ChangePasswordResponse = {
         message: 'Password changed successfully',
       };
 
-      return createSuccessResponse(200, response);
+      return withRateLimit(createSuccessResponse(200, response));
     } catch (cognitoError: any) {
       console.error('Cognito password change error:', cognitoError);
-      return mapCognitoError(cognitoError);
+      return withRateLimit(mapCognitoError(cognitoError));
     }
   } catch (error: any) {
     console.error('Unexpected password change error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while changing password');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred while changing password'),
+      rateLimit
+    );
   }
 }

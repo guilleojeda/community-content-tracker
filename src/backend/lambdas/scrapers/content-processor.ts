@@ -1,13 +1,12 @@
 import { SQSEvent, Context } from 'aws-lambda';
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { CloudWatchClient, PutMetricDataCommand, StandardUnit } from '@aws-sdk/client-cloudwatch';
 import { ContentRepository } from '../../repositories/ContentRepository';
 import { UserRepository } from '../../repositories/UserRepository';
 import { ContentProcessorMessage, Visibility } from '../../../shared/types';
 import { getDatabasePool } from '../../services/database';
+import { getEmbeddingService } from '../../services/EmbeddingService';
 import { ExternalApiError, shouldRetry, formatErrorForLogging } from '../../../shared/errors';
 
-let bedrockClient: BedrockRuntimeClient | null = null;
 let cloudWatchClient: CloudWatchClient | null = null;
 
 const requireEnv = (name: string): string => {
@@ -18,27 +17,12 @@ const requireEnv = (name: string): string => {
   return value;
 };
 
-const resolveBedrockRegion = (): string => {
-  return process.env.BEDROCK_REGION || process.env.AWS_REGION || requireEnv('BEDROCK_REGION');
-};
-
 const resolveAwsRegion = (): string => {
   return process.env.AWS_REGION || process.env.BEDROCK_REGION || requireEnv('AWS_REGION');
 };
 
 const resolveEnvironment = (): string => {
   return process.env.ENVIRONMENT || process.env.NODE_ENV || requireEnv('ENVIRONMENT');
-};
-
-const getBedrockModelId = (): string => requireEnv('BEDROCK_MODEL_ID');
-
-const getBedrockClient = (): BedrockRuntimeClient => {
-  if (!bedrockClient) {
-    bedrockClient = new BedrockRuntimeClient({
-      region: resolveBedrockRegion(),
-    });
-  }
-  return bedrockClient;
 };
 
 const getCloudWatchClient = (): CloudWatchClient => {
@@ -81,44 +65,54 @@ async function publishMetric(metricName: string, value: number, unit: StandardUn
   }
 }
 
-async function generateEmbedding(text: string): Promise<number[]> {
-  try {
-    const modelId = getBedrockModelId();
-    const commandInput = {
-      modelId,
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify({
-        inputText: text,
-      }),
-    };
-    const command = new InvokeModelCommand(commandInput);
-    if (!(command as any).input) {
-      (command as any).input = commandInput;
-    }
-    const response = await getBedrockClient().send(command);
+const buildEmbeddingText = (message: ContentProcessorMessage): string => {
+  const title = message.title?.trim() || '';
+  const description = message.description?.trim() || '';
+  return `${title} ${description}`.trim();
+};
 
-    const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-    return responseBody.embedding;
-  } catch (error: any) {
-    const modelId = process.env.BEDROCK_MODEL_ID || 'unknown';
-    const bedrockError = new ExternalApiError(
-      'Bedrock',
-      `Failed to generate embedding: ${error.message}`,
-      error.$metadata?.httpStatusCode || 500,
-      {
-        modelId,
-        textLength: text.length,
-        originalError: error.message,
+async function generateEmbeddingsForTexts(texts: string[]): Promise<Map<string, number[]>> {
+  const embeddingService = getEmbeddingService();
+  const uniqueTexts = Array.from(new Set(texts.filter((text) => text.trim().length > 0)));
+
+  const results = await Promise.all(
+    uniqueTexts.map(async (text) => {
+      try {
+        const embedding = await embeddingService.generateEmbedding(text);
+        return { text, embedding };
+      } catch (error: any) {
+        const modelId = process.env.BEDROCK_MODEL_ID || 'unknown';
+        const bedrockError = new ExternalApiError(
+          'Bedrock',
+          `Failed to generate embedding: ${error.message}`,
+          error.$metadata?.httpStatusCode || 500,
+          {
+            modelId,
+            textLength: text.length,
+            originalError: error.message,
+          }
+        );
+        console.error(formatErrorForLogging(bedrockError, { modelId, context: 'batch-embedding' }));
+        return { text, embedding: [] };
       }
-    );
-    console.error(formatErrorForLogging(bedrockError, { modelId }));
-    // Return empty embedding on error to allow content to still be stored
-    return [];
-  }
+    })
+  );
+
+  return results.reduce((map, { text, embedding }) => {
+    map.set(text, embedding);
+    return map;
+  }, new Map<string, number[]>());
 }
 
-async function processContent(message: ContentProcessorMessage, contentRepository: ContentRepository, userRepository: UserRepository): Promise<void> {
+type ContentAction =
+  | { type: 'skip'; message: ContentProcessorMessage }
+  | { type: 'update'; message: ContentProcessorMessage; contentId: string; embeddingText: string }
+  | { type: 'create'; message: ContentProcessorMessage; embeddingText: string };
+
+async function planContentAction(
+  message: ContentProcessorMessage,
+  contentRepository: ContentRepository
+): Promise<ContentAction> {
   try {
     console.log(`Processing content: ${message.title} (${message.url})`);
 
@@ -135,57 +129,21 @@ async function processContent(message: ContentProcessorMessage, contentRepositor
 
         if (existingDate && messageDate <= existingDate) {
           console.log('Content has not been updated, skipping');
-          return;
+          return { type: 'skip', message };
         }
 
         // Update existing content with new embedding
-        const embeddingText = `${message.title} ${message.description || ''}`;
-        const embedding = await generateEmbedding(embeddingText);
-
-        await contentRepository.updateWithEmbedding(existingContent.id, {
-          title: message.title,
-          description: message.description,
-          publishDate: message.publishDate ? new Date(message.publishDate) : undefined,
-          embedding,
-          metadata: message.metadata,
-        });
-
-        console.log(`Updated existing content: ${existingContent.id}`);
-        return;
+        const embeddingText = buildEmbeddingText(message);
+        return { type: 'update', message, contentId: existingContent.id, embeddingText };
       }
 
       // If no publish date, skip to avoid duplicates
-      return;
+      return { type: 'skip', message };
     }
 
     // Generate embedding for new content
-    const embeddingText = `${message.title} ${message.description || ''}`;
-    const embedding = await generateEmbedding(embeddingText);
-
-    // Get user's default visibility via repository
-    const defaultVisibility = await userRepository.getDefaultVisibility(message.userId);
-
-    // Create new content
-    const content = await contentRepository.createContent({
-      userId: message.userId,
-      title: message.title,
-      description: message.description,
-      contentType: message.contentType,
-      visibility: defaultVisibility as Visibility,
-      urls: [message.url],
-      publishDate: message.publishDate ? new Date(message.publishDate) : undefined,
-      tags: [],
-    });
-
-    // Update with embedding
-    if (embedding.length > 0) {
-      await contentRepository.updateWithEmbedding(content.id, {
-        embedding,
-        metadata: message.metadata || {},
-      });
-    }
-
-    console.log(`Created new content: ${content.id}`);
+    const embeddingText = buildEmbeddingText(message);
+    return { type: 'create', message, embeddingText };
   } catch (error: any) {
     console.error(formatErrorForLogging(error, {
       userId: message.userId,
@@ -216,11 +174,13 @@ export const handler = async (
     errors: [] as string[],
   };
 
+  const plannedActions: ContentAction[] = [];
+
   for (const record of event.Records) {
     try {
       const message: ContentProcessorMessage = JSON.parse(record.body);
-      await processContent(message, contentRepository, userRepository);
-      results.processed++;
+      const action = await planContentAction(message, contentRepository);
+      plannedActions.push(action);
     } catch (error: any) {
       console.error(formatErrorForLogging(error, {
         recordId: record.messageId,
@@ -236,6 +196,89 @@ export const handler = async (
           code: error.code,
           message: error.message,
           recordId: record.messageId
+        });
+        throw error;
+      }
+    }
+  }
+
+  const embeddingTexts = plannedActions
+    .filter((action) => action.type !== 'skip')
+    .map((action) => action.embeddingText);
+  const embeddingsByText = embeddingTexts.length > 0
+    ? await generateEmbeddingsForTexts(embeddingTexts)
+    : new Map<string, number[]>();
+
+  for (const action of plannedActions) {
+    if (action.type === 'skip') {
+      results.processed++;
+      continue;
+    }
+
+    try {
+      const embedding = embeddingsByText.get(action.embeddingText) ?? [];
+
+      if (action.type === 'update') {
+        const updatePayload: {
+          title: string;
+          description?: string;
+          publishDate?: Date;
+          embedding?: number[];
+          metadata?: Record<string, any>;
+        } = {
+          title: action.message.title,
+          description: action.message.description,
+          publishDate: action.message.publishDate ? new Date(action.message.publishDate) : undefined,
+          metadata: action.message.metadata,
+        };
+
+        if (embedding.length > 0) {
+          updatePayload.embedding = embedding;
+        }
+
+        await contentRepository.updateWithEmbedding(action.contentId, updatePayload);
+        console.log(`Updated existing content: ${action.contentId}`);
+        results.processed++;
+        continue;
+      }
+
+      const defaultVisibility = await userRepository.getDefaultVisibility(action.message.userId);
+      const content = await contentRepository.createContent({
+        userId: action.message.userId,
+        title: action.message.title,
+        description: action.message.description,
+        contentType: action.message.contentType,
+        visibility: defaultVisibility as Visibility,
+        urls: [action.message.url],
+        publishDate: action.message.publishDate ? new Date(action.message.publishDate) : undefined,
+        tags: [],
+      });
+
+      if (embedding.length > 0) {
+        await contentRepository.updateWithEmbedding(content.id, {
+          embedding,
+          metadata: action.message.metadata || {},
+        });
+      }
+
+      console.log(`Created new content: ${content.id}`);
+      results.processed++;
+    } catch (error: any) {
+      console.error(formatErrorForLogging(error, {
+        userId: action.message.userId,
+        channelId: action.message.channelId,
+        url: action.message.url,
+        context: 'processContent'
+      }));
+
+      results.failed++;
+      results.errors.push(error.message || 'Unknown error');
+
+      if (shouldRetry(error)) {
+        console.error('Critical error detected - message will be sent to DLQ:', {
+          code: error.code,
+          message: error.message,
+          context: 'planned-action-processing'
         });
         throw error;
       }

@@ -15,6 +15,7 @@ import {
 } from './utils';
 import { getDatabasePool } from '../../services/database';
 import { getAuthEnvironment } from './config';
+import type { Pool } from 'pg';
 
 /**
  * API Gateway Authorizer Event
@@ -114,6 +115,8 @@ export interface AuthorizerConfig {
   tokenVerificationTimeoutMs: number;
 }
 
+let dbPool: Pool | null = null;
+
 /**
  * Load configuration from environment variables
  */
@@ -121,13 +124,21 @@ function loadConfig(): AuthorizerConfig {
   const authEnv = getAuthEnvironment();
   const allowedAudiences =
     authEnv.allowedAudiences.length > 0 ? authEnv.allowedAudiences : [authEnv.clientId];
+  const rateLimitRaw = process.env.AUTH_RATE_LIMIT_PER_MINUTE;
+  if (!rateLimitRaw || rateLimitRaw.trim().length === 0) {
+    throw new Error('AUTH_RATE_LIMIT_PER_MINUTE must be set');
+  }
+  const rateLimitPerMinute = parseInt(rateLimitRaw, 10);
+  if (Number.isNaN(rateLimitPerMinute)) {
+    throw new Error('AUTH_RATE_LIMIT_PER_MINUTE must be a valid number');
+  }
 
   return {
     cognitoUserPoolId: authEnv.userPoolId,
     cognitoRegion: authEnv.region,
     allowedAudiences,
     issuer: `https://cognito-idp.${authEnv.region}.amazonaws.com/${authEnv.userPoolId}`,
-    rateLimitPerMinute: parseInt(process.env.AUTH_RATE_LIMIT_PER_MINUTE || '1000', 10),
+    rateLimitPerMinute,
     tokenVerificationTimeoutMs: authEnv.tokenVerificationTimeoutMs,
   };
 }
@@ -203,7 +214,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     if (!methodArnValid) {
       return createUnauthorizedResponse(
         event.methodArn,
-        'INVALID_REQUEST',
+        'INTERNAL_ERROR',
         'Invalid method ARN format'
       );
     }
@@ -212,7 +223,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     if (!process.env.COGNITO_USER_POOL_ID || process.env.COGNITO_USER_POOL_ID.trim() === '') {
       return createUnauthorizedResponse(
         event.methodArn,
-        'CONFIGURATION_ERROR',
+        'INTERNAL_ERROR',
         'Missing required environment variables: COGNITO_USER_POOL_ID'
       );
     }
@@ -224,7 +235,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     } catch (configError: any) {
       return createUnauthorizedResponse(
         event.methodArn,
-        'CONFIGURATION_ERROR',
+        'INTERNAL_ERROR',
         configError.message
       );
     }
@@ -234,13 +245,14 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     if (!token) {
       return createUnauthorizedResponse(
         event.methodArn,
-        'MISSING_TOKEN',
+        'AUTH_REQUIRED',
         'Authorization header missing or malformed'
       );
     }
 
     // Setup database connection
     const pool = await getDatabasePool();
+    dbPool = pool;
     const userRepository = new UserRepository(pool);
 
     // Verify JWT token
@@ -258,7 +270,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
           resolve({
             isValid: false,
             error: {
-              code: 'NETWORK_ERROR',
+              code: 'INTERNAL_ERROR',
               message: 'Authorization timeout',
               details: 'Request took too long',
             },
@@ -270,7 +282,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
     if (!tokenResult.isValid || !tokenResult.user) {
       return createUnauthorizedResponse(
         event.methodArn,
-        tokenResult.error?.code || 'AUTHENTICATION_FAILED',
+        tokenResult.error?.code || 'AUTH_INVALID',
         tokenResult.error?.details
       );
     }
@@ -291,7 +303,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
 
       return createUnauthorizedResponse(
         event.methodArn,
-        'INSUFFICIENT_PRIVILEGES',
+        'PERMISSION_DENIED',
         'Admin privileges required for this endpoint'
       );
     }
@@ -342,7 +354,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
       // For high-risk activity, deny access
       return createUnauthorizedResponse(
         event.methodArn,
-        'SUSPICIOUS_ACTIVITY',
+        'PERMISSION_DENIED',
         'Access denied due to suspicious activity'
       );
     }
@@ -400,7 +412,7 @@ export async function handler(event: AuthorizerEvent): Promise<AuthorizerResult>
 
     return createUnauthorizedResponse(
       event.methodArn,
-      'AUTHORIZATION_ERROR',
+      'INTERNAL_ERROR',
       'Internal authorization error'
     );
   }
@@ -423,7 +435,7 @@ export async function refreshTokenHandler(event: TokenRefreshEvent) {
     return {
       success: false,
       error: {
-        code: 'REFRESH_ERROR',
+        code: 'INTERNAL_ERROR',
         message: 'Failed to refresh token',
         details: error.message,
       },

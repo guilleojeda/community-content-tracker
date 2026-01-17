@@ -11,9 +11,16 @@ jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier', () => ({
   verifyJwtToken: jest.fn(),
 }));
 
+jest.mock('../../../../src/backend/services/rateLimitPolicy', () => ({
+  applyRateLimit: jest.fn(),
+  attachRateLimitHeaders: jest.fn(),
+}));
+
 describe('Login Lambda Handler', () => {
   let pool: Pool;
   let mockCognitoClient: any;
+  let mockApplyRateLimit: jest.Mock;
+  let mockAttachRateLimitHeaders: jest.Mock;
 
   // Helper to map database user to application user (snake_case to camelCase)
   const mapDbUserToUser = (dbUser: any) => ({
@@ -52,6 +59,12 @@ describe('Login Lambda Handler', () => {
 
     const { CognitoIdentityProviderClient } = require('@aws-sdk/client-cognito-identity-provider');
     (CognitoIdentityProviderClient as jest.Mock).mockImplementation(() => mockCognitoClient);
+
+    const rateLimitPolicy = require('../../../../src/backend/services/rateLimitPolicy');
+    mockApplyRateLimit = rateLimitPolicy.applyRateLimit as jest.Mock;
+    mockAttachRateLimitHeaders = rateLimitPolicy.attachRateLimitHeaders as jest.Mock;
+    mockApplyRateLimit.mockResolvedValue(null);
+    mockAttachRateLimitHeaders.mockImplementation((response: APIGatewayProxyResult) => response);
   });
 
   const createEvent = (body: any): APIGatewayProxyEvent => ({
@@ -174,6 +187,124 @@ describe('Login Lambda Handler', () => {
       });
     });
 
+    it('uses configured allowed audiences when verifying tokens', async () => {
+      const previousAllowedAudiences = process.env.ALLOWED_AUDIENCES;
+      process.env.ALLOWED_AUDIENCES = 'aud-one,aud-two';
+
+      try {
+        const testUser = await createTestUser(pool, {
+          cognitoSub: 'cognito-sub-allowed',
+          email: 'allowed@example.com',
+          username: 'alloweduser',
+          profileSlug: 'allowed-slug',
+          isAdmin: false,
+          isAwsEmployee: false
+        });
+
+        const requestBody = {
+          email: 'allowed@example.com',
+          password: 'SecurePassword123!'
+        };
+
+        mockCognitoClient.send.mockResolvedValue({
+          AuthenticationResult: {
+            AccessToken: 'mock-access-token',
+            IdToken: 'mock-id-token',
+            RefreshToken: 'mock-refresh-token',
+            ExpiresIn: 3600
+          }
+        });
+
+        const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
+        verifyJwtToken.mockResolvedValue({
+          isValid: true,
+          user: mapDbUserToUser(testUser),
+          claims: {
+            sub: 'cognito-sub-allowed',
+            email: 'allowed@example.com'
+          }
+        });
+
+        const event = createEvent(requestBody);
+        const context = createContext();
+
+        await handler(event, context);
+
+        expect(verifyJwtToken).toHaveBeenCalledWith(
+          'mock-access-token',
+          expect.objectContaining({
+            allowedAudiences: ['aud-one', 'aud-two']
+          }),
+          expect.any(Object)
+        );
+      } finally {
+        if (previousAllowedAudiences === undefined) {
+          delete process.env.ALLOWED_AUDIENCES;
+        } else {
+          process.env.ALLOWED_AUDIENCES = previousAllowedAudiences;
+        }
+      }
+    });
+
+    it('falls back to client ID when allowed audiences are not configured', async () => {
+      const previousAllowedAudiences = process.env.ALLOWED_AUDIENCES;
+      delete process.env.ALLOWED_AUDIENCES;
+
+      try {
+        const testUser = await createTestUser(pool, {
+          cognitoSub: 'cognito-sub-default',
+          email: 'default@example.com',
+          username: 'defaultuser',
+          profileSlug: 'default-slug',
+          isAdmin: false,
+          isAwsEmployee: false
+        });
+
+        const requestBody = {
+          email: 'default@example.com',
+          password: 'SecurePassword123!'
+        };
+
+        mockCognitoClient.send.mockResolvedValue({
+          AuthenticationResult: {
+            AccessToken: 'mock-access-token',
+            IdToken: 'mock-id-token',
+            RefreshToken: 'mock-refresh-token',
+            ExpiresIn: 3600
+          }
+        });
+
+        const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
+        verifyJwtToken.mockResolvedValue({
+          isValid: true,
+          user: mapDbUserToUser(testUser),
+          claims: {
+            sub: 'cognito-sub-default',
+            email: 'default@example.com'
+          }
+        });
+
+        const event = createEvent(requestBody);
+        const context = createContext();
+
+        await handler(event, context);
+
+        expect(verifyJwtToken).toHaveBeenCalledWith(
+          'mock-access-token',
+          expect.objectContaining({
+            allowedAudiences: ['test-client-id']
+          }),
+          expect.any(Object)
+        );
+      } finally {
+        if (previousAllowedAudiences === undefined) {
+          delete process.env.ALLOWED_AUDIENCES;
+        } else {
+          process.env.ALLOWED_AUDIENCES = previousAllowedAudiences;
+        }
+      }
+    });
+
     it('should login admin user with admin privileges', async () => {
       // Create admin user in database
       const adminUser = await createTestUser(pool, {
@@ -218,6 +349,49 @@ describe('Login Lambda Handler', () => {
 
       const body = JSON.parse(result.body);
       expect(body.user.isAdmin).toBe(true);
+    });
+
+    it('should default expiresIn when Cognito does not return a value', async () => {
+      const testUser = await createTestUser(pool, {
+        cognitoSub: 'cognito-sub-124',
+        email: 'expires@example.com',
+        username: 'expiresuser',
+        profileSlug: 'expiresuser-slug',
+        isAdmin: false,
+        isAwsEmployee: false
+      });
+
+      const requestBody = {
+        email: 'expires@example.com',
+        password: 'SecurePassword123!'
+      };
+
+      mockCognitoClient.send.mockResolvedValue({
+        AuthenticationResult: {
+          AccessToken: 'mock-access-token',
+          IdToken: 'mock-id-token',
+          RefreshToken: 'mock-refresh-token'
+        }
+      });
+
+      const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
+      verifyJwtToken.mockResolvedValue({
+        isValid: true,
+        user: mapDbUserToUser(testUser),
+        claims: {
+          sub: 'cognito-sub-124',
+          email: 'expires@example.com'
+        }
+      });
+
+      const event = createEvent(requestBody);
+      const context = createContext();
+
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(200);
+      const body = JSON.parse(result.body);
+      expect(body.expiresIn).toBe(3600);
     });
 
     it('should login AWS employee with employee status', async () => {
@@ -430,7 +604,7 @@ describe('Login Lambda Handler', () => {
       verifyJwtToken.mockResolvedValue({
         isValid: false,
         error: {
-          code: 'USER_NOT_FOUND',
+          code: 'AUTH_INVALID',
           message: 'User not found in database'
         }
       });
@@ -465,7 +639,7 @@ describe('Login Lambda Handler', () => {
       verifyJwtToken.mockResolvedValue({
         isValid: false,
         error: {
-          code: 'DATABASE_ERROR',
+          code: 'INTERNAL_ERROR',
           message: 'Failed to retrieve user data'
         }
       });
@@ -512,6 +686,27 @@ describe('Login Lambda Handler', () => {
     });
   });
 
+  describe('edge cases', () => {
+    it('should return 500 when Cognito does not return authentication result', async () => {
+      const requestBody = {
+        email: 'test@example.com',
+        password: 'Password123!'
+      };
+
+      mockCognitoClient.send.mockResolvedValue({});
+
+      const event = createEvent(requestBody);
+      const context = createContext();
+
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(500);
+
+      const body = JSON.parse(result.body);
+      expect(body.error.code).toBe('INTERNAL_ERROR');
+    });
+  });
+
   describe('rate limiting', () => {
     it('should handle rate limiting errors', async () => {
       const requestBody = {
@@ -532,6 +727,31 @@ describe('Login Lambda Handler', () => {
 
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('RATE_LIMITED');
+    });
+
+    it('should reject requests when rate limit is exceeded before authentication', async () => {
+      const requestBody = {
+        email: 'rate-limited@example.com',
+        password: 'Password123!'
+      };
+
+      mockApplyRateLimit.mockResolvedValueOnce({
+        allowed: false,
+        remaining: 0,
+        reset: Date.now(),
+        limit: 1,
+        key: 'auth:login:ip:127.0.0.1',
+      });
+
+      const event = createEvent(requestBody);
+      const context = createContext();
+
+      const result = await handler(event, context) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(429);
+      const body = JSON.parse(result.body);
+      expect(body.error.code).toBe('RATE_LIMITED');
+      expect(mockCognitoClient.send).not.toHaveBeenCalled();
     });
   });
 

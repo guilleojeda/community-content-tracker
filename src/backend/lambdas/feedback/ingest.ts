@@ -2,8 +2,16 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { randomUUID } from 'crypto';
 import { buildCorsHeaders } from '../../services/cors';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 let dynamoSingleton: DynamoDBClient | null = null;
+
+const requireAwsRegion = (): string => {
+  if (!process.env.AWS_REGION || process.env.AWS_REGION.trim().length === 0) {
+    throw new Error('AWS_REGION must be set');
+  }
+  return process.env.AWS_REGION.trim();
+};
 
 const resolveDynamoClient = (): DynamoDBClient => {
   const globalClient = (globalThis as { __feedbackDynamoClient?: DynamoDBClient }).__feedbackDynamoClient;
@@ -12,7 +20,7 @@ const resolveDynamoClient = (): DynamoDBClient => {
   }
 
   if (!dynamoSingleton) {
-    dynamoSingleton = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
+    dynamoSingleton = new DynamoDBClient({ region: requireAwsRegion() });
   }
 
   return dynamoSingleton;
@@ -75,18 +83,49 @@ function parseRequest(event: APIGatewayProxyEvent): FeedbackPayload | null {
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
   const corsOptions = { origin: originHeader, methods: 'POST,OPTIONS', allowCredentials: true };
+  const rateLimit = await applyRateLimit(event, { resource: 'feedback', skipIfAuthorized: true });
+  const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+    attachRateLimitHeaders(response, rateLimit);
 
   if (event.httpMethod === 'OPTIONS') {
-    return {
+    return withRateLimit({
       statusCode: 200,
       headers: buildCorsHeaders(corsOptions),
       body: '',
-    };
+    });
+  }
+
+  if (rateLimit && !rateLimit.allowed) {
+    return withRateLimit({
+      statusCode: 429,
+      headers: buildCorsHeaders(corsOptions),
+      body: JSON.stringify({
+        error: {
+          code: 'RATE_LIMITED',
+          message: 'Too many requests',
+        },
+      }),
+    });
   }
 
   const tableName = process.env.FEEDBACK_TABLE_NAME;
-  if ((process.env.ENABLE_BETA_FEATURES ?? 'false') !== 'true') {
-    return {
+  const betaFlag = process.env.ENABLE_BETA_FEATURES;
+
+  if (!betaFlag || betaFlag.trim().length === 0) {
+    return withRateLimit({
+      statusCode: 500,
+      headers: buildCorsHeaders(corsOptions),
+      body: JSON.stringify({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'ENABLE_BETA_FEATURES must be set',
+        },
+      }),
+    });
+  }
+
+  if (betaFlag !== 'true') {
+    return withRateLimit({
       statusCode: 403,
       headers: buildCorsHeaders(corsOptions),
       body: JSON.stringify({
@@ -95,11 +134,11 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
           message: 'Beta feedback collection is disabled in this environment',
         },
       }),
-    };
+    });
   }
 
   if (!tableName) {
-    return {
+    return withRateLimit({
       statusCode: 500,
       headers: buildCorsHeaders(corsOptions),
       body: JSON.stringify({
@@ -108,12 +147,12 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
           message: 'Feedback table not configured',
         },
       }),
-    };
+    });
   }
 
   const feedback = parseRequest(event);
   if (!feedback) {
-    return {
+    return withRateLimit({
       statusCode: 400,
       headers: buildCorsHeaders(corsOptions),
       body: JSON.stringify({
@@ -122,7 +161,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
           message: 'Invalid feedback payload',
         },
       }),
-    };
+    });
   }
 
   const authorizer = event.requestContext.authorizer || {};
@@ -146,12 +185,12 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
   await resolveDynamoClient().send(item);
 
-  return {
+  return withRateLimit({
     statusCode: 202,
     headers: buildCorsHeaders(corsOptions),
     body: JSON.stringify({
       success: true,
       message: 'Feedback received',
     }),
-  };
+  });
 }

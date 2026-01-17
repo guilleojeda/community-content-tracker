@@ -185,7 +185,7 @@ aws lambda create-function \
 ```bash
 # Get database endpoint from CloudFormation
 aws cloudformation describe-stacks \
-  --stack-name CommunityTracker-Database-dev \
+  --stack-name CommunityContentHub-Database-Dev \
   --query 'Stacks[0].Outputs[?OutputKey==`DbEndpoint`].OutputValue' \
   --output text
 ```
@@ -194,8 +194,14 @@ aws cloudformation describe-stacks \
 
 ```bash
 # Get database credentials from Secrets Manager
+# Retrieve the secret ARN from SSM (created by DatabaseStack)
+SECRET_ARN=$(aws ssm get-parameter \
+  --name "/dev/database/secret-arn" \
+  --query "Parameter.Value" \
+  --output text)
+
 aws secretsmanager get-secret-value \
-  --secret-id community-tracker/dev/database \
+  --secret-id "$SECRET_ARN" \
   --query SecretString --output text
 
 # Set DATABASE_URL
@@ -245,6 +251,22 @@ cd src/infrastructure
 ./scripts/deploy.sh deploy prod
 ```
 
+### Blue/Green
+
+```bash
+# Deploy blue and green environments
+./scripts/deploy.sh deploy blue
+./scripts/deploy.sh deploy green
+
+# Deploy weighted routing for the production domain
+BLUE_GREEN_DOMAIN_NAME=app.example.com \
+BLUE_GREEN_HOSTED_ZONE_ID=Z123456ABCDEFG \
+BLUE_GREEN_HOSTED_ZONE_NAME=example.com \
+BLUE_GREEN_WEIGHT_BLUE=10 \
+BLUE_GREEN_WEIGHT_GREEN=90 \
+cdk deploy CommunityContentHub-BlueGreenRouting-Prod --context environment=prod
+```
+
 ## Post-Deployment Configuration
 
 ### 1. Update Environment Variables
@@ -252,7 +274,7 @@ cd src/infrastructure
 ```bash
 # Get stack outputs
 aws cloudformation describe-stacks \
-  --stack-name CommunityTracker-Cognito-dev \
+  --stack-name CommunityContentHub-Cognito-Dev \
   --query 'Stacks[0].Outputs'
 
 # Update .env with outputs
@@ -260,9 +282,16 @@ COGNITO_USER_POOL_ID=<UserPoolId>
 COGNITO_CLIENT_ID=<UserPoolClientId>
 API_GATEWAY_URL=<ApiEndpoint>
 # Frontend/API configuration
-NEXT_PUBLIC_API_URL=https://<api-domain>/api
+NEXT_PUBLIC_API_URL=https://<api-domain>
+NEXT_PUBLIC_SITE_URL=https://<app-domain>
+NEXT_PUBLIC_ENVIRONMENT=production
+NEXT_PUBLIC_FEEDBACK_URL=https://<app-domain>/feedback
+NEXT_PUBLIC_ENABLE_BETA_FEATURES=false
 # Comma separated list of allowed origins for API Gateway + Lambdas
 CORS_ORIGIN=https://app.awscommunityhub.org,https://beta.awscommunityhub.org
+CORS_ALLOW_HEADERS=Authorization,Content-Type
+CORS_ALLOW_METHODS=GET,POST,PUT,PATCH,DELETE,OPTIONS
+CORS_MAX_AGE=600
 ```
 
 ### 2. Configure CORS
@@ -326,7 +355,7 @@ aws logs tail /aws/apigateway/CommunityContentTracker-dev --follow
 
 ```bash
 # Access CloudWatch
-aws cloudwatch get-dashboard --dashboard-name CommunityTracker-dev
+aws cloudwatch get-dashboard --dashboard-name community-content-hub-dev-operations
 ```
 
 ### 2. X-Ray Traces
@@ -349,9 +378,9 @@ cd src/infrastructure
 cdk destroy --all --context environment=dev
 
 # Or destroy individually
-cdk destroy CommunityTracker-ApiGateway-dev --context environment=dev
-cdk destroy CommunityTracker-Cognito-dev --context environment=dev
-cdk destroy CommunityTracker-Database-dev --context environment=dev
+cdk destroy CommunityContentHub-ApiGateway-Dev --context environment=dev
+cdk destroy CommunityContentHub-Cognito-Dev --context environment=dev
+cdk destroy CommunityContentHub-Database-Dev --context environment=dev
 ```
 
 ### Local Cleanup

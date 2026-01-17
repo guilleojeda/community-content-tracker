@@ -2,11 +2,77 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { components } from '@/lib/api-client/schema';
-import { getPublicApiClient } from '@/api/client';
+import { loadPublicApiClient } from '@/lib/api/lazyClient';
+import type { ApiClient } from '@/api/client';
+import type { Content } from '@shared/types';
 
-type SearchResponse = components['schemas']['SearchResponse'];
-type ContentItem = components['schemas']['Content'];
+type SearchResponse = {
+  items?: Content[];
+  results?: Content[];
+  total: number;
+  limit?: number;
+  offset?: number;
+};
+
+type ContentItem = Content;
+
+type ApiSearchResponse = Awaited<ReturnType<ApiClient['search']>>;
+type ApiSearchItem = ApiSearchResponse['items'][number];
+
+const toDate = (value?: string | Date | null): Date | undefined => {
+  if (!value) return undefined;
+  if (value instanceof Date) return value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+};
+
+const normalizeMetrics = (value: unknown): Record<string, any> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, any>;
+  }
+  return {};
+};
+
+const normalizeUrls = (urls: ApiSearchItem['urls'] | undefined): Content['urls'] => {
+  if (!urls) return [];
+  return urls
+    .filter((url): url is { id?: string; url?: string } => Boolean(url && url.url))
+    .map((url) => ({
+      id: url.id ?? url.url!,
+      url: url.url!,
+    }));
+};
+
+const normalizeContentItem = (item: ApiSearchItem): Content => {
+  const fallbackDate =
+    toDate(item.captureDate) ?? toDate(item.createdAt) ?? toDate(item.updatedAt) ?? new Date();
+  const createdAt = toDate(item.createdAt) ?? fallbackDate;
+  const captureDate = toDate(item.captureDate) ?? createdAt;
+  const updatedAt = toDate(item.updatedAt) ?? createdAt;
+
+  return {
+    id: item.id,
+    userId: item.userId ?? item.id,
+    title: item.title,
+    description: item.description ?? undefined,
+    contentType: item.contentType as Content['contentType'],
+    visibility: item.visibility as Content['visibility'],
+    publishDate: toDate(item.publishDate),
+    captureDate,
+    metrics: normalizeMetrics(item.metrics),
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    embedding: Array.isArray((item as { embedding?: unknown }).embedding)
+      ? ((item as { embedding?: number[] }).embedding as number[])
+      : undefined,
+    isClaimed: Boolean(item.isClaimed),
+    originalAuthor: item.originalAuthor ?? undefined,
+    urls: normalizeUrls(item.urls),
+    createdAt,
+    updatedAt,
+    deletedAt: toDate((item as { deletedAt?: string | Date | null }).deletedAt),
+    version: typeof (item as { version?: number }).version === 'number' ? (item as { version?: number }).version! : 1,
+  };
+};
 
 function SearchContent() {
   const searchParams = useSearchParams();
@@ -76,13 +142,28 @@ function SearchContent() {
       if (options?.tags) params.tags = options.tags;
       if (options?.badges) params.badges = options.badges;
 
-      const client = getPublicApiClient();
-      const data: SearchResponse = await client.search(params as any);
+      const client = await loadPublicApiClient();
+      const data: ApiSearchResponse = await client.search(params as any);
 
       // Normalize response to handle both 'items' and 'results' array formats
+      const raw = data as unknown as {
+        items?: ApiSearchItem[];
+        results?: ApiSearchItem[];
+        total?: number;
+        limit?: number;
+        offset?: number;
+      };
+      const rawItems = Array.isArray(raw.items)
+        ? raw.items
+        : Array.isArray(raw.results)
+          ? raw.results
+          : [];
+      const mappedItems = rawItems.map((item) => normalizeContentItem(item));
       const normalizedData: SearchResponse = {
-        ...data,
-        items: (data as any).items ?? (data as any).results ?? [],
+        total: typeof raw.total === 'number' ? raw.total : mappedItems.length,
+        limit: typeof raw.limit === 'number' ? raw.limit : resultsPerPage,
+        offset: typeof raw.offset === 'number' ? raw.offset : offset,
+        items: mappedItems,
       };
 
       const publicOnly = (normalizedData.items ?? []).filter(

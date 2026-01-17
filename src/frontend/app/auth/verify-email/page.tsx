@@ -3,7 +3,7 @@
 import React, { useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { VerifyEmailRequest, VerifyEmailResponse } from '@aws-community-hub/shared';
-import { getPublicApiClient } from '@/api/client';
+import { loadPublicApiClient } from '@/lib/api/lazyClient';
 
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
@@ -33,7 +33,7 @@ function VerifyEmailContent() {
     setLoading(true);
 
     try {
-      const client = getPublicApiClient();
+      const client = await loadPublicApiClient();
       const requestBody: VerifyEmailRequest = {
         email,
         confirmationCode: code,
@@ -57,7 +57,7 @@ function VerifyEmailContent() {
     setResendLoading(true);
 
     try {
-      const client = getPublicApiClient();
+      const client = await loadPublicApiClient();
       await client.resendVerification({ email });
 
       setResendMessage('Verification email sent! Please check your inbox.');

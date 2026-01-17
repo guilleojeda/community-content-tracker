@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { getDatabasePool } from '../../services/database';
 import { buildCorsHeaders } from '../../services/cors';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * GET /stats - Get platform statistics
@@ -25,8 +26,26 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     ...buildCorsHeaders({ origin: originHeader, methods: 'GET,OPTIONS' }),
     'Content-Type': 'application/json',
   };
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'stats:summary', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit({
+        statusCode: 429,
+        headers,
+        body: JSON.stringify({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Too many requests',
+          },
+        }),
+      });
+    }
+
     // Get database connection
     const pool = await getDatabasePool();
 
@@ -89,7 +108,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const topContributors = parseInt(topContributorsResult.rows[0]?.count || '0', 10);
 
     // Return statistics
-    return {
+    return withRateLimit({
       statusCode: 200,
       headers,
       body: JSON.stringify({
@@ -99,11 +118,11 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         recentActivity,
         topContributors
       })
-    };
+    });
   } catch (error: any) {
     console.error('Stats retrieval error:', error);
 
-    return {
+    return attachRateLimitHeaders({
       statusCode: 500,
       headers,
       body: JSON.stringify({
@@ -112,6 +131,6 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
           message: 'Failed to retrieve statistics'
         }
       })
-    };
+    }, rateLimit);
   }
 };

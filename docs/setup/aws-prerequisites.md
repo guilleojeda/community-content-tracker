@@ -23,7 +23,7 @@ The project uses the following AWS services:
 
 #### Database
 - **Amazon RDS** (PostgreSQL): Primary database
-- **Amazon ElastiCache** (Redis): Caching layer
+- **Amazon ElastiCache Serverless** (Valkey): Caching layer
 
 #### Security & Access
 - **AWS IAM**: Identity and access management
@@ -167,9 +167,8 @@ DB_NAME=contenthub
 DB_USER=contentuser
 DB_PASSWORD=your-secure-password
 
-# Redis Configuration (will be created by CDK)
-REDIS_HOST=localhost
-REDIS_PORT=6379
+# Cache Configuration (will be created by CDK)
+REDIS_URL=redis://localhost:6379
 
 # S3 Bucket Names (will be created by CDK)
 CONTENT_BUCKET_NAME=community-content-hub-content-dev
@@ -196,16 +195,16 @@ SECRETS_MANAGER_SECRET_NAME=community-content-hub/dev/secrets
 | Service | Estimated Monthly Cost |
 |---------|----------------------|
 | RDS (db.t3.micro) | $15-25 |
-| ElastiCache (cache.t3.micro) | $10-15 |
+| ElastiCache Serverless (Valkey) | Varies (usage-based) |
 | Lambda (light usage) | $0-5 |
 | S3 (development files) | $1-5 |
 | CloudFront | $0-2 |
 | NAT Gateway | $30-45 |
-| **Total Estimated** | **$56-97** |
+| **Total Estimated** | **Varies** |
 
 ### Cost Optimization Tips
 
-1. **Use t3.micro instances** for development
+1. **Use minimal database capacity** for development
 2. **Enable auto-scaling** to scale down during off-hours
 3. **Set up billing alerts** to monitor costs
 4. **Use AWS Free Tier** when available

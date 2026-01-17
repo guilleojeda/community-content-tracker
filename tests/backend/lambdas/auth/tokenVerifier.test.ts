@@ -17,15 +17,7 @@ import { BadgeType, User, Visibility } from '../../../../src/shared/types';
 // Mock dependencies
 jest.mock('jsonwebtoken');
 jest.mock('../../../../src/backend/repositories/UserRepository');
-jest.mock('aws-sdk', () => {
-  const initiateAuth = jest.fn().mockReturnValue({ promise: jest.fn() });
-  return {
-    CognitoIdentityServiceProvider: jest.fn(() => ({
-      getUser: jest.fn(),
-      initiateAuth,
-    })),
-  };
-});
+jest.mock('@aws-sdk/client-cognito-identity-provider');
 
 const mockJwt = jwt as jest.Mocked<typeof jwt>;
 const MockUserRepository = UserRepository as jest.MockedClass<typeof UserRepository>;
@@ -33,6 +25,7 @@ const MockUserRepository = UserRepository as jest.MockedClass<typeof UserReposit
 describe('TokenVerifier Lambda', () => {
   let mockUserRepository: jest.Mocked<UserRepository>;
   let mockPool: jest.Mocked<Pool>;
+  let mockCognitoClient: { send: jest.Mock };
   let config: TokenVerifierConfig;
 
   const validUser: User = {
@@ -81,6 +74,10 @@ describe('TokenVerifier Lambda', () => {
 
     mockUserRepository = new MockUserRepository(mockPool, 'users') as jest.Mocked<UserRepository>;
     MockUserRepository.mockImplementation(() => mockUserRepository);
+
+    mockCognitoClient = { send: jest.fn() };
+    const { CognitoIdentityProviderClient } = require('@aws-sdk/client-cognito-identity-provider');
+    (CognitoIdentityProviderClient as jest.Mock).mockImplementation(() => mockCognitoClient);
 
     config = {
       cognitoUserPoolId: 'us-east-1_test',
@@ -152,7 +149,7 @@ describe('TokenVerifier Lambda', () => {
       expect(result.user).toBeUndefined();
       expect(result.claims).toBeUndefined();
       expect(result.error).toEqual({
-        code: 'TOKEN_EXPIRED',
+        code: 'AUTH_INVALID',
         message: 'Token has expired',
         details: 'jwt expired',
       });
@@ -176,7 +173,7 @@ describe('TokenVerifier Lambda', () => {
       // Assert
       expect(result.isValid).toBe(false);
       expect(result.error).toEqual({
-        code: 'INVALID_TOKEN',
+        code: 'AUTH_INVALID',
         message: 'Token is invalid or malformed',
         details: 'invalid token',
       });
@@ -200,7 +197,7 @@ describe('TokenVerifier Lambda', () => {
       // Assert
       expect(result.isValid).toBe(false);
       expect(result.error).toEqual({
-        code: 'INVALID_TOKEN',
+        code: 'AUTH_INVALID',
         message: 'Token is invalid or malformed',
         details: 'invalid signature',
       });
@@ -227,7 +224,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('INVALID_TOKEN');
+      expect(result.error?.code).toBe('AUTH_INVALID');
     });
 
     test('should reject token with invalid issuer', async () => {
@@ -247,7 +244,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('INVALID_TOKEN');
+      expect(result.error?.code).toBe('AUTH_INVALID');
     });
 
 
@@ -258,8 +255,8 @@ describe('TokenVerifier Lambda', () => {
       // Assert
       expect(result.isValid).toBe(false);
       expect(result.error).toEqual({
-        code: 'MISSING_TOKEN',
-        message: 'Token is required',
+        code: 'AUTH_REQUIRED',
+        message: 'Authentication token is required',
         details: 'No token provided',
       });
     });
@@ -270,7 +267,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('MISSING_TOKEN');
+      expect(result.error?.code).toBe('AUTH_REQUIRED');
     });
   });
 
@@ -339,7 +336,7 @@ describe('TokenVerifier Lambda', () => {
       // Assert
       expect(result.isValid).toBe(false);
       expect(result.error).toEqual({
-        code: 'USER_NOT_FOUND',
+        code: 'AUTH_INVALID',
         message: 'User not found in database',
         details: 'Cognito user exists but not found in application database',
       });
@@ -361,7 +358,7 @@ describe('TokenVerifier Lambda', () => {
       // Assert
       expect(result.isValid).toBe(false);
       expect(result.error).toEqual({
-        code: 'DATABASE_ERROR',
+        code: 'INTERNAL_ERROR',
         message: 'Failed to retrieve user data',
         details: 'Database connection failed',
       });
@@ -388,7 +385,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('INVALID_TOKEN_USE');
+      expect(result.error?.code).toBe('AUTH_INVALID');
     });
 
     test('should validate email_verified claim', async () => {
@@ -410,7 +407,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('EMAIL_NOT_VERIFIED');
+      expect(result.error?.code).toBe('AUTH_INVALID');
     });
 
     test('should handle missing required claims', async () => {
@@ -432,7 +429,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('INVALID_CLAIMS');
+      expect(result.error?.code).toBe('AUTH_INVALID');
     });
   });
 
@@ -449,7 +446,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('VERIFICATION_ERROR');
+      expect(result.error?.code).toBe('INTERNAL_ERROR');
     });
 
     test('should handle network timeout errors', async () => {
@@ -471,7 +468,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('NETWORK_ERROR');
+      expect(result.error?.code).toBe('INTERNAL_ERROR');
     });
 
     test('should handle malformed configuration', async () => {
@@ -487,7 +484,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('INVALID_CONFIG');
+      expect(result.error?.code).toBe('INTERNAL_ERROR');
     });
   });
 
@@ -501,7 +498,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('INVALID_TOKEN');
+      expect(result.error?.code).toBe('AUTH_INVALID');
     });
 
     test('should handle concurrent verification requests', async () => {
@@ -546,7 +543,7 @@ describe('TokenVerifier Lambda', () => {
 
       // Assert
       expect(result.isValid).toBe(false);
-      expect(result.error?.code).toBe('INVALID_TOKEN');
+      expect(result.error?.code).toBe('AUTH_INVALID');
     });
   });
 
@@ -589,23 +586,14 @@ describe('TokenVerifier Lambda', () => {
   });
 
   describe('handleTokenRefresh', () => {
-    const awsSdk = require('aws-sdk');
-
     test('should return refreshed tokens from Cognito', async () => {
-      const initiateAuth = jest.fn().mockReturnValue({
-        promise: jest.fn().mockResolvedValue({
-          AuthenticationResult: {
-            AccessToken: 'access-token',
-            IdToken: 'id-token',
-            ExpiresIn: 3600,
-          },
-        }),
+      mockCognitoClient.send.mockResolvedValue({
+        AuthenticationResult: {
+          AccessToken: 'access-token',
+          IdToken: 'id-token',
+          ExpiresIn: 3600,
+        },
       });
-
-      awsSdk.CognitoIdentityServiceProvider.mockImplementation(() => ({
-        getUser: jest.fn(),
-        initiateAuth,
-      }));
 
       const result = await handleTokenRefresh({
         clientId: 'client-id',
@@ -614,18 +602,11 @@ describe('TokenVerifier Lambda', () => {
 
       expect(result.success).toBe(true);
       expect(result.accessToken).toBe('access-token');
-      expect(initiateAuth).toHaveBeenCalled();
+      expect(mockCognitoClient.send).toHaveBeenCalled();
     });
 
     test('should handle missing authentication result', async () => {
-      const initiateAuth = jest.fn().mockReturnValue({
-        promise: jest.fn().mockResolvedValue({}),
-      });
-
-      awsSdk.CognitoIdentityServiceProvider.mockImplementation(() => ({
-        getUser: jest.fn(),
-        initiateAuth,
-      }));
+      mockCognitoClient.send.mockResolvedValue({});
 
       const result = await handleTokenRefresh({
         clientId: 'client-id',
@@ -633,18 +614,11 @@ describe('TokenVerifier Lambda', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('REFRESH_FAILED');
+      expect(result.error?.code).toBe('INTERNAL_ERROR');
     });
 
-    test('should map Cognito errors to REFRESH_ERROR', async () => {
-      const initiateAuth = jest.fn().mockReturnValue({
-        promise: jest.fn().mockRejectedValue(new Error('Cognito unavailable')),
-      });
-
-      awsSdk.CognitoIdentityServiceProvider.mockImplementation(() => ({
-        getUser: jest.fn(),
-        initiateAuth,
-      }));
+    test('should map Cognito errors to INTERNAL_ERROR', async () => {
+      mockCognitoClient.send.mockRejectedValue(new Error('Cognito unavailable'));
 
       const result = await handleTokenRefresh({
         clientId: 'client-id',
@@ -652,7 +626,7 @@ describe('TokenVerifier Lambda', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('REFRESH_ERROR');
+      expect(result.error?.code).toBe('INTERNAL_ERROR');
       expect(result.error?.details).toBe('Cognito unavailable');
     });
   });

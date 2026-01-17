@@ -29,6 +29,7 @@ describe('Debug Template Output', () => {
     const app = new cdk.App();
     const stack = new DatabaseStack(app, 'TestDbStack', {
       environment: 'dev',
+      databaseName: 'community_content',
       deletionProtection: false,
     });
     

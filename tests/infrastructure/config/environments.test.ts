@@ -9,7 +9,7 @@ describe('getEnvironmentConfig', () => {
     expect(blue.lambda.environmentVariables.NODE_ENV).toBe('blue');
     expect(green.lambda.environmentVariables.NODE_ENV).toBe('green');
     expect(blue.lambda.tracing).toBe('Active');
-    expect(green.cognito.advancedSecurityMode).toBe('ENFORCED');
+    expect(green.cognito.standardThreatProtectionMode).toBe('ENFORCED');
     expect(prod.lambda.memorySize).toBe(blue.lambda.memorySize);
     expect(prod.lambda.memorySize).toBe(green.lambda.memorySize);
     expect(blue.tags?.DeploymentColor).toBe('blue');

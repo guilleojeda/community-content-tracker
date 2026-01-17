@@ -1,5 +1,6 @@
 import { SQSEvent, SQSRecord, Context } from 'aws-lambda';
 import { ContentProcessorMessage, ContentType } from '../../../../src/shared/types';
+import { getEmbeddingService } from '../../../../src/backend/services/EmbeddingService';
 
 // Mock database pool FIRST
 const mockPool = {
@@ -37,17 +38,12 @@ jest.mock('../../../../src/backend/repositories/ContentRepository', () => {
 
 
 // Create mock functions for AWS services
-const mockBedrockSend = jest.fn();
+const mockGenerateEmbedding = jest.fn();
 const mockCloudWatchSend = jest.fn();
 
-jest.mock('@aws-sdk/client-bedrock-runtime', () => {
-  return {
-    BedrockRuntimeClient: jest.fn().mockImplementation(() => ({
-      send: mockBedrockSend,
-    })),
-    InvokeModelCommand: jest.fn().mockImplementation((input) => ({ input })),
-  };
-});
+jest.mock('../../../../src/backend/services/EmbeddingService', () => ({
+  getEmbeddingService: jest.fn(),
+}));
 
 jest.mock('@aws-sdk/client-cloudwatch', () => {
   return {
@@ -76,12 +72,11 @@ jest.mock('pg', () => ({
 import { handler } from '../../../../src/backend/lambdas/scrapers/content-processor';
 import { ContentRepository } from '../../../../src/backend/repositories/ContentRepository';
 import { UserRepository } from '../../../../src/backend/repositories/UserRepository';
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 
 const mockContentRepository = ContentRepository as jest.MockedClass<typeof ContentRepository>;
-const mockBedrockClient = BedrockRuntimeClient as jest.MockedClass<typeof BedrockRuntimeClient>;
 const mockCloudWatchClient = CloudWatchClient as jest.MockedClass<typeof CloudWatchClient>;
+const mockGetEmbeddingService = getEmbeddingService as jest.Mock;
 
 // Access the mock methods from the mocked class
 const mockFindByUrl = (mockContentRepository as any).mockFindByUrl;
@@ -95,9 +90,10 @@ describe('Content Processor Lambda', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockContext = {} as Context;
-    mockBedrockClient.mockImplementation(() => ({
-      send: mockBedrockSend,
-    }));
+    mockGenerateEmbedding.mockReset();
+    mockGetEmbeddingService.mockReturnValue({
+      generateEmbedding: mockGenerateEmbedding,
+    });
     mockCloudWatchClient.mockImplementation(() => ({
       send: mockCloudWatchSend,
     }));
@@ -157,9 +153,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: mockEmbedding })),
-      });
+      mockGenerateEmbedding.mockResolvedValue(mockEmbedding);
       mockCreateContent.mockResolvedValue(mockContent);
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -168,7 +162,7 @@ describe('Content Processor Lambda', () => {
       await handler(event, mockContext);
 
       expect(mockFindByUrl).toHaveBeenCalledWith(message.url);
-      expect(mockBedrockSend).toHaveBeenCalledWith(expect.any(InvokeModelCommand));
+      expect(mockGenerateEmbedding).toHaveBeenCalledWith('Test Blog Post This is a test description');
       expect(mockCreateContent).toHaveBeenCalledWith({
         userId: message.userId,
         title: message.title,
@@ -196,9 +190,7 @@ describe('Content Processor Lambda', () => {
 
       mockFindByUrl.mockResolvedValue(null);
       defaultVisibilitySpy.mockResolvedValueOnce('public');
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1, 0.2] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1, 0.2]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -223,9 +215,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -250,7 +240,7 @@ describe('Content Processor Lambda', () => {
       };
 
       mockFindByUrl.mockResolvedValue(null);
-      mockBedrockSend.mockRejectedValue(new Error('Bedrock error'));
+      mockGenerateEmbedding.mockRejectedValue(new Error('Bedrock error'));
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockCloudWatchSend.mockResolvedValue({});
 
@@ -284,9 +274,7 @@ describe('Content Processor Lambda', () => {
       const mockEmbedding = [0.5, 0.6];
 
       mockFindByUrl.mockResolvedValue(existingContent);
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: mockEmbedding })),
-      });
+      mockGenerateEmbedding.mockResolvedValue(mockEmbedding);
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
 
@@ -327,7 +315,7 @@ describe('Content Processor Lambda', () => {
 
       expect(mockUpdateWithEmbedding).not.toHaveBeenCalled();
       expect(mockCreateContent).not.toHaveBeenCalled();
-      expect(mockBedrockSend).not.toHaveBeenCalled();
+      expect(mockGenerateEmbedding).not.toHaveBeenCalled();
     });
 
     it('should skip duplicate content without publishDate', async () => {
@@ -371,9 +359,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1, 0.2, 0.3] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -381,15 +367,10 @@ describe('Content Processor Lambda', () => {
       const event = createEvent([message]);
       await handler(event, mockContext);
 
-      // Verify Bedrock was called
-      expect(mockBedrockSend).toHaveBeenCalled();
+      // Verify embedding generation was called
+      expect(mockGenerateEmbedding).toHaveBeenCalled();
 
-      // Check the command passed to send()
-      const bedrockCommand = mockBedrockSend.mock.calls[0][0];
-      expect(bedrockCommand.input.modelId).toBe('amazon.titan-embed-text-v1');
-
-      const requestBody = JSON.parse(bedrockCommand.input.body);
-      expect(requestBody.inputText).toBe('Amazing Post With detailed content');
+      expect(mockGenerateEmbedding).toHaveBeenCalledWith('Amazing Post With detailed content');
     });
 
     it('should handle empty embedding response', async () => {
@@ -405,9 +386,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockCloudWatchSend.mockResolvedValue({});
 
@@ -430,7 +409,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockRejectedValue(new Error('BEDROCK service unavailable'));
+      mockGenerateEmbedding.mockRejectedValue(new Error('BEDROCK service unavailable'));
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockCloudWatchSend.mockResolvedValue({});
 
@@ -456,9 +435,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -493,9 +470,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockRejectedValue(new Error('CloudWatch error'));
@@ -584,9 +559,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -628,9 +601,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1, 0.2, 0.3] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -640,7 +611,7 @@ describe('Content Processor Lambda', () => {
 
       expect(mockFindByUrl).toHaveBeenCalledTimes(3);
       expect(mockCreateContent).toHaveBeenCalledTimes(3);
-      expect(mockBedrockSend).toHaveBeenCalledTimes(3);
+      expect(mockGenerateEmbedding).toHaveBeenCalledTimes(3);
     });
 
     it('should report correct metrics for batch processing', async () => {
@@ -676,9 +647,7 @@ describe('Content Processor Lambda', () => {
       mockPool.query.mockResolvedValue({
         rows: [{ default_visibility: 'private' }],
       });
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});
@@ -738,9 +707,7 @@ describe('Content Processor Lambda', () => {
 
       mockFindByUrl.mockResolvedValue(null);
       mockPool.query.mockResolvedValue({ rows: [] }); // No user found
-      mockBedrockSend.mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify({ embedding: [0.1] })),
-      });
+      mockGenerateEmbedding.mockResolvedValue([0.1]);
       mockCreateContent.mockResolvedValue({ id: 'content-1' });
       mockUpdateWithEmbedding.mockResolvedValue({});
       mockCloudWatchSend.mockResolvedValue({});

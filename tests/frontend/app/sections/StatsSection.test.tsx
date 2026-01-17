@@ -39,4 +39,26 @@ describe('StatsSection', () => {
     expect(screen.getByText(/Content Pieces/i)).toBeInTheDocument();
     expect(screen.getByText(/Registered Users/i)).toBeInTheDocument();
   });
+
+  it('renders zero fallbacks when aggregate stats are missing', () => {
+    const stats = {
+      ...baseStats,
+      topContributors: undefined,
+      totalContent: undefined,
+      totalUsers: undefined,
+      recentActivity: undefined,
+    } as any;
+
+    render(<StatsSection stats={stats} loading={false} />);
+
+    const contributorsValue = screen.getByText(/Contributors/i).previousSibling as HTMLElement;
+    const contentValue = screen.getByText(/Content Pieces/i).previousSibling as HTMLElement;
+    const hoursValue = screen.getByText(/Last 24 Hours/i).previousSibling as HTMLElement;
+    const usersValue = screen.getByText(/Registered Users/i).previousSibling as HTMLElement;
+
+    expect(contributorsValue).toHaveTextContent('0+');
+    expect(contentValue).toHaveTextContent('0+');
+    expect(hoursValue).toHaveTextContent('0+');
+    expect(usersValue).toHaveTextContent('0+');
+  });
 });

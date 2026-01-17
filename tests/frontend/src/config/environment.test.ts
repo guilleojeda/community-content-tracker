@@ -10,6 +10,7 @@ describe('Client Environment Configuration', () => {
     jest.resetModules();
     process.env = { ...originalEnv };
     process.env.NEXT_PUBLIC_AWS_REGION = 'us-east-1';
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://example.com';
     resetClientEnvironmentCache();
   });
 
@@ -24,6 +25,7 @@ describe('Client Environment Configuration', () => {
     describe('successful configuration', () => {
       it('should parse valid environment variables', () => {
         process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com';
+        process.env.NEXT_PUBLIC_SITE_URL = 'https://site.example.com';
         process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = 'us-east-1_abc123';
         process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = '1234567890abcdef';
         process.env.NEXT_PUBLIC_AWS_REGION = 'us-west-2';
@@ -32,6 +34,7 @@ describe('Client Environment Configuration', () => {
 
         expect(config).toEqual({
           NEXT_PUBLIC_API_URL: 'https://api.example.com',
+          NEXT_PUBLIC_SITE_URL: 'https://site.example.com',
           NEXT_PUBLIC_COGNITO_USER_POOL_ID: 'us-east-1_abc123',
           NEXT_PUBLIC_COGNITO_CLIENT_ID: '1234567890abcdef',
           NEXT_PUBLIC_AWS_REGION: 'us-west-2',

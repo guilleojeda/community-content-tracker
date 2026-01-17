@@ -47,6 +47,234 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get current user profile
+         * @description Returns the authenticated user's profile and preferences.
+         */
+        get: operations["getCurrentUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/badges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get badges for current user
+         * @description Returns the badges associated with the authenticated user.
+         */
+        get: operations["getCurrentUserBadges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/username/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user by username
+         * @description Returns the public profile for the requested username.
+         */
+        get: operations["getUserByUsername"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/badges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user badges
+         * @description Returns badges for the specified user. Use `me` to reference the authenticated user.
+         */
+        get: operations["getUserBadges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user content
+         * @description Returns content belonging to the specified user, filtered by visibility rules. Use `me` to reference the authenticated user.
+         */
+        get: operations["getUserContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete user account (right to erasure)
+         * @description Permanently deletes the authenticated user's account, associated content, and Cognito identity.
+         */
+        delete: operations["deleteAccount"];
+        options?: never;
+        head?: never;
+        /**
+         * Update user profile (right to rectification)
+         * @description Allows authenticated users to update their own profile details including contact preferences and social links.
+         */
+        patch: operations["updateUserProfile"];
+        trace?: never;
+    };
+    "/users/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export user data (GDPR data portability)
+         * @description Returns a full JSON export of the authenticated user's data, including content, channels, badges, consents, and relationships.
+         */
+        get: operations["exportUserData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update email and notification preferences
+         * @description Enables users to update their communication preferences for newsletters and community notifications.
+         */
+        patch: operations["updateUserPreferences"];
+        trace?: never;
+    };
+    "/user/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Retrieve consent status for all categories
+         * @description Returns the current consent decisions for the authenticated user.
+         */
+        get: operations["getConsentStatus"];
+        put?: never;
+        /**
+         * Grant or revoke user consent
+         * @description Records the user's consent decision for analytics, functional, or marketing categories.
+         */
+        post: operations["manageConsent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/user/consent/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check whether a user has granted consent
+         * @description Internal helper to verify if a specific consent type is granted for the current user.
+         */
+        post: operations["checkUserConsent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit beta feedback
+         * @description Stores feedback submitted by beta participants. Requires beta features to be enabled.
+         */
+        post: operations["submitFeedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -209,22 +437,274 @@ export interface components {
                  * @example VALIDATION_ERROR
                  * @enum {string}
                  */
-                code: "VALIDATION_ERROR" | "AUTHENTICATION_ERROR" | "AUTHORIZATION_ERROR" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMITED" | "INTERNAL_ERROR";
+                code: "AUTH_REQUIRED" | "AUTH_INVALID" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "DUPLICATE_RESOURCE" | "RATE_LIMITED" | "INTERNAL_ERROR";
                 /**
                  * @description Human-readable error message
                  * @example Missing required query parameter: q
                  */
                 message: string;
-                /**
-                 * @description Field that caused the error (if applicable)
-                 * @example q
-                 */
-                field?: string;
                 /** @description Additional error details */
                 details?: {
                     [key: string]: unknown;
                 };
             };
+        };
+        SocialLinks: {
+            /** Format: uri */
+            twitter?: string;
+            /** Format: uri */
+            linkedin?: string;
+            /** Format: uri */
+            github?: string;
+            /** Format: uri */
+            website?: string;
+        };
+        User: {
+            /** Format: uuid */
+            id: string;
+            cognitoSub: string;
+            /** Format: email */
+            email: string;
+            username: string;
+            profileSlug: string;
+            bio?: string | null;
+            socialLinks?: components["schemas"]["SocialLinks"];
+            /** @enum {string} */
+            defaultVisibility: "public" | "aws_community" | "aws_only" | "private";
+            isAdmin: boolean;
+            isAwsEmployee: boolean;
+            mfaEnabled?: boolean;
+            receiveNewsletter?: boolean;
+            receiveContentNotifications?: boolean;
+            receiveCommunityUpdates?: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        UserLookupResponse: {
+            user: components["schemas"]["User"];
+        };
+        UserBadgesResponse: {
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            badgeCount: number;
+            badges: components["schemas"]["Badge"][];
+        };
+        UserContentResponse: {
+            content: components["schemas"]["Content"][];
+            total: number;
+        };
+        UserProfile: {
+            /** Format: uuid */
+            id: string;
+            /** Format: email */
+            email: string;
+            username: string;
+            profileSlug: string;
+            bio?: string | null;
+            /** @enum {string} */
+            defaultVisibility: "public" | "aws_community" | "aws_only" | "private";
+            /** @description Social link profiles */
+            socialLinks: components["schemas"]["SocialLinks"];
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @example {
+         *       "email": "builder@example.com",
+         *       "username": "aws_builder",
+         *       "bio": "Serverless enthusiast",
+         *       "defaultVisibility": "aws_community",
+         *       "socialLinks": {
+         *         "twitter": "https://twitter.com/aws_builder"
+         *       }
+         *     } */
+        UpdateUserProfileRequest: {
+            /** Format: email */
+            email?: string;
+            username?: string;
+            bio?: string;
+            /** @enum {string} */
+            defaultVisibility?: "public" | "aws_community" | "aws_only" | "private";
+            socialLinks?: {
+                /** Format: uri */
+                twitter?: string;
+                /** Format: uri */
+                linkedin?: string;
+                /** Format: uri */
+                github?: string;
+                /** Format: uri */
+                website?: string;
+            };
+        };
+        UpdateUserProfileResponse: {
+            /** @example Profile updated successfully */
+            message: string;
+            user: components["schemas"]["UserProfile"];
+        };
+        DeleteAccountResponse: {
+            /** @example Account deleted successfully */
+            message: string;
+        };
+        /** @example {
+         *       "receiveNewsletter": true,
+         *       "receiveContentNotifications": false,
+         *       "receiveCommunityUpdates": true
+         *     } */
+        UpdatePreferencesRequest: {
+            receiveNewsletter?: boolean;
+            receiveContentNotifications?: boolean;
+            receiveCommunityUpdates?: boolean;
+        };
+        UpdatePreferencesResponse: {
+            /** @example Preferences updated successfully */
+            message: string;
+        };
+        Badge: {
+            /** Format: uuid */
+            id?: string;
+            /** @enum {string} */
+            badgeType?: "community_builder" | "hero" | "ambassador" | "user_group_leader";
+            /** Format: date-time */
+            awardedAt?: string;
+            awardedBy?: string | null;
+            awardedReason?: string | null;
+            metadata?: {
+                [key: string]: unknown;
+            };
+            isActive?: boolean;
+            /** Format: date-time */
+            revokedAt?: string | null;
+        };
+        Channel: {
+            /** Format: uuid */
+            id?: string;
+            channelType?: string;
+            /** Format: uri */
+            url?: string;
+            name?: string | null;
+            enabled?: boolean;
+            /** Format: date-time */
+            lastSyncAt?: string | null;
+            lastSyncStatus?: string | null;
+            syncFrequency?: string;
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        ContentBookmark: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            contentId?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        UserFollowEdge: {
+            /** Format: uuid */
+            followerId?: string;
+            /** Format: uuid */
+            followingId?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        UserConsentRecord: {
+            /** @enum {string} */
+            consentType?: "analytics" | "functional" | "marketing";
+            granted?: boolean;
+            /** Format: date-time */
+            grantedAt?: string | null;
+            /** Format: date-time */
+            revokedAt?: string | null;
+            consentVersion?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        /** @description Comprehensive GDPR export for a user */
+        UserDataExport: {
+            user: components["schemas"]["UserProfile"];
+            content: components["schemas"]["Content"][];
+            badges: components["schemas"]["Badge"][];
+            channels: components["schemas"]["Channel"][];
+            bookmarks: components["schemas"]["ContentBookmark"][];
+            follows: {
+                following?: components["schemas"]["UserFollowEdge"][];
+                followers?: components["schemas"]["UserFollowEdge"][];
+            };
+            consents: components["schemas"]["UserConsentRecord"][];
+            /** Format: date-time */
+            exportDate: string;
+        };
+        ConsentRequest: {
+            /** @enum {string} */
+            consentType: "analytics" | "functional" | "marketing";
+            granted: boolean;
+            /** @example 1.0 */
+            consentVersion?: string;
+        };
+        ConsentResponse: {
+            /** @example true */
+            success: boolean;
+            /** @example Consent granted */
+            message: string;
+            data: {
+                consentType?: string;
+                granted?: boolean;
+                /** Format: date-time */
+                grantedAt?: string | null;
+                /** Format: date-time */
+                revokedAt?: string | null;
+                consentVersion?: string;
+            };
+        };
+        ConsentStatusResponse: {
+            success: boolean;
+            data: {
+                [key: string]: components["schemas"]["UserConsentRecord"];
+            };
+        };
+        /** @example {
+         *       "consentType": "analytics"
+         *     } */
+        ConsentCheckRequest: {
+            /** @enum {string} */
+            consentType?: "analytics" | "functional" | "marketing";
+        };
+        ConsentCheckResponse: {
+            success: boolean;
+            data: {
+                hasConsent: boolean;
+                consentType: string;
+                /** @example consent_not_granted */
+                reason: string;
+            };
+        };
+        /** @example {
+         *       "category": "bug",
+         *       "severity": "p1",
+         *       "message": "Export button throws an error when clicked.",
+         *       "contact": "tester@example.com",
+         *       "metadata": {
+         *         "page": "/dashboard"
+         *       }
+         *     } */
+        FeedbackRequest: {
+            /** @enum {string} */
+            category: "bug" | "feature_request" | "usability" | "other";
+            /** @enum {string} */
+            severity: "p0" | "p1" | "p2" | "p3" | "p4";
+            message: string;
+            contact?: string | null;
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        FeedbackAcceptedResponse: {
+            /** @example true */
+            success: boolean;
+            /** @example Feedback received */
+            message: string;
         };
     };
     responses: never;
@@ -244,12 +724,16 @@ export interface operations {
                 limit?: number;
                 /** @description Pagination offset */
                 offset?: number;
+                /** @description Sort order for search results */
+                sortBy?: "relevance" | "date";
                 /** @description Filter by content types (comma-separated) */
                 type?: string;
                 /** @description Filter by tags (comma-separated) */
                 tags?: string;
                 /** @description Filter by AWS program badges (comma-separated) */
                 badges?: string;
+                /** @description Filter by content visibility levels (comma-separated) */
+                visibility?: string;
                 /** @description Start date for date range filter (ISO 8601) */
                 startDate?: string;
                 /** @description End date for date range filter (ISO 8601) */
@@ -306,6 +790,723 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlatformStats"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authenticated user profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getCurrentUserBadges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Badge list for current user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserBadgesResponse"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUserByUsername: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Username of the profile to retrieve */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User profile found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserLookupResponse"];
+                };
+            };
+            /** @description Missing username */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUserBadges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ID of user whose badges are requested. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Badge list for user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserBadgesResponse"];
+                };
+            };
+            /** @description Missing user ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUserContent: {
+        parameters: {
+            query?: {
+                /** @description Filter by visibility values (comma-separated) */
+                visibility?: string;
+                /** @description Filter by content type values (comma-separated) */
+                contentType?: string;
+                /** @description Filter by tags (comma-separated) */
+                tags?: string;
+                /** @description Maximum number of content items to return */
+                limit?: number;
+                /** @description Offset for pagination */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description ID of user whose content is being requested. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Content list for user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserContentResponse"];
+                };
+            };
+            /** @description Invalid request parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ID of user to delete. Use `me` for the authenticated user. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account deleted successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteAccountResponse"];
+                };
+            };
+            /** @description Validation error (missing user ID) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Attempted to delete another user's account without admin privileges */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Failed to delete account */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateUserProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ID of the user whose profile is being updated. Use `me` to reference the authenticated user. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Profile updated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateUserProfileResponse"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Attempted to update another user's profile */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportUserData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ID of user to export. Use `me` for the authenticated user. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Export generated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserDataExport"];
+                };
+            };
+            /** @description Missing user ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Attempted to export another user's data without admin privileges */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Failed to generate export */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateUserPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ID of user whose preferences will be updated. Use `me` for the authenticated user. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePreferencesRequest"];
+            };
+        };
+        responses: {
+            /** @description Preferences updated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdatePreferencesResponse"];
+                };
+            };
+            /** @description Validation failure */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Attempted to update another user's preferences */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getConsentStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Consent status retrieved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentStatusResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Failed to retrieve consent status */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    manageConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Consent updated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentResponse"];
+                };
+            };
+            /** @description Invalid consent payload */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Failed to update consent */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    checkUserConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConsentCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Consent check result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentCheckResponse"];
+                };
+            };
+            /** @description Failed to check consent */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    submitFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Feedback accepted for processing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackAcceptedResponse"];
+                };
+            };
+            /** @description Invalid feedback payload */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Feedback collection disabled */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Failed to store feedback */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };

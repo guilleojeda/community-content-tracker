@@ -1,9 +1,5 @@
 import * as AWSXRay from 'aws-xray-sdk-core';
-import * as AWS from 'aws-sdk';
 import { performance } from 'perf_hooks';
-
-// Capture AWS SDK calls with X-Ray
-const tracedAWS = AWSXRay.captureAWS(AWS);
 
 export interface TraceMetadata {
   userId?: string;
@@ -335,8 +331,10 @@ export class TracingService {
       return {};
     }
 
+    const traceId = (segment as AWSXRay.Segment).trace_id;
+
     return {
-      'X-Amzn-Trace-Id': segment.trace_id,
+      'X-Amzn-Trace-Id': traceId,
       'X-Amzn-Segment-Id': segment.id,
       'X-Amzn-Sampled': segment.notTraced ? '0' : '1',
     };
@@ -408,6 +406,7 @@ export class TracingService {
 export const tracing = TracingService.getInstance();
 
 // Export traced AWS SDK
+const tracedAWS = AWSXRay.captureAWSv3Client;
 export { tracedAWS };
 
 // Middleware for Express/Lambda

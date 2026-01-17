@@ -10,6 +10,13 @@ import { SSMClient, GetParameterCommand, DeleteParameterCommand } from '@aws-sdk
 const secretsClient = new SecretsManagerClient({});
 const ssmClient = new SSMClient({});
 
+function requireEnv(name: string, value: string | undefined): string {
+  if (!value || value.trim().length === 0) {
+    throw new Error(`Rotation lambda missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 interface RotationEvent {
   SecretId: string;
   ClientRequestToken: string;
@@ -17,14 +24,7 @@ interface RotationEvent {
 }
 
 const pendingParameterName = process.env.PENDING_PARAMETER_NAME;
-const secretAlias = process.env.SECRET_ALIAS ?? 'external API key';
-
-function requireEnv(name: string, value: string | undefined): string {
-  if (!value || value.trim().length === 0) {
-    throw new Error(`Rotation lambda missing required environment variable: ${name}`);
-  }
-  return value;
-}
+const secretAlias = requireEnv('SECRET_ALIAS', process.env.SECRET_ALIAS);
 
 async function fetchPendingKey(): Promise<string> {
   const parameterName = requireEnv('PENDING_PARAMETER_NAME', pendingParameterName);

@@ -456,7 +456,10 @@ export class UserRepository extends BaseRepository {
           [contentIds]
         );
 
-        urlsByContent = (urlsResult.rows ?? []).reduce<Record<string, Array<{ id: string; url: string }>>>(
+        type UrlRow = { id: string; content_id: string; url: string };
+        const urlRows = (urlsResult.rows ?? []) as UrlRow[];
+
+        urlsByContent = urlRows.reduce(
           (acc, row) => {
             if (!acc[row.content_id]) {
               acc[row.content_id] = [];
@@ -464,7 +467,7 @@ export class UserRepository extends BaseRepository {
             acc[row.content_id].push({ id: row.id, url: row.url });
             return acc;
           },
-          {}
+          {} as Record<string, Array<{ id: string; url: string }>>
         );
       }
 

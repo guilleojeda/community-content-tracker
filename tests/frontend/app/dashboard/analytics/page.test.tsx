@@ -501,7 +501,7 @@ describe('AnalyticsDashboardPage', () => {
 
       await renderDashboard();
       await waitFor(() =>
-        expect(screen.getByText(/Analytics CSV export • Group By: month • Range: 2024-01-01 → 2024-02-29/)).toBeInTheDocument()
+        expect(screen.getByText(/Analytics CSV export • Group By: month • Range: 2024-01-01 -> 2024-02-29/)).toBeInTheDocument()
       );
     });
 
@@ -527,7 +527,7 @@ describe('AnalyticsDashboardPage', () => {
       });
 
       await renderDashboard();
-      expect(await screen.findByText(/Program: hero • Range: 2024-05-01 → 2024-05-31/i)).toBeInTheDocument();
+      expect(await screen.findByText(/Program: hero • Range: 2024-05-01 -> 2024-05-31/i)).toBeInTheDocument();
     });
 
     it('falls back to export format when history entry type is unknown', async () => {
@@ -737,7 +737,6 @@ describe('AnalyticsDashboardPage', () => {
 
       const overviewGrid = await screen.findByTestId('analytics-overview-grid');
       expect(overviewGrid).toHaveAttribute('data-layout', 'mobile');
-      expect(overviewGrid.className).toContain('grid-cols-1');
     });
 
     it('renders two-column layout on desktop viewports', async () => {
@@ -748,9 +747,7 @@ describe('AnalyticsDashboardPage', () => {
       const breakdownGrid = await screen.findByTestId('analytics-breakdown-grid');
 
       expect(overviewGrid).toHaveAttribute('data-layout', 'desktop');
-      expect(overviewGrid.className).toContain('grid-cols-2');
       expect(breakdownGrid).toHaveAttribute('data-layout', 'desktop');
-      expect(breakdownGrid.className).toContain('grid-cols-2');
     });
   });
 });

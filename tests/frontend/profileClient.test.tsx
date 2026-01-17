@@ -7,9 +7,14 @@ let capturedSectionProps: any = null;
 
 jest.mock('next/dynamic', () => {
   const React = require('react');
-  return () => (props: any) => {
-    capturedSectionProps = props;
-    return React.createElement('div', { 'data-testid': 'profile-content-section' });
+  return (_loader: unknown, options?: { loading?: () => React.ReactNode }) => {
+    if (options?.loading) {
+      options.loading();
+    }
+    return (props: any) => {
+      capturedSectionProps = props;
+      return React.createElement('div', { 'data-testid': 'profile-content-section' });
+    };
   };
 });
 

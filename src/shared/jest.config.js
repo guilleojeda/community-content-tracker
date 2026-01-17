@@ -2,7 +2,6 @@ const path = require('path');
 
 /** @type {import('jest').Config} */
 module.exports = {
-  passWithNoTests: true,
   preset: 'ts-jest',
   testEnvironment: 'node',
   displayName: 'Shared Tests',
@@ -15,21 +14,16 @@ module.exports = {
     '^.+\\.(ts|tsx)$': 'ts-jest'
   },
   collectCoverageFrom: [
+    '*.ts',
     'types/**/*.{ts,tsx}',
-    '!types/**/*.d.ts',
-    '!types/**/*.test.{ts,tsx}',
-    '!types/**/__tests__/**',
-    '!types/**/node_modules/**',
-    '!types/**/dist/**',
-    '!types/**/coverage/**'
+    '!**/*.d.ts',
+    '!**/*.test.{ts,tsx}',
+    '!**/__tests__/**',
+    '!**/node_modules/**',
+    '!**/dist/**',
+    '!**/coverage/**'
   ],
   coverageDirectory: 'coverage',
-  coverageReporters: [
-    'text',
-    'lcov',
-    'html',
-    'json-summary'
-  ],
   coverageThreshold: {
     global: {
       branches: 80,
@@ -38,5 +32,6 @@ module.exports = {
       statements: 80
     }
   },
-  setupFilesAfterEnv: [path.resolve(__dirname, '../../tests/setup/consoleMock.js')]
+  setupFilesAfterEnv: [path.resolve(__dirname, '../../tests/setup/consoleMock.js')],
+  globalTeardown: path.resolve(__dirname, '../../tests/setup/globalTeardown.js')
 };

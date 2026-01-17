@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { anonymizeIp } from '../../utils/ip-anonymization';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 const VALID_EVENT_TYPES = [
   'page_view',
@@ -34,6 +35,14 @@ export async function handler(
   context: Context
 ): Promise<APIGatewayProxyResult> {
   try {
+    const rateLimit = await applyRateLimit(event, { resource: 'analytics:track', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     const rawBody = JSON.parse(event.body || '{}') as TrackEventRequest | TrackEventRequest[] | BatchTrackEventRequest;
 
     // Normalize to array of events
@@ -52,7 +61,7 @@ export async function handler(
     const events = normalizeEvents(rawBody);
 
     if (!events.length) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'At least one analytics event is required');
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'At least one analytics event is required'));
     }
 
     // Validate event type
@@ -61,7 +70,11 @@ export async function handler(
     );
 
     if (invalidEvent) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', `Invalid event type. Must be one of: ${VALID_EVENT_TYPES.join(', ')}`);
+      return withRateLimit(createErrorResponse(
+        400,
+        'VALIDATION_ERROR',
+        `Invalid event type. Must be one of: ${VALID_EVENT_TYPES.join(', ')}`
+      ));
     }
 
     const pool = await getDatabasePool();
@@ -83,14 +96,14 @@ export async function handler(
       const hasConsent = consentResult.rows.length > 0 && consentResult.rows[0].granted === true;
 
       if (!hasConsent) {
-        return createSuccessResponse(200, {
+        return withRateLimit(createSuccessResponse(200, {
           success: true,
           data: {
             tracked: false,
             reason: 'consent_not_granted',
             message: 'Analytics tracking requires user consent'
           },
-        });
+        }));
       }
     }
     // Anonymous users: Allow tracking with session_id only (no PII)
@@ -132,13 +145,13 @@ export async function handler(
 
     if (events.length === 1) {
       const eventId = await insertEvent(events[0]);
-      return createSuccessResponse(201, {
+      return withRateLimit(createSuccessResponse(201, {
         success: true,
         data: {
           eventId,
           tracked: true,
         },
-      });
+      }));
     }
 
     const eventIds: string[] = [];
@@ -147,14 +160,14 @@ export async function handler(
       eventIds.push(id);
     }
 
-    return createSuccessResponse(201, {
+    return withRateLimit(createSuccessResponse(201, {
       success: true,
       data: {
         eventIds,
         tracked: true,
         count: eventIds.length,
       },
-    });
+    }));
   } catch (error: any) {
     console.error('Track event error:', error);
     return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to track event');

@@ -1,23 +1,35 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/users/update-profile';
 import { Visibility } from '@aws-community-hub/shared';
-import { CognitoIdentityProviderClient, UpdateUserAttributesCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { mockClient } from 'aws-sdk-client-mock';
-import 'aws-sdk-client-mock-jest';
+import { UpdateUserAttributesCommand } from '@aws-sdk/client-cognito-identity-provider';
+
+jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
+  const actual = jest.requireActual('@aws-sdk/client-cognito-identity-provider');
+  const sendMock = jest.fn();
+  return {
+    ...actual,
+    CognitoIdentityProviderClient: jest.fn(() => ({ send: sendMock })),
+    __cognitoSendMock: sendMock,
+  };
+});
+
+const cognitoSendMock = (jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  __cognitoSendMock: jest.Mock;
+}).__cognitoSendMock;
+const { CognitoIdentityProviderClient } = jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  CognitoIdentityProviderClient: jest.Mock;
+};
 
 // Mock dependencies
 jest.mock('../../../../src/backend/services/database', () => ({
   getDatabasePool: jest.fn(),
 }));
-jest.mock('../../../../src/backend/lambdas/auth/tokenVerifier');
 
 const mockPool = {
   query: jest.fn(),
 };
 
-const { verifyJwtToken } = require('../../../../src/backend/lambdas/auth/tokenVerifier');
 const { getDatabasePool } = require('../../../../src/backend/services/database');
-const cognitoMock = mockClient(CognitoIdentityProviderClient);
 const originalCognitoRegion = process.env.COGNITO_REGION;
 
 describe('Update Profile Lambda', () => {
@@ -67,7 +79,8 @@ describe('Update Profile Lambda', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPool.query.mockReset();
-    cognitoMock.reset();
+    cognitoSendMock.mockReset();
+    CognitoIdentityProviderClient.mockImplementation(() => ({ send: cognitoSendMock }));
     // Configure default mock to return proper PostgreSQL structure
     mockPool.query.mockImplementation(() =>
       Promise.resolve({
@@ -79,18 +92,22 @@ describe('Update Profile Lambda', () => {
       })
     );
     (getDatabasePool as jest.Mock).mockResolvedValue(mockPool);
-    verifyJwtToken.mockResolvedValue({
-      isValid: true,
-      user: mockUser,
-    });
-    cognitoMock.on(UpdateUserAttributesCommand).resolves({});
+    cognitoSendMock.mockResolvedValue({});
     process.env.COGNITO_REGION = 'us-east-1';
   });
 
-  const createEvent = (body: any, userId?: string, authHeader?: string): Partial<APIGatewayProxyEvent> => ({
+  const createEvent = (
+    body: any,
+    userId?: string,
+    authHeader?: string,
+    authorizerUserId: string | null = validUserId
+  ): Partial<APIGatewayProxyEvent> => ({
     pathParameters: userId ? { id: userId } : undefined,
     headers: authHeader ? { Authorization: authHeader } : {},
     body: JSON.stringify(body),
+    requestContext: {
+      authorizer: authorizerUserId ? { userId: authorizerUserId } : undefined,
+    } as any,
   });
 
   describe('Validation', () => {
@@ -104,8 +121,8 @@ describe('Update Profile Lambda', () => {
       expect(body.error.code).toBe('VALIDATION_ERROR');
     });
 
-    it('should return 401 if authorization token is missing', async () => {
-      const event = createEvent({ username: 'newuser' }, validUserId);
+    it('should return 401 if authorization context is missing', async () => {
+      const event = createEvent({ username: 'newuser' }, validUserId, undefined, null);
 
       const result = await handler(event as APIGatewayProxyEvent);
 
@@ -133,12 +150,12 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(400);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(body.error.details.fields.username).toContain('between 3 and 30 characters');
+      expect(body.error.details.fields.username).toContain('between 3 and 100 characters');
     });
 
     it('should return 400 if username is too long', async () => {
       const event = createEvent(
-        { username: 'a'.repeat(31) },
+        { username: 'a'.repeat(101) },
         validUserId,
         `Bearer ${validAccessToken}`
       );
@@ -148,7 +165,7 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(400);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(body.error.details.fields.username).toContain('between 3 and 30 characters');
+      expect(body.error.details.fields.username).toContain('between 3 and 100 characters');
     });
 
     it('should reject script tags in profile fields', async () => {
@@ -177,7 +194,7 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(400);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(body.error.details.fields.username).toContain('letters, numbers, and underscores');
+      expect(body.error.details.fields.username).toContain('letters, numbers, hyphens, and underscores');
     });
 
     it('should return 400 if bio is too long', async () => {
@@ -208,7 +225,7 @@ describe('Update Profile Lambda', () => {
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('VALIDATION_ERROR');
       expect(body.error.details.fields.email).toContain('valid email');
-      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+      expect(cognitoSendMock).not.toHaveBeenCalled();
     });
 
     it('should return 400 if visibility is invalid', async () => {
@@ -275,7 +292,7 @@ describe('Update Profile Lambda', () => {
       expect(body.user.email).toBe(mockUser.email);
       expect(body.user.username).toBe('newusername');
       expect(body.user.profileSlug).toBe('newusername');
-      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+      expect(cognitoSendMock).not.toHaveBeenCalled();
     });
 
     it('should successfully update bio', async () => {
@@ -303,7 +320,7 @@ describe('Update Profile Lambda', () => {
       expect(body.message).toBe('Profile updated successfully');
       expect(body.user.email).toBe(mockUser.email);
       expect(body.user.bio).toBe('New bio description');
-      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+      expect(cognitoSendMock).not.toHaveBeenCalled();
     });
 
     it('should successfully update default visibility', async () => {
@@ -335,7 +352,7 @@ describe('Update Profile Lambda', () => {
       expect(body.message).toBe('Profile updated successfully');
       expect(body.user.email).toBe(mockUser.email);
       expect(body.user.defaultVisibility).toBe(Visibility.PRIVATE);
-      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+      expect(cognitoSendMock).not.toHaveBeenCalled();
     });
 
     it('should update email and trigger Cognito update', async () => {
@@ -343,6 +360,13 @@ describe('Update Profile Lambda', () => {
       const updatedUser = { ...mockUser, email: newEmail };
 
       mockPool.query
+        .mockResolvedValueOnce({
+          rows: [buildUserRow()],
+          rowCount: 1,
+          command: 'SELECT',
+          oid: 0,
+          fields: [],
+        })
         .mockResolvedValueOnce({ rows: [], rowCount: 0, command: 'SELECT', oid: 0, fields: [] }) // email uniqueness
         .mockResolvedValueOnce({
           rows: [
@@ -364,7 +388,10 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.user.email).toBe(newEmail);
-      expect(cognitoMock).toHaveReceivedCommandWith(UpdateUserAttributesCommand, {
+      const command = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .find(candidate => candidate instanceof UpdateUserAttributesCommand);
+      expect(command?.input).toMatchObject({
         AccessToken: validAccessToken,
         UserAttributes: [
           { Name: 'email', Value: newEmail },
@@ -416,7 +443,7 @@ describe('Update Profile Lambda', () => {
       expect(body.user.username).toBe('newuser');
       expect(body.user.bio).toBe('New bio');
       expect(body.user.defaultVisibility).toBe(Visibility.AWS_ONLY);
-      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+      expect(cognitoSendMock).not.toHaveBeenCalled();
     });
 
     it('should allow clearing bio by setting it to empty string', async () => {
@@ -442,7 +469,7 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.user.bio).toBe('');
-      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+      expect(cognitoSendMock).not.toHaveBeenCalled();
     });
 
     it('should update social links when provided', async () => {
@@ -475,14 +502,14 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.user.socialLinks).toEqual(updatedLinks);
-      expect(cognitoMock).not.toHaveReceivedCommand(UpdateUserAttributesCommand);
+      expect(cognitoSendMock).not.toHaveBeenCalled();
     });
   });
 
   describe('Error Handling', () => {
     it('should return 500 when Cognito email update fails', async () => {
       const newEmail = 'failure@example.com';
-      cognitoMock.on(UpdateUserAttributesCommand).rejects(new Error('cognito failure'));
+      cognitoSendMock.mockRejectedValueOnce(new Error('cognito failure'));
 
       mockPool.query.mockReset();
 
@@ -493,7 +520,7 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(500);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('INTERNAL_ERROR');
-      expect(mockPool.query).not.toHaveBeenCalled();
+      expect(mockPool.query).toHaveBeenCalled();
     });
 
     it('should return 409 if username already exists', async () => {
@@ -525,21 +552,6 @@ describe('Update Profile Lambda', () => {
       expect(result.statusCode).toBe(404);
       const body = JSON.parse(result.body);
       expect(body.error.code).toBe('NOT_FOUND');
-    });
-
-    it('should return 401 for invalid token', async () => {
-      verifyJwtToken.mockResolvedValueOnce({
-        isValid: false,
-        error: { code: 'AUTH_INVALID' },
-      });
-
-      const event = createEvent({ username: 'newuser' }, validUserId, `Bearer invalid-token`);
-
-      const result = await handler(event as APIGatewayProxyEvent);
-
-      expect(result.statusCode).toBe(401);
-      const body = JSON.parse(result.body);
-      expect(body.error.code).toBe('AUTH_INVALID');
     });
 
     it('should return 500 for database errors', async () => {

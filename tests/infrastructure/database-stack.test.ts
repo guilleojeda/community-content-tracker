@@ -11,7 +11,7 @@ import { DatabaseStack } from '../../src/infrastructure/lib/stacks/database-stac
  * - Database secrets stored in Secrets Manager
  * - VPC and security groups properly configured
  * - Database proxy configured for connection pooling
- * - Dev database accessible via bastion host for debugging
+ * - Dev database accessible via RDS Data API (no bastion host)
  * - Automated backup configuration with 7-day retention
  * - Point-in-time recovery enabled
  */
@@ -25,6 +25,7 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       app = new App();
       stack = new DatabaseStack(app, 'TestDatabaseStack', {
         environment: 'dev',
+        databaseName: 'community_content',
         deletionProtection: false,
         backupRetentionDays: 7, // Sprint 1 requires 7-day retention
         minCapacity: 0.5,
@@ -139,19 +140,12 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       });
     });
 
-    it('should make dev database accessible via bastion host for debugging', () => {
-      // For dev environment, bastion host should be created
+    it('should not provision a bastion host', () => {
       const json = template.toJSON();
       const bastionResources = Object.keys(json.Resources).filter(key => 
         key.includes('Bastion')
       );
-      expect(bastionResources.length).toBeGreaterThan(0);
-
-      // Verify bastion security group exists
-      const bastionSecurityGroups = Object.keys(json.Resources).filter(key => 
-        key.includes('BastionSecurityGroup')
-      );
-      expect(bastionSecurityGroups.length).toBeGreaterThan(0);
+      expect(bastionResources.length).toBe(0);
     });
 
     it('should configure automated backup with 7-day retention', () => {
@@ -159,6 +153,27 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
         BackupRetentionPeriod: 7,
         PreferredBackupWindow: Match.anyValue(),
         PreferredMaintenanceWindow: Match.anyValue(),
+      });
+    });
+
+    it('should provision Valkey serverless cache in isolated subnets', () => {
+      template.hasResourceProperties('AWS::ElastiCache::ServerlessCache', {
+        Engine: 'valkey',
+        ServerlessCacheName: Match.anyValue(),
+        SubnetIds: Match.anyValue(),
+        SecurityGroupIds: Match.anyValue(),
+      });
+    });
+
+    it('should create VPC endpoints for AWS services', () => {
+      template.hasResourceProperties('AWS::EC2::VPCEndpoint', {
+        VpcEndpointType: 'Gateway',
+        ServiceName: Match.anyValue(),
+      });
+
+      template.hasResourceProperties('AWS::EC2::VPCEndpoint', {
+        VpcEndpointType: 'Interface',
+        ServiceName: Match.anyValue(),
       });
     });
 
@@ -182,6 +197,7 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       app = new App();
       stack = new DatabaseStack(app, 'TestDatabaseStack', {
         environment: 'dev',
+        databaseName: 'community_content',
       });
       template = Template.fromStack(stack);
     });
@@ -201,6 +217,7 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       const devApp = new App();
       const devStack = new DatabaseStack(devApp, 'DevStack', {
         environment: 'dev',
+        databaseName: 'community_content',
       });
       // Verify tags are applied to resources
       const devTemplate = Template.fromStack(devStack);
@@ -214,6 +231,7 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       const stagingApp = new App();
       const stagingStack = new DatabaseStack(stagingApp, 'StagingStack', {
         environment: 'staging',
+        databaseName: 'community_content',
       });
       const stagingTemplate = Template.fromStack(stagingStack);
       stagingTemplate.hasResourceProperties('AWS::EC2::VPC', {
@@ -226,6 +244,7 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       const prodApp = new App();
       const prodStack = new DatabaseStack(prodApp, 'ProdStack', {
         environment: 'prod',
+        databaseName: 'community_content',
       });
       const prodTemplate = Template.fromStack(prodStack);
       prodTemplate.hasResourceProperties('AWS::EC2::VPC', {
@@ -262,6 +281,7 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       app = new App();
       stack = new DatabaseStack(app, 'ProdDatabaseStack', {
         environment: 'prod',
+        databaseName: 'community_content',
         deletionProtection: true,
         backupRetentionDays: 30,
         minCapacity: 2,
@@ -270,8 +290,7 @@ describe('DatabaseStack - Sprint 1 Requirements', () => {
       template = Template.fromStack(stack);
     });
 
-    it('should NOT create bastion host for production', () => {
-      // Bastion host should only be in dev, not prod
+    it('should not create bastion host for production', () => {
       const json = template.toJSON();
       const bastionResources = Object.keys(json.Resources).filter(key => 
         key.toLowerCase().includes('bastion')

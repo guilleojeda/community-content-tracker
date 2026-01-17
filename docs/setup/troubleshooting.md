@@ -259,7 +259,7 @@ An error occurred (AccessDenied) when calling the ListBuckets operation
 
 2. **Check IAM permissions**:
    - Log into AWS Console
-   - Go to IAM → Users → Your User
+   - Go to IAM -> Users -> Your User
    - Check attached policies
 
 3. **Rotate access keys**:
@@ -430,8 +430,8 @@ Error: DB_HOST is not defined
 2. **Check .env file syntax**:
    ```bash
    # No spaces around = sign
-   DB_HOST=localhost  # ✓ Correct
-   DB_HOST = localhost  # ✗ Wrong
+   DB_HOST=localhost  # OK Correct
+   DB_HOST = localhost  # FAIL Wrong
    ```
 
 3. **Restart application**:

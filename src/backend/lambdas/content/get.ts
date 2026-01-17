@@ -1,8 +1,8 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { ContentRepository } from '../../repositories/ContentRepository';
-import { UserRepository } from '../../repositories/UserRepository';
-import { createErrorResponse, createSuccessResponse, canAccessContent, getContentAccessLevel } from '../auth/utils';
+import { createErrorResponse, createSuccessResponse } from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 const normalizeContentUrls = (contentId: string, rawUrls: any[]): Array<{ id: string; url: string }> => {
   return (rawUrls || [])
@@ -34,26 +34,35 @@ export const handler = async (
   context: Context
 ): Promise<APIGatewayProxyResult> => {
   console.log('Get Content Lambda invoked', {
-    requestId: context.requestId,
+    requestId: context.awsRequestId,
     path: event.path,
   });
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'content:get' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Extract content ID from path parameters
     const contentId = event.pathParameters?.id;
 
     if (!contentId) {
-      return createErrorResponse(400, 'VALIDATION_ERROR', 'Content ID is required');
+      return withRateLimit(createErrorResponse(400, 'VALIDATION_ERROR', 'Content ID is required'));
     }
 
     // Validate UUID format
     if (!isValidUUID(contentId)) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Invalid content ID format',
         { id: 'Must be a valid UUID' }
-      );
+      ));
     }
 
     // Extract user ID from authorizer (may be null for anonymous users)
@@ -62,36 +71,12 @@ export const handler = async (
     // Get database pool
     const dbPool = await getDatabasePool();
     const contentRepo = new ContentRepository(dbPool);
-    const userRepo = new UserRepository(dbPool);
 
-    // Fetch the content
-    const content = await contentRepo.findById(contentId);
+    // Fetch the content with visibility filtering at the query level
+    const content = await contentRepo.findByIdForViewer(contentId, userId ?? null);
 
     if (!content) {
-      return createErrorResponse(404, 'NOT_FOUND', 'Content not found');
-    }
-
-    // Check visibility permissions
-    let isOwner = false;
-    let isAdmin = false;
-    let isAwsEmployee = false;
-
-    if (userId) {
-      const user = await userRepo.findById(userId);
-      if (user) {
-        isOwner = content.userId === userId;
-        isAdmin = user.isAdmin;
-        isAwsEmployee = user.isAwsEmployee;
-      }
-    }
-
-    // Get access level for the viewer
-    const accessLevel = getContentAccessLevel(isAdmin, isAwsEmployee, isOwner);
-
-    // Check if user can access this content
-    if (!canAccessContent(content.visibility, accessLevel)) {
-      // Return 404 instead of 403 to avoid leaking information about private content
-      return createErrorResponse(404, 'NOT_FOUND', 'Content not found');
+      return withRateLimit(createErrorResponse(404, 'NOT_FOUND', 'Content not found'));
     }
 
     // Transform URLs array to proper format with IDs
@@ -116,25 +101,31 @@ export const handler = async (
       version: content.version,
     };
 
-    return createSuccessResponse(200, responseData);
+    return withRateLimit(createSuccessResponse(200, responseData));
 
   } catch (error: any) {
     console.error('Error getting content:', error);
 
     // Handle specific error cases
     if (error.message === 'Invalid UUID format') {
-      return createErrorResponse(
+      return attachRateLimitHeaders(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Invalid content ID format',
         { id: 'Must be a valid UUID' }
-      );
+      ), rateLimit);
     }
 
     if (error.code === '42P01') {
-      return createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found');
+      return attachRateLimitHeaders(
+        createErrorResponse(500, 'INTERNAL_ERROR', 'Database table not found'),
+        rateLimit
+      );
     }
 
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Internal server error'),
+      rateLimit
+    );
   }
 };

@@ -23,8 +23,8 @@ const mockApiClient = {
   manageConsent: jest.fn(),
 };
 
-jest.mock('@/api/client', () => ({
-  getAuthenticatedApiClient: jest.fn(() => mockApiClient),
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadAuthenticatedApiClient: jest.fn(() => Promise.resolve(mockApiClient)),
 }));
 
 const defaultUser: User = {

@@ -47,6 +47,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get current user profile
+         * @description Returns the authenticated user's profile and preferences.
+         */
+        get: operations["getCurrentUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/badges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get badges for current user
+         * @description Returns the badges associated with the authenticated user.
+         */
+        get: operations["getCurrentUserBadges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/username/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user by username
+         * @description Returns the public profile for the requested username.
+         */
+        get: operations["getUserByUsername"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/badges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user badges
+         * @description Returns badges for the specified user. Use `me` to reference the authenticated user.
+         */
+        get: operations["getUserBadges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user content
+         * @description Returns content belonging to the specified user, filtered by visibility rules. Use `me` to reference the authenticated user.
+         */
+        get: operations["getUserContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{id}": {
         parameters: {
             query?: never;
@@ -337,22 +437,64 @@ export interface components {
                  * @example VALIDATION_ERROR
                  * @enum {string}
                  */
-                code: "VALIDATION_ERROR" | "AUTHENTICATION_ERROR" | "AUTHORIZATION_ERROR" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMITED" | "INTERNAL_ERROR";
+                code: "AUTH_REQUIRED" | "AUTH_INVALID" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "DUPLICATE_RESOURCE" | "RATE_LIMITED" | "INTERNAL_ERROR";
                 /**
                  * @description Human-readable error message
                  * @example Missing required query parameter: q
                  */
                 message: string;
-                /**
-                 * @description Field that caused the error (if applicable)
-                 * @example q
-                 */
-                field?: string;
                 /** @description Additional error details */
                 details?: {
                     [key: string]: unknown;
                 };
             };
+        };
+        SocialLinks: {
+            /** Format: uri */
+            twitter?: string;
+            /** Format: uri */
+            linkedin?: string;
+            /** Format: uri */
+            github?: string;
+            /** Format: uri */
+            website?: string;
+        };
+        User: {
+            /** Format: uuid */
+            id: string;
+            cognitoSub: string;
+            /** Format: email */
+            email: string;
+            username: string;
+            profileSlug: string;
+            bio?: string | null;
+            socialLinks?: components["schemas"]["SocialLinks"];
+            /** @enum {string} */
+            defaultVisibility: "public" | "aws_community" | "aws_only" | "private";
+            isAdmin: boolean;
+            isAwsEmployee: boolean;
+            mfaEnabled?: boolean;
+            receiveNewsletter?: boolean;
+            receiveContentNotifications?: boolean;
+            receiveCommunityUpdates?: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        UserLookupResponse: {
+            user: components["schemas"]["User"];
+        };
+        UserBadgesResponse: {
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            badgeCount: number;
+            badges: components["schemas"]["Badge"][];
+        };
+        UserContentResponse: {
+            content: components["schemas"]["Content"][];
+            total: number;
         };
         UserProfile: {
             /** Format: uuid */
@@ -364,10 +506,8 @@ export interface components {
             bio?: string | null;
             /** @enum {string} */
             defaultVisibility: "public" | "aws_community" | "aws_only" | "private";
-            /** @description Map of social link type to URL */
-            socialLinks: {
-                [key: string]: string;
-            };
+            /** @description Social link profiles */
+            socialLinks: components["schemas"]["SocialLinks"];
             /** Format: date-time */
             updatedAt: string;
         };
@@ -653,6 +793,270 @@ export interface operations {
                 };
             };
             /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authenticated user profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getCurrentUserBadges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Badge list for current user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserBadgesResponse"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUserByUsername: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Username of the profile to retrieve */
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User profile found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserLookupResponse"];
+                };
+            };
+            /** @description Missing username */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUserBadges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ID of user whose badges are requested. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Badge list for user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserBadgesResponse"];
+                };
+            };
+            /** @description Missing user ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUserContent: {
+        parameters: {
+            query?: {
+                /** @description Filter by visibility values (comma-separated) */
+                visibility?: string;
+                /** @description Filter by content type values (comma-separated) */
+                contentType?: string;
+                /** @description Filter by tags (comma-separated) */
+                tags?: string;
+                /** @description Maximum number of content items to return */
+                limit?: number;
+                /** @description Offset for pagination */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description ID of user whose content is being requested. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Content list for user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserContentResponse"];
+                };
+            };
+            /** @description Invalid request parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Authentication required or invalid token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unexpected server error */
             500: {
                 headers: {
                     [name: string]: unknown;

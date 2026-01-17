@@ -127,20 +127,11 @@ This document summarizes the comprehensive test coverage achieved for the Authen
 ## Quality Assurance Features
 
 ### Error Types Defined
-- `TOKEN_EXPIRED`
-- `INVALID_TOKEN`
-- `MISSING_TOKEN`
-- `USER_NOT_FOUND`
-- `DATABASE_ERROR`
-- `NETWORK_ERROR`
-- `INVALID_CONFIG`
-- `VERIFICATION_ERROR`
-- `INVALID_TOKEN_USE`
-- `EMAIL_NOT_VERIFIED`
-- `INVALID_CLAIMS`
+- `AUTH_REQUIRED`
+- `AUTH_INVALID`
+- `PERMISSION_DENIED`
 - `RATE_LIMITED`
-- `INSUFFICIENT_PRIVILEGES`
-- `SUSPICIOUS_ACTIVITY`
+- `INTERNAL_ERROR`
 
 ### Security Event Types
 - `AUTHENTICATION_FAILED`

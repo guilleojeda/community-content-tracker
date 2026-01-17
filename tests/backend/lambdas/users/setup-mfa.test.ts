@@ -9,15 +9,29 @@ jest.mock('qrcode', () => ({
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { handler } from '../../../../src/backend/lambdas/users/setup-mfa';
 import {
-  CognitoIdentityProviderClient,
   AssociateSoftwareTokenCommand,
   VerifySoftwareTokenCommand,
   SetUserMFAPreferenceCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
-import { mockClient } from 'aws-sdk-client-mock';
 import QRCode from 'qrcode';
 
-const cognitoMock = mockClient(CognitoIdentityProviderClient);
+jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
+  const actual = jest.requireActual('@aws-sdk/client-cognito-identity-provider');
+  const sendMock = jest.fn();
+  return {
+    ...actual,
+    CognitoIdentityProviderClient: jest.fn(() => ({ send: sendMock })),
+    __cognitoSendMock: sendMock,
+  };
+});
+
+const cognitoSendMock = (jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  __cognitoSendMock: jest.Mock;
+}).__cognitoSendMock;
+const { CognitoIdentityProviderClient } = jest.requireMock('@aws-sdk/client-cognito-identity-provider') as {
+  CognitoIdentityProviderClient: jest.Mock;
+};
+
 const mockToDataURL = QRCode.toDataURL as jest.MockedFunction<typeof QRCode.toDataURL>;
 
 describe('Setup MFA Lambda', () => {
@@ -26,15 +40,24 @@ describe('Setup MFA Lambda', () => {
   const mockSecret = 'JBSWY3DPEHPK3PXP';
 
   beforeEach(() => {
-    cognitoMock.reset();
+    CognitoIdentityProviderClient.mockImplementation(() => ({ send: cognitoSendMock }));
+    cognitoSendMock.mockReset();
     mockToDataURL.mockClear();
     mockToDataURL.mockResolvedValue('data:image/png;base64,mockQRCode');
   });
 
-  const createEvent = (body: any, userId?: string, authHeader?: string): Partial<APIGatewayProxyEvent> => ({
+  const createEvent = (
+    body: any,
+    userId?: string,
+    authHeader?: string,
+    authorizerUserId: string | null = validUserId
+  ): Partial<APIGatewayProxyEvent> => ({
     pathParameters: userId ? { id: userId } : undefined,
     headers: authHeader ? { Authorization: authHeader } : {},
     body: body ? JSON.stringify(body) : null,
+    requestContext: {
+      authorizer: authorizerUserId ? { userId: authorizerUserId } : undefined,
+    } as any,
   });
 
   describe('Validation', () => {
@@ -49,8 +72,8 @@ describe('Setup MFA Lambda', () => {
       expect(body.error.message).toContain('User ID is required');
     });
 
-    it('should return 401 if authorization token is missing', async () => {
-      const event = createEvent({}, validUserId);
+    it('should return 401 if authorization context is missing', async () => {
+      const event = createEvent({}, validUserId, undefined, null);
 
       const result = await handler(event as APIGatewayProxyEvent);
 
@@ -62,7 +85,7 @@ describe('Setup MFA Lambda', () => {
 
   describe('Step 1: QR Code Generation', () => {
     it('should successfully generate QR code and secret', async () => {
-      cognitoMock.on(AssociateSoftwareTokenCommand).resolves({
+      cognitoSendMock.mockResolvedValueOnce({
         SecretCode: mockSecret,
       });
 
@@ -78,13 +101,15 @@ describe('Setup MFA Lambda', () => {
       expect(body.secret).toBe(mockSecret);
 
       // Verify Cognito was called correctly
-      const cognitoCalls = cognitoMock.commandCalls(AssociateSoftwareTokenCommand);
-      expect(cognitoCalls.length).toBe(1);
-      expect(cognitoCalls[0].args[0].input.AccessToken).toBe(validAccessToken);
+      const cognitoCommands = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof AssociateSoftwareTokenCommand);
+      expect(cognitoCommands.length).toBe(1);
+      expect(cognitoCommands[0].input.AccessToken).toBe(validAccessToken);
     });
 
     it('should include username in QR code if provided', async () => {
-      cognitoMock.on(AssociateSoftwareTokenCommand).resolves({
+      cognitoSendMock.mockResolvedValueOnce({
         SecretCode: mockSecret,
       });
 
@@ -105,7 +130,7 @@ describe('Setup MFA Lambda', () => {
     it('should use fallback secret if no secret code is returned', async () => {
       // This test verifies that the fallback mechanism works in test mode
       // In test mode, MFA_TOTP_SEED has a default value even if not explicitly set
-      cognitoMock.on(AssociateSoftwareTokenCommand).resolves({
+      cognitoSendMock.mockResolvedValueOnce({
         SecretCode: undefined,
       });
 
@@ -123,10 +148,15 @@ describe('Setup MFA Lambda', () => {
 
   describe('Step 2: Verification and Enablement', () => {
     it('should successfully verify code and enable MFA', async () => {
-      cognitoMock.on(VerifySoftwareTokenCommand).resolves({
-        Status: 'SUCCESS',
+      cognitoSendMock.mockImplementation((command: any) => {
+        if (command instanceof VerifySoftwareTokenCommand) {
+          return Promise.resolve({ Status: 'SUCCESS' });
+        }
+        if (command instanceof SetUserMFAPreferenceCommand) {
+          return Promise.resolve({});
+        }
+        return Promise.resolve({});
       });
-      cognitoMock.on(SetUserMFAPreferenceCommand).resolves({});
 
       const event = createEvent(
         { verificationCode: '123456' },
@@ -142,17 +172,21 @@ describe('Setup MFA Lambda', () => {
       expect(body.enabled).toBe(true);
 
       // Verify Cognito was called correctly
-      const verifyCalls = cognitoMock.commandCalls(VerifySoftwareTokenCommand);
-      expect(verifyCalls.length).toBe(1);
-      expect(verifyCalls[0].args[0].input).toEqual({
+      const verifyCommands = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof VerifySoftwareTokenCommand);
+      expect(verifyCommands.length).toBe(1);
+      expect(verifyCommands[0].input).toEqual({
         AccessToken: validAccessToken,
         UserCode: '123456',
         FriendlyDeviceName: 'Authenticator App',
       });
 
-      const preferenceCalls = cognitoMock.commandCalls(SetUserMFAPreferenceCommand);
-      expect(preferenceCalls.length).toBe(1);
-      expect(preferenceCalls[0].args[0].input).toEqual({
+      const preferenceCommands = cognitoSendMock.mock.calls
+        .map(call => call[0])
+        .filter(command => command instanceof SetUserMFAPreferenceCommand);
+      expect(preferenceCommands.length).toBe(1);
+      expect(preferenceCommands[0].input).toEqual({
         AccessToken: validAccessToken,
         SoftwareTokenMfaSettings: {
           Enabled: true,
@@ -162,7 +196,7 @@ describe('Setup MFA Lambda', () => {
     });
 
     it('should return 400 for invalid verification code', async () => {
-      cognitoMock.on(VerifySoftwareTokenCommand).resolves({
+      cognitoSendMock.mockResolvedValueOnce({
         Status: 'ERROR',
       });
 
@@ -183,7 +217,7 @@ describe('Setup MFA Lambda', () => {
 
   describe('Error Handling', () => {
     it('should handle Cognito errors during association', async () => {
-      cognitoMock.on(AssociateSoftwareTokenCommand).rejects({
+      cognitoSendMock.mockRejectedValueOnce({
         name: 'NotAuthorizedException',
         message: 'Invalid token',
       });
@@ -198,7 +232,7 @@ describe('Setup MFA Lambda', () => {
     });
 
     it('should handle Cognito errors during verification', async () => {
-      cognitoMock.on(VerifySoftwareTokenCommand).rejects({
+      cognitoSendMock.mockRejectedValueOnce({
         name: 'CodeMismatchException',
         message: 'Invalid code',
       });
@@ -217,7 +251,7 @@ describe('Setup MFA Lambda', () => {
     });
 
     it('should return 500 for unexpected errors', async () => {
-      cognitoMock.on(AssociateSoftwareTokenCommand).rejects(new Error('Unexpected error'));
+      cognitoSendMock.mockRejectedValueOnce(new Error('Unexpected error'));
 
       const event = createEvent({}, validUserId, `Bearer ${validAccessToken}`);
 

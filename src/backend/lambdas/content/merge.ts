@@ -8,6 +8,7 @@ import {
   parseRequestBody,
 } from '../auth/utils';
 import { getDatabasePool } from '../../services/database';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 interface MergeRequest {
   contentIds: string[];
@@ -25,50 +26,59 @@ export async function handler(
   context: Context
 ): Promise<APIGatewayProxyResult> {
   console.log('Merge content request:', JSON.stringify(event, null, 2));
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'content:merge' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     // Extract user ID from authorizer context
     const userId = event.requestContext.authorizer?.userId;
     const isAdmin = event.requestContext.authorizer?.isAdmin === 'true' ||
                     event.requestContext.authorizer?.isAdmin === true;
 
     if (!userId) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         401,
         'AUTH_REQUIRED',
         'Authentication required'
-      );
+      ));
     }
 
     // Parse request body
     const { data: requestBody, error: parseError } = parseRequestBody<MergeRequest>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     // Validate request
     if (!requestBody?.contentIds || requestBody.contentIds.length < 2) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'At least 2 content IDs are required for merge'
-      );
+      ));
     }
 
     if (!requestBody.primaryId) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'primaryId is required'
-      );
+      ));
     }
 
     if (!requestBody.contentIds.includes(requestBody.primaryId)) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'primaryId must be one of the contentIds'
-      );
+      ));
     }
 
     const dbPool = await getDatabasePool();
@@ -84,22 +94,22 @@ export async function handler(
     // Check all content exists
     const missingIds = requestBody.contentIds.filter((id, index) => !contentItems[index]);
     if (missingIds.length > 0) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         404,
         'NOT_FOUND',
         `Content not found: ${missingIds.join(', ')}`
-      );
+      ));
     }
 
     // Verify ownership of all content items (or admin)
     if (!isAdmin) {
       const unauthorizedItems = contentItems.filter(item => item!.userId !== userId);
       if (unauthorizedItems.length > 0) {
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           403,
           'PERMISSION_DENIED',
           'You must own all content items to merge them'
-        );
+        ));
       }
     }
 
@@ -145,7 +155,7 @@ export async function handler(
         mergedBy: userId,
       });
 
-      return createSuccessResponse(200, {
+      return withRateLimit(createSuccessResponse(200, {
         message: 'Content merged successfully',
         content: mergedContent,
         mergeHistory: latestMerge ? {
@@ -159,7 +169,7 @@ export async function handler(
           urlsCount: mergedContent.urls.length,
           tagsCount: mergedContent.tags.length,
         },
-      });
+      }));
 
     } catch (mergeError) {
       console.error('Error during merge operation:', mergeError);
@@ -168,10 +178,9 @@ export async function handler(
 
   } catch (error: any) {
     console.error('Unexpected merge error:', error);
-    return createErrorResponse(
-      500,
-      'INTERNAL_ERROR',
-      'An unexpected error occurred during merge'
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'An unexpected error occurred during merge'),
+      rateLimit
     );
   }
 }

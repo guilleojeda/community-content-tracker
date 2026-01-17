@@ -26,17 +26,24 @@ This document describes the Aurora Serverless v2 PostgreSQL database infrastruct
   - 1800-second idle timeout
   - Automatic failover support
 
-### 4. Network Architecture
+### 4. Valkey Serverless Cache (ElastiCache)
+- **Purpose**: API response caching and rate limiting
+- **Deployment**: Valkey serverless cache in isolated subnets
+- **Access**: Restricted to Lambda security group
+
+### 5. Network Architecture
 - **VPC**: 10.0.0.0/16 CIDR
 - **Subnets**: 
-  - 2 Public subnets (for NAT and bastion)
-  - 2 Private subnets (for database)
+  - 2 Public subnets (for NAT)
+  - 2 Private subnets with egress (for scrapers that need internet access)
+  - 2 Private isolated subnets (for database, proxy, Redis, and internal Lambdas)
 - **Security**: Multiple security groups with least-privilege access
+- **VPC Endpoints**: Interface and gateway endpoints for AWS services (SQS, Secrets Manager, Lambda, Bedrock, Cognito, CloudWatch, CloudWatch Logs, RDS Data API, SES, S3, DynamoDB)
 
-### 5. Development Access
-- **Bastion Host**: t3.micro instance in public subnet
-- **Access**: SSH via Session Manager (SSM)
-- **Tools**: PostgreSQL client pre-installed
+### 6. Development Access
+- **No bastion host**
+- **Access**: Use RDS Data API / Query Editor for ad hoc queries
+- **Local Development**: Prefer the local database for day-to-day work
 
 ## File Structure
 
@@ -109,7 +116,7 @@ cdk deploy --context environment=prod
 ```
 
 ### Environment Configuration
-- **Development**: 0.5-1 ACU, bastion host enabled
+- **Development**: 0.5-1 ACU, NAT enabled for scrapers, no bastion host
 - **Production**: 1-4 ACU, deletion protection, extended backups
 
 ### Post-Deployment Setup
@@ -119,13 +126,13 @@ cdk deploy --context environment=prod
 
 ## Connection Examples
 
-### Via Bastion Host
+### Via RDS Data API (Query Editor or CLI)
 ```bash
-# Connect to bastion host
-aws ssm start-session --target <bastion-instance-id>
-
-# Connect to database
-psql -h <cluster-endpoint> -U postgres -d community_content
+aws rds-data execute-statement \
+  --resource-arn <cluster-arn> \
+  --secret-arn <secret-arn> \
+  --database community_content \
+  --sql "select 1;"
 ```
 
 ### Via RDS Proxy (Application)

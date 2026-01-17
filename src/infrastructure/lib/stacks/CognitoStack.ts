@@ -50,8 +50,8 @@ export class CognitoStack extends cdk.Stack {
   }
 
   private validateConfiguration(config: EnvironmentConfig): void {
-    if (config.cognito.passwordPolicy.minLength < 8) {
-      throw new Error('Password minimum length must be at least 8 characters');
+    if (config.cognito.passwordPolicy.minLength < 12) {
+      throw new Error('Password minimum length must be at least 12 characters');
     }
     if (config.cognito.passwordPolicy.minLength > 128) {
       throw new Error('Password minimum length cannot exceed 128 characters');
@@ -87,6 +87,17 @@ export class CognitoStack extends cdk.Stack {
   }
 
   private createUserPool(config: EnvironmentConfig): cognito.UserPool {
+    const standardThreatProtectionMode = this.mapStandardThreatProtectionMode(
+      config.cognito.standardThreatProtectionMode
+    );
+    const customThreatProtectionMode = this.mapCustomThreatProtectionMode(
+      config.cognito.customThreatProtectionMode
+    );
+    const threatProtectionEnabled =
+      standardThreatProtectionMode !== cognito.StandardThreatProtectionMode.NO_ENFORCEMENT ||
+      customThreatProtectionMode !== undefined;
+    const featurePlan = threatProtectionEnabled ? cognito.FeaturePlan.PLUS : undefined;
+
     const userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: `community-content-tracker-${config.environment}`,
 
@@ -169,6 +180,11 @@ export class CognitoStack extends cdk.Stack {
         challengeRequiredOnNewDevice: true,
         deviceOnlyRememberedOnUserPrompt: false,
       },
+
+      // Threat protection (replaces deprecated advanced security mode)
+      standardThreatProtectionMode,
+      customThreatProtectionMode,
+      featurePlan,
     });
 
     // Lambda permissions and integration will be configured after User Pool creation
@@ -177,6 +193,12 @@ export class CognitoStack extends cdk.Stack {
   }
 
   private configureUserPoolLambdaIntegration(): void {
+    this.preSignupLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['cognito-idp:ListUsers'],
+      resources: ['*'],
+    }));
+
     // Grant Lambda permission to be invoked by Cognito - using low-level to avoid dependency cycle
     new lambda.CfnPermission(this, 'CognitoInvokePermission', {
       action: 'lambda:InvokeFunction',
@@ -193,6 +215,9 @@ export class CognitoStack extends cdk.Stack {
   }
 
   private createUserPoolClient(config: EnvironmentConfig): cognito.UserPoolClient {
+    const callbackUrls = this.parseUrlList(process.env.COGNITO_CALLBACK_URLS, 'COGNITO_CALLBACK_URLS');
+    const logoutUrls = this.parseUrlList(process.env.COGNITO_LOGOUT_URLS, 'COGNITO_LOGOUT_URLS');
+
     return new cognito.UserPoolClient(this, 'UserPoolClient', {
       userPool: this.userPool,
       userPoolClientName: `community-content-tracker-${config.environment}-client`,
@@ -232,12 +257,8 @@ export class CognitoStack extends cdk.Stack {
           cognito.OAuthScope.PROFILE,    // Access to profile claims
           cognito.OAuthScope.COGNITO_ADMIN, // Admin API access
         ],
-        callbackUrls: config.environment === 'prod'
-          ? ['https://community-content-hub.aws.com/callback', 'https://community-content-hub.aws.com/auth/callback']
-          : ['http://localhost:3000/callback', 'http://localhost:3000/auth/callback', 'http://localhost:3001/callback'],
-        logoutUrls: config.environment === 'prod'
-          ? ['https://community-content-hub.aws.com/', 'https://community-content-hub.aws.com/logout']
-          : ['http://localhost:3000/', 'http://localhost:3000/logout', 'http://localhost:3001/'],
+        callbackUrls,
+        logoutUrls,
       },
 
       // Read/write attributes
@@ -376,16 +397,46 @@ export class CognitoStack extends cdk.Stack {
     }
   }
 
-  private mapAdvancedSecurityMode(securityMode: string): cognito.AdvancedSecurityMode {
-    switch (securityMode) {
+  private mapStandardThreatProtectionMode(mode: string): cognito.StandardThreatProtectionMode {
+    switch (mode) {
       case 'OFF':
-        return cognito.AdvancedSecurityMode.OFF;
+        return cognito.StandardThreatProtectionMode.NO_ENFORCEMENT;
       case 'AUDIT':
-        return cognito.AdvancedSecurityMode.AUDIT;
+        return cognito.StandardThreatProtectionMode.AUDIT_ONLY;
       case 'ENFORCED':
-        return cognito.AdvancedSecurityMode.ENFORCED;
+        return cognito.StandardThreatProtectionMode.FULL_FUNCTION;
       default:
-        return cognito.AdvancedSecurityMode.AUDIT; // Default to AUDIT instead of throwing
+        return cognito.StandardThreatProtectionMode.AUDIT_ONLY;
     }
+  }
+
+  private mapCustomThreatProtectionMode(
+    mode: string | undefined
+  ): cognito.CustomThreatProtectionMode | undefined {
+    if (!mode || mode === 'OFF') {
+      return undefined;
+    }
+    switch (mode) {
+      case 'AUDIT':
+        return cognito.CustomThreatProtectionMode.AUDIT_ONLY;
+      case 'ENFORCED':
+        return cognito.CustomThreatProtectionMode.FULL_FUNCTION;
+      default:
+        return cognito.CustomThreatProtectionMode.AUDIT_ONLY;
+    }
+  }
+
+  private parseUrlList(value: string | undefined, name: string): string[] {
+    if (!value || value.trim().length === 0) {
+      throw new Error(`${name} must be set`);
+    }
+    const urls = value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    if (urls.length === 0) {
+      throw new Error(`${name} must include at least one URL`);
+    }
+    return urls;
   }
 }

@@ -6,23 +6,30 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import { apiClient } from '@/api/client';
 
-// Mock the API client before importing the page
-const mockGetUnclaimedContent = jest.fn();
-const mockClaimContent = jest.fn();
-const mockBulkClaimContent = jest.fn();
-
-jest.mock('../../../../../src/frontend/src/api/client', () => ({
+jest.mock('@/api/client', () => ({
   apiClient: {
-    getUnclaimedContent: mockGetUnclaimedContent,
-    claimContent: mockClaimContent,
-    bulkClaimContent: mockBulkClaimContent,
+    getUnclaimedContent: jest.fn(),
+    claimContent: jest.fn(),
+    bulkClaimContent: jest.fn(),
   },
+}));
+
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadSharedApiClient: jest.fn(),
 }));
 
 import ClaimContentPage from '../../../../../src/frontend/app/dashboard/claim-content/page';
 
 describe('ClaimContentPage', () => {
+  const { loadSharedApiClient } = jest.requireMock('@/lib/api/lazyClient') as {
+    loadSharedApiClient: jest.Mock;
+  };
+  const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
+  const mockGetUnclaimedContent = mockedApiClient.getUnclaimedContent;
+  const mockClaimContent = mockedApiClient.claimContent;
+  const mockBulkClaimContent = mockedApiClient.bulkClaimContent;
   const mockUnclaimedContent = [
     {
       id: 'content-1',
@@ -79,6 +86,7 @@ describe('ClaimContentPage', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    loadSharedApiClient.mockResolvedValue(apiClient);
     mockGetUnclaimedContent.mockResolvedValue({
       content: mockUnclaimedContent,
       total: 3,

@@ -37,9 +37,24 @@ export interface CorsOptions {
 }
 
 export function buildCorsHeaders(options: CorsOptions = {}): Record<string, string> {
-  const headers = options.allowHeaders ?? process.env.CORS_ALLOW_HEADERS ?? 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token';
-  const methods = options.methods ?? 'GET,POST,PUT,DELETE,OPTIONS';
-  const maxAgeSeconds = options.maxAgeSeconds ?? Number(process.env.CORS_MAX_AGE ?? '86400');
+  const headers = options.allowHeaders ?? process.env.CORS_ALLOW_HEADERS;
+  if (!headers || headers.trim().length === 0) {
+    throw new Error('CORS_ALLOW_HEADERS must be set');
+  }
+
+  const methods = options.methods ?? process.env.CORS_ALLOW_METHODS;
+  if (!methods || methods.trim().length === 0) {
+    throw new Error('CORS_ALLOW_METHODS must be set');
+  }
+
+  const maxAgeValue = options.maxAgeSeconds ?? process.env.CORS_MAX_AGE;
+  if (maxAgeValue === undefined || maxAgeValue === null || String(maxAgeValue).trim().length === 0) {
+    throw new Error('CORS_MAX_AGE must be set');
+  }
+  const maxAgeSeconds = typeof maxAgeValue === 'number' ? maxAgeValue : Number(maxAgeValue);
+  if (Number.isNaN(maxAgeSeconds)) {
+    throw new Error('CORS_MAX_AGE must be a valid number');
+  }
   const resolvedOrigin = resolveCorsOrigin(options.origin ?? undefined);
 
   const corsHeaders: Record<string, string> = {

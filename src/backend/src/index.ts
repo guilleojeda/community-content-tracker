@@ -1,5 +1,6 @@
-/* istanbul ignore file */
-
-export const hello = (): string => {
-    return "Hello from backend!";
-  };
+export {
+  getDatabasePool,
+  setTestDatabasePool,
+  closeDatabasePool,
+  resetDatabaseCache,
+} from './database/config/database';

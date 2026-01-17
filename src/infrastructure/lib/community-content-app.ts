@@ -11,6 +11,11 @@ export interface CommunityContentAppProps {
   environment: string;
 
   /**
+   * Database name for the cluster
+   */
+  databaseName: string;
+
+  /**
    * Custom domain name for the site
    */
   domainName?: string;
@@ -49,7 +54,7 @@ export class CommunityContentApp extends Construct {
   constructor(scope: Construct, id: string, props: CommunityContentAppProps) {
     super(scope, id);
 
-    const { environment } = props;
+    const { environment, databaseName } = props;
     const config = getEnvironmentConfig(environment);
     const isProductionLike = config.isProductionLike === true;
     const isStaging = environment === 'staging';
@@ -58,7 +63,7 @@ export class CommunityContentApp extends Construct {
     const commonProps: cdk.StackProps = {
       env: {
         account: props.account || process.env.CDK_DEFAULT_ACCOUNT,
-        region: props.region || process.env.CDK_DEFAULT_REGION || 'us-east-1',
+        region: props.region || process.env.CDK_DEFAULT_REGION,
       },
       description: `Community Content Hub ${environment} infrastructure`,
       tags: {
@@ -74,6 +79,7 @@ export class CommunityContentApp extends Construct {
       ...commonProps,
       stackName: `CommunityContentHub-Database-${this.capitalizeFirst(environment)}`,
       environment,
+      databaseName,
       deletionProtection: config.deletionProtection ?? isProductionLike,
       backupRetentionDays: config.backupRetentionDays ?? (isProductionLike ? 30 : isStaging ? 14 : 7),
       minCapacity: config.minCapacity ?? (isProductionLike ? 1 : 0.5),
@@ -131,74 +137,3 @@ export class CommunityContentApp extends Construct {
 /**
  * Environment-specific configuration helper
  */
-export class EnvironmentConfig {
-  /**
-   * Get environment-specific configuration
-   */
-  static getConfig(environment: string) {
-    const configs = {
-      dev: {
-        deletionProtection: false,
-        backupRetentionDays: 7,
-        minCapacity: 0.5,
-        maxCapacity: 1,
-        enableWaf: false,
-        priceClass: 'PriceClass_100',
-      },
-    staging: {
-      deletionProtection: false,
-      backupRetentionDays: 14,
-      minCapacity: 0.5,
-      maxCapacity: 2,
-        enableWaf: false,
-        priceClass: 'PriceClass_100',
-      },
-    prod: {
-      deletionProtection: true,
-      backupRetentionDays: 30,
-      minCapacity: 1,
-      maxCapacity: 4,
-      enableWaf: true,
-      priceClass: 'PriceClass_All',
-    },
-    blue: {
-      deletionProtection: true,
-      backupRetentionDays: 30,
-      minCapacity: 1,
-      maxCapacity: 4,
-      enableWaf: true,
-      priceClass: 'PriceClass_All',
-    },
-    green: {
-      deletionProtection: true,
-      backupRetentionDays: 30,
-      minCapacity: 1,
-      maxCapacity: 4,
-      enableWaf: true,
-      priceClass: 'PriceClass_All',
-    },
-    };
-
-    return configs[environment as keyof typeof configs] || configs.dev;
-  }
-
-  /**
-   * Validate environment-specific domain configuration
-   */
-  static validateDomainConfig(environment: string, domainName?: string, certificateArn?: string): void {
-    const productionLikeEnvs = new Set(['prod', 'blue', 'green']);
-    if (productionLikeEnvs.has(environment)) {
-      if (!domainName || !certificateArn) {
-        throw new Error('Production environment requires both domainName and certificateArn');
-      }
-    }
-
-    if (domainName && !certificateArn) {
-      throw new Error('certificateArn is required when domainName is provided');
-    }
-
-    if (certificateArn && !domainName) {
-      throw new Error('domainName is required when certificateArn is provided');
-    }
-  }
-}

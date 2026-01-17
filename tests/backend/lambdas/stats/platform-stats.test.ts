@@ -69,7 +69,7 @@ describe('Platform Stats Lambda', () => {
     jest.clearAllMocks();
     process.env.CORS_ORIGIN = 'http://localhost:3000';
     delete process.env.CORS_CREDENTIALS;
-    delete process.env.STATS_CACHE_TTL;
+    process.env.STATS_CACHE_TTL = '60';
 
     mockQuery = jest.fn();
     mockPool = {
@@ -253,7 +253,7 @@ describe('Platform Stats Lambda', () => {
 
       expect(result.headers).toMatchObject({
         'Access-Control-Allow-Origin': 'http://localhost:3000',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+        'Access-Control-Allow-Headers': process.env.CORS_ALLOW_HEADERS,
         'Access-Control-Allow-Methods': 'GET,OPTIONS',
         'Content-Type': 'application/json',
         Vary: 'Origin',

@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
 import { getDatabasePool, closeDatabasePool } from '../../services/database';
 import { createErrorResponse, createSuccessResponse } from '../auth/utils';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 const MAX_LIMIT = 100;
 
@@ -12,12 +13,22 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'export:history' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     const authorizer: any = event.requestContext?.authorizer;
     const userId = authorizer?.userId || authorizer?.claims?.sub;
 
     if (!userId) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
     }
 
     const params = event.queryStringParameters || {};
@@ -83,7 +94,7 @@ export async function handler(
       };
     });
 
-    return createSuccessResponse(200, {
+    return withRateLimit(createSuccessResponse(200, {
       success: true,
       data: {
         history,
@@ -91,10 +102,13 @@ export async function handler(
         limit,
         offset,
       },
-    });
+    }));
   } catch (error: any) {
     console.error('Export history retrieval error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to fetch export history');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to fetch export history'),
+      rateLimit
+    );
   }
 }
 

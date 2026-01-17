@@ -2,13 +2,13 @@ import { SendMessageCommand, SendMessageCommandInput } from '@aws-sdk/client-sqs
 
 type CommandFactory<TInput, TCommand> = new (input: TInput) => TCommand;
 
-function normalizeCommand<TInput extends Record<string, unknown>, TCommand extends Record<string, unknown>>(
+function normalizeCommand<TInput extends object, TCommand extends object>(
   CommandCtor: CommandFactory<TInput, TCommand>,
   input: TInput
 ): TCommand {
   const command: any = new CommandCtor(input);
 
-  const normalizedInput = { ...input };
+  const normalizedInput = { ...(input as Record<string, unknown>) };
 
   try {
     Object.defineProperty(command, 'input', {

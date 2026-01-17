@@ -5,6 +5,7 @@ import { ContentRepository, ContentCreateData } from '../../repositories/Content
 import { UserRepository } from '../../repositories/UserRepository';
 import { getDatabasePool } from '../../services/database';
 import { buildCorsHeaders } from '../../services/cors';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 // CORS headers
 const getCorsHeaders = (origin?: string | null) => ({
@@ -177,12 +178,17 @@ export const handler = async (
   context: Context
 ): Promise<APIGatewayProxyResult> => {
   const originHeader = event.headers?.Origin || event.headers?.origin || undefined;
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
   const respondError = (status: number, code: string, message: string, details?: any) =>
-    errorResponse(status, code, message, details, originHeader);
+    attachRateLimitHeaders(errorResponse(status, code, message, details, originHeader), rateLimit);
   const respondSuccess = (status: number, body: any) =>
-    successResponse(status, body, originHeader);
+    attachRateLimitHeaders(successResponse(status, body, originHeader), rateLimit);
 
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'content:create' });
+    if (rateLimit && !rateLimit.allowed) {
+      return respondError(429, 'RATE_LIMITED', 'Too many requests');
+    }
 
     // Check authentication
     if (!event.requestContext?.authorizer?.userId) {

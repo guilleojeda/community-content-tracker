@@ -9,10 +9,10 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-jest.mock('@/api/client', () => ({
-  getPublicApiClient: () => ({
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadPublicApiClient: jest.fn(() => Promise.resolve({
     register: mockRegister,
-  }),
+  })),
 }));
 
 const fillForm = () => {
@@ -73,13 +73,12 @@ describe('RegisterPage', () => {
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
-    expect(mockRegister).toHaveBeenCalledWith({
-      email: 'user@example.com',
-      username: 'valid_user',
-      password: 'ValidPassword123!',
-    });
-
     await waitFor(() => {
+      expect(mockRegister).toHaveBeenCalledWith({
+        email: 'user@example.com',
+        username: 'valid_user',
+        password: 'ValidPassword123!',
+      });
       expect(screen.getByText(/registration successful/i)).toBeInTheDocument();
     });
 

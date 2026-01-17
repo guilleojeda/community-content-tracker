@@ -220,7 +220,7 @@ describe('API Gateway Authorizer Lambda', () => {
       mockTokenVerifier.verifyJwtToken.mockResolvedValue({
         isValid: false,
         error: {
-          code: 'INVALID_TOKEN',
+          code: 'AUTH_INVALID',
           message: 'Token is invalid',
           details: 'Invalid signature',
         },
@@ -232,7 +232,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('INVALID_TOKEN');
+      expect(result.context.error).toBe('AUTH_INVALID');
     });
 
     test('should handle missing Authorization header', async () => {
@@ -249,7 +249,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('MISSING_TOKEN');
+      expect(result.context.error).toBe('AUTH_REQUIRED');
     });
 
     test('should handle malformed Authorization header', async () => {
@@ -268,7 +268,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('MISSING_TOKEN');
+      expect(result.context.error).toBe('AUTH_REQUIRED');
     });
   });
 
@@ -428,7 +428,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('INSUFFICIENT_PRIVILEGES');
+      expect(result.context.error).toBe('PERMISSION_DENIED');
     });
   });
 
@@ -579,7 +579,7 @@ describe('API Gateway Authorizer Lambda', () => {
       mockTokenVerifier.verifyJwtToken.mockResolvedValue({
         isValid: false,
         error: {
-          code: 'TOKEN_EXPIRED',
+          code: 'AUTH_INVALID',
           message: 'Token has expired',
           details: 'jwt expired',
         },
@@ -613,7 +613,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('AUTHORIZATION_ERROR');
+      expect(result.context.error).toBe('INTERNAL_ERROR');
     });
 
     test('should handle database connection failure', async () => {
@@ -621,7 +621,7 @@ describe('API Gateway Authorizer Lambda', () => {
       mockTokenVerifier.verifyJwtToken.mockResolvedValue({
         isValid: false,
         error: {
-          code: 'DATABASE_ERROR',
+          code: 'INTERNAL_ERROR',
           message: 'Failed to retrieve user data',
           details: 'Connection timeout',
         },
@@ -633,7 +633,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('DATABASE_ERROR');
+      expect(result.context.error).toBe('INTERNAL_ERROR');
     });
 
     test('should handle missing environment variables', async () => {
@@ -646,7 +646,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('CONFIGURATION_ERROR');
+      expect(result.context.error).toBe('INTERNAL_ERROR');
     });
 
     test('should handle malformed method ARN', async () => {
@@ -662,7 +662,7 @@ describe('API Gateway Authorizer Lambda', () => {
       // Assert
       expect(result.principalId).toBe('unauthorized');
       expect(result.policyDocument.Statement[0].Effect).toBe('Deny');
-      expect(result.context.error).toBe('INVALID_REQUEST');
+      expect(result.context.error).toBe('INTERNAL_ERROR');
     });
   });
 
@@ -747,7 +747,7 @@ describe('API Gateway Authorizer Lambda', () => {
             resolve({
               isValid: false,
               error: {
-                code: 'NETWORK_ERROR',
+                code: 'INTERNAL_ERROR',
                 message: 'Authorization timeout',
                 details: 'Request took too long',
               },

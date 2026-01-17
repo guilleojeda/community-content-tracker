@@ -1,4 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
+import { randomUUID } from 'crypto';
 import { CognitoIdentityProviderClient, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { UserRepository } from '../../repositories/UserRepository';
 import { RegisterRequest, RegisterResponse, Visibility } from '../../../shared/types';
@@ -13,6 +14,7 @@ import {
 } from './utils';
 import { getDatabasePool } from '../../services/database';
 import { getAuthEnvironment } from './config';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 /**
  * Get Cognito client instance
@@ -31,26 +33,35 @@ export async function handler(
   console.log('Register request:', JSON.stringify(event, null, 2));
 
   try {
+    const isLocalAuthMode = process.env.LOCAL_AUTH_MODE === 'true';
+    const rateLimit = await applyRateLimit(event, { resource: 'auth:register', skipIfAuthorized: true });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(
+        createErrorResponse(429, 'RATE_LIMITED', 'Too many requests')
+      );
+    }
+
     // Parse and validate request body
     const { data: requestBody, error: parseError } = parseRequestBody<RegisterRequest>(event.body);
     if (parseError) {
-      return parseError;
+      return withRateLimit(parseError);
     }
 
     // Validate input
     const validation = validateRegistrationInput(requestBody!);
     if (!validation.isValid) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         'Validation failed',
         { fields: validation.errors }
-      );
+      ));
     }
 
     const { email, password, username } = requestBody!;
-
-    const authEnv = getAuthEnvironment();
 
     // Initialize database connection
     const dbPool = await getDatabasePool();
@@ -68,19 +79,19 @@ export async function handler(
           .map(([field, message]) => `${field}: ${message}`)
           .join(', ');
 
-        return createErrorResponse(
+        return withRateLimit(createErrorResponse(
           409,
           'DUPLICATE_RESOURCE',
           `User already exists - ${errorMessage}`
-        );
+        ));
       }
     } catch (dbError) {
       console.error('Database validation error:', dbError);
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         500,
         'INTERNAL_ERROR',
         'Failed to validate user uniqueness'
-      );
+      ));
     }
 
     // Generate profile slug
@@ -102,6 +113,40 @@ export async function handler(
 
     // Determine if user is AWS employee
     const isAwsEmp = isAwsEmployee(email);
+
+    if (isLocalAuthMode) {
+      let userId: string;
+      try {
+        const newUser = await userRepository.createUser({
+          cognitoSub: `local-${randomUUID()}`,
+          email,
+          username,
+          profileSlug,
+          defaultVisibility: Visibility.PRIVATE,
+          isAdmin: false,
+          isAwsEmployee: isAwsEmp,
+        });
+
+        userId = newUser.id;
+      } catch (dbError: any) {
+        console.error('Database user creation error:', dbError);
+        return withRateLimit(createErrorResponse(
+          500,
+          'INTERNAL_ERROR',
+          'Failed to create user account'
+        ));
+      }
+
+      const response: RegisterResponse = {
+        userId,
+        message: 'Please check your email to verify your account',
+      };
+
+      console.log('Local registration successful:', userId);
+      return withRateLimit(createSuccessResponse(201, response));
+    }
+
+    const authEnv = getAuthEnvironment();
 
     // Create user in Cognito
     const cognitoClient = getCognitoClient(authEnv.region);
@@ -125,7 +170,7 @@ export async function handler(
       console.log('Cognito user created:', cognitoUserSub);
     } catch (cognitoError: any) {
       console.error('Cognito signup error:', cognitoError);
-      return mapCognitoError(cognitoError);
+      return withRateLimit(mapCognitoError(cognitoError));
     }
 
     // Create user in database
@@ -155,11 +200,11 @@ export async function handler(
         console.error('Failed to cleanup Cognito user:', cleanupError);
       }
 
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         500,
         'INTERNAL_ERROR',
         'Failed to create user account'
-      );
+      ));
     }
 
     // Return success response
@@ -169,7 +214,7 @@ export async function handler(
     };
 
     console.log('Registration successful:', userId);
-    return createSuccessResponse(201, response);
+    return withRateLimit(createSuccessResponse(201, response));
 
   } catch (error: any) {
     console.error('Unexpected registration error:', error);

@@ -1,3 +1,5 @@
+import type { ApiErrorResponse as SharedApiErrorResponse } from './types';
+
 /**
  * Standardized error handling for AWS Community Content Hub
  *
@@ -11,40 +13,46 @@
  * }
  */
 
+export type ApiErrorCode =
+  | 'AUTH_REQUIRED'
+  | 'AUTH_INVALID'
+  | 'PERMISSION_DENIED'
+  | 'NOT_FOUND'
+  | 'VALIDATION_ERROR'
+  | 'DUPLICATE_RESOURCE'
+  | 'RATE_LIMITED'
+  | 'INTERNAL_ERROR';
+
 export interface ApiErrorDetails {
   [key: string]: any;
 }
 
-export interface ApiErrorResponse {
-  error: {
-    code: string;
-    message: string;
-    details?: ApiErrorDetails;
-  };
-}
+export type ApiErrorResponse = SharedApiErrorResponse;
 
 /**
  * Base error class for all application errors
  * Ensures consistent error structure across the application
  */
 export class ApiError extends Error {
-  public readonly code: string;
+  public readonly code: ApiErrorCode;
   public readonly statusCode: number;
   public readonly details?: ApiErrorDetails;
   public readonly isOperational: boolean;
+  public readonly retryable: boolean;
 
   constructor(
-    code: string,
+    code: ApiErrorCode,
     message: string,
     statusCode: number = 500,
     details?: ApiErrorDetails,
-    isOperational: boolean = true
+    options: { isOperational?: boolean; retryable?: boolean } = {}
   ) {
     super(message);
     this.code = code;
     this.statusCode = statusCode;
     this.details = details;
-    this.isOperational = isOperational;
+    this.isOperational = options.isOperational ?? true;
+    this.retryable = options.retryable ?? false;
 
     // Maintains proper stack trace for where error was thrown
     Error.captureStackTrace(this, this.constructor);
@@ -68,14 +76,7 @@ export class ApiError extends Error {
    * Check if error is critical (should trigger DLQ retry)
    */
   isCritical(): boolean {
-    const criticalCodes = [
-      'THROTTLING_ERROR',
-      'RESOURCE_NOT_FOUND',
-      'CONNECTION_ERROR',
-      'DATABASE_ERROR',
-      'TIMEOUT_ERROR',
-    ];
-    return criticalCodes.includes(this.code);
+    return this.retryable;
   }
 }
 
@@ -117,13 +118,19 @@ export class ConflictError extends ApiError {
 
 export class RateLimitError extends ApiError {
   constructor(message: string = 'Too many requests', resetAt?: Date) {
-    super('RATE_LIMITED', message, 429, resetAt ? { resetAt: resetAt.toISOString() } : undefined);
+    super(
+      'RATE_LIMITED',
+      message,
+      429,
+      resetAt ? { resetAt: resetAt.toISOString() } : undefined,
+      { retryable: true }
+    );
   }
 }
 
 export class InternalError extends ApiError {
   constructor(message: string = 'An unexpected error occurred', details?: ApiErrorDetails) {
-    super('INTERNAL_ERROR', message, 500, details, false);
+    super('INTERNAL_ERROR', message, 500, details, { isOperational: false });
   }
 }
 
@@ -132,44 +139,75 @@ export class InternalError extends ApiError {
  */
 export class ScraperError extends ApiError {
   constructor(scraperType: string, message: string, details?: ApiErrorDetails) {
-    super('SCRAPER_ERROR', message, 500, { scraperType, ...details });
+    super('INTERNAL_ERROR', message, 500, { type: 'SCRAPER', scraperType, ...details });
   }
 }
 
 export class ParsingError extends ApiError {
   constructor(source: string, message: string, details?: ApiErrorDetails) {
-    super('PARSING_ERROR', message, 500, { source, ...details });
+    super('INTERNAL_ERROR', message, 500, { type: 'PARSING', source, ...details });
   }
 }
 
 export class ExternalApiError extends ApiError {
   constructor(service: string, message: string, statusCode?: number, details?: ApiErrorDetails) {
-    super('EXTERNAL_API_ERROR', message, statusCode || 500, { service, ...details });
+    const resolvedStatus = statusCode ?? 500;
+    const isRateLimited = resolvedStatus === 429;
+    super(
+      isRateLimited ? 'RATE_LIMITED' : 'INTERNAL_ERROR',
+      message,
+      isRateLimited ? 429 : 500,
+      { type: 'EXTERNAL_API', service, statusCode: resolvedStatus, ...details },
+      { retryable: isRateLimited }
+    );
   }
 }
 
 export class ThrottlingError extends ApiError {
   constructor(service: string, resetAt?: Date) {
-    super('THROTTLING_ERROR', `${service} API rate limit exceeded`, 429,
-      resetAt ? { service, resetAt: resetAt.toISOString() } : { service }, true);
+    super(
+      'RATE_LIMITED',
+      `${service} API rate limit exceeded`,
+      429,
+      resetAt ? { type: 'THROTTLING', service, resetAt: resetAt.toISOString() } : { type: 'THROTTLING', service },
+      { retryable: true }
+    );
   }
 }
 
 export class ConnectionError extends ApiError {
   constructor(target: string, details?: ApiErrorDetails) {
-    super('CONNECTION_ERROR', `Failed to connect to ${target}`, 500, { target, ...details }, true);
+    super(
+      'INTERNAL_ERROR',
+      `Failed to connect to ${target}`,
+      500,
+      { type: 'CONNECTION', target, ...details },
+      { retryable: true }
+    );
   }
 }
 
 export class DatabaseError extends ApiError {
   constructor(operation: string, details?: ApiErrorDetails) {
-    super('DATABASE_ERROR', `Database operation failed: ${operation}`, 500, { operation, ...details }, true);
+    super(
+      'INTERNAL_ERROR',
+      `Database operation failed: ${operation}`,
+      500,
+      { type: 'DATABASE', operation, ...details },
+      { retryable: true }
+    );
   }
 }
 
 export class TimeoutError extends ApiError {
   constructor(operation: string, timeoutMs: number) {
-    super('TIMEOUT_ERROR', `Operation timed out: ${operation}`, 504, { operation, timeoutMs }, true);
+    super(
+      'INTERNAL_ERROR',
+      `Operation timed out: ${operation}`,
+      500,
+      { type: 'TIMEOUT', operation, timeoutMs },
+      { retryable: true }
+    );
   }
 }
 
@@ -253,6 +291,7 @@ export function formatErrorForLogging(error: unknown, context?: Record<string, a
     statusCode: apiError.statusCode,
     isOperational: apiError.isOperational,
     isCritical: apiError.isCritical(),
+    retryable: apiError.retryable,
     details: apiError.details,
     stack: apiError.stack,
     timestamp: new Date().toISOString(),

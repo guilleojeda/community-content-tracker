@@ -68,7 +68,7 @@ Sprint 5 is **COMPLETE** and **PRODUCTION-READY**. All 6 tasks (5.1-5.6) have be
 
 ### Non-Blocking Issues:
 1. Test execution requires local PostgreSQL database setup
-2. CDK deprecation warnings (S3Origin → S3BucketOrigin)
+2. CDK deprecation warnings (S3Origin -> S3BucketOrigin)
 3. 1 low-severity npm vulnerability (dev dependency)
 
 ### Recommendations:

@@ -4,11 +4,16 @@ const ClientEnvSchema = z.object({
   NEXT_PUBLIC_API_URL: z
     .string({ required_error: 'NEXT_PUBLIC_API_URL is required' })
     .url({ message: 'NEXT_PUBLIC_API_URL must be a valid URL' }),
+  NEXT_PUBLIC_SITE_URL: z
+    .string({ required_error: 'NEXT_PUBLIC_SITE_URL is required' })
+    .url({ message: 'NEXT_PUBLIC_SITE_URL must be a valid URL' }),
   NEXT_PUBLIC_COGNITO_USER_POOL_ID: z.string().optional(),
   NEXT_PUBLIC_COGNITO_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_AWS_REGION: z
     .string({ required_error: 'NEXT_PUBLIC_AWS_REGION is required' })
     .min(1, { message: 'NEXT_PUBLIC_AWS_REGION is required' }),
+  NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION: z.string().optional(),
+  NEXT_PUBLIC_YANDEX_SITE_VERIFICATION: z.string().optional(),
 });
 
 let cachedEnv: z.infer<typeof ClientEnvSchema> | null = null;
@@ -36,9 +41,12 @@ export function getClientEnvironment(): z.infer<typeof ClientEnvSchema> {
 function parseEnvironment(): z.infer<typeof ClientEnvSchema> {
   const source = {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
     NEXT_PUBLIC_COGNITO_USER_POOL_ID: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID,
     NEXT_PUBLIC_COGNITO_CLIENT_ID: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID,
     NEXT_PUBLIC_AWS_REGION: process.env.NEXT_PUBLIC_AWS_REGION,
+    NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION,
+    NEXT_PUBLIC_YANDEX_SITE_VERIFICATION: process.env.NEXT_PUBLIC_YANDEX_SITE_VERIFICATION,
   };
 
   const result = ClientEnvSchema.safeParse(source);
@@ -51,6 +59,7 @@ function parseEnvironment(): z.infer<typeof ClientEnvSchema> {
   return {
     ...result.data,
     NEXT_PUBLIC_API_URL: stripTrailingSlash(result.data.NEXT_PUBLIC_API_URL),
+    NEXT_PUBLIC_SITE_URL: stripTrailingSlash(result.data.NEXT_PUBLIC_SITE_URL),
   } as z.infer<typeof ClientEnvSchema>;
 }
 

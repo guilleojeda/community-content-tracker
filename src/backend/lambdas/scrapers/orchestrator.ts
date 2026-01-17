@@ -7,32 +7,68 @@ import { ChannelType } from '../../../shared/types';
 import { getDatabasePool } from '../../services/database';
 import { ExternalApiError, formatErrorForLogging } from '../../../shared/errors';
 
-const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
-const cloudWatchClient = new CloudWatchClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const REQUIRED_SCRAPER_ENV = [
+  'BLOG_SCRAPER_FUNCTION_NAME',
+  'YOUTUBE_SCRAPER_FUNCTION_NAME',
+  'GITHUB_SCRAPER_FUNCTION_NAME',
+];
 
-// Validate required environment variables at module load
-function validateEnvironment(): void {
-  const required = ['BLOG_SCRAPER_FUNCTION_NAME', 'YOUTUBE_SCRAPER_FUNCTION_NAME', 'GITHUB_SCRAPER_FUNCTION_NAME'];
-  const missing = required.filter(key => !process.env[key]);
+let lambdaClient: LambdaClient | null = null;
+let cloudWatchClient: CloudWatchClient | null = null;
+let cachedRegion: string | null = null;
 
+function resolveRegion(): string {
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+  if (!region || region.trim().length === 0) {
+    throw new Error('AWS_REGION must be set');
+  }
+  return region.trim();
+}
+
+function resolveEnvironment(): string {
+  const environment = process.env.ENVIRONMENT || process.env.NODE_ENV || 'dev';
+  return environment.trim().length > 0 ? environment.trim() : 'dev';
+}
+
+function resolveScraperFunctions(): {
+  blog?: string;
+  youtube?: string;
+  github?: string;
+} {
+  const missing = REQUIRED_SCRAPER_ENV.filter(key => !process.env[key]);
   if (missing.length > 0) {
     console.warn(`Missing scraper function names: ${missing.join(', ')} - some scrapers will not be invoked`);
   }
+
+  return {
+    blog: process.env.BLOG_SCRAPER_FUNCTION_NAME,
+    youtube: process.env.YOUTUBE_SCRAPER_FUNCTION_NAME,
+    github: process.env.GITHUB_SCRAPER_FUNCTION_NAME,
+  };
 }
 
-validateEnvironment();
+function getAwsClients(region: string): { lambdaClient: LambdaClient; cloudWatchClient: CloudWatchClient } {
+  if (!lambdaClient || !cloudWatchClient || cachedRegion !== region) {
+    lambdaClient = new LambdaClient({ region });
+    cloudWatchClient = new CloudWatchClient({ region });
+    cachedRegion = region;
+  }
 
-const BLOG_SCRAPER_FUNCTION = process.env.BLOG_SCRAPER_FUNCTION_NAME;
-const YOUTUBE_SCRAPER_FUNCTION = process.env.YOUTUBE_SCRAPER_FUNCTION_NAME;
-const GITHUB_SCRAPER_FUNCTION = process.env.GITHUB_SCRAPER_FUNCTION_NAME;
-const ENVIRONMENT = process.env.ENVIRONMENT || 'dev';
+  return { lambdaClient, cloudWatchClient };
+}
 
 // Lambda global scope - database pool persists across invocations
 let pool: Pool | null = null;
 
-async function publishMetric(metricName: string, value: number, unit: StandardUnit = StandardUnit.Count): Promise<void> {
+async function publishMetric(
+  client: CloudWatchClient,
+  environment: string,
+  metricName: string,
+  value: number,
+  unit: StandardUnit = StandardUnit.Count
+): Promise<void> {
   try {
-    await cloudWatchClient.send(new PutMetricDataCommand({
+    await client.send(new PutMetricDataCommand({
       Namespace: 'CommunityContentHub/ScraperOrchestrator',
       MetricData: [
         {
@@ -43,7 +79,7 @@ async function publishMetric(metricName: string, value: number, unit: StandardUn
           Dimensions: [
             {
               Name: 'Environment',
-              Value: ENVIRONMENT,
+              Value: environment,
             },
           ],
         },
@@ -61,7 +97,11 @@ interface ScraperResult {
   error?: string;
 }
 
-async function invokeScraper(functionName: string, retries = 2): Promise<ScraperResult> {
+async function invokeScraper(
+  client: LambdaClient,
+  functionName: string,
+  retries = 2
+): Promise<ScraperResult> {
   let lastError: any;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -74,7 +114,7 @@ async function invokeScraper(functionName: string, retries = 2): Promise<Scraper
 
       console.log(`Invoking scraper: ${functionName} (attempt ${attempt + 1}/${retries + 1})`);
 
-      const response = await lambdaClient.send(new InvokeCommand({
+      const response = await client.send(new InvokeCommand({
         FunctionName: functionName,
         InvocationType: 'Event', // Async invocation
       }));
@@ -121,6 +161,11 @@ export const handler = async (
   console.log('Starting scraper orchestration');
   console.log('Event:', JSON.stringify(event));
 
+  const region = resolveRegion();
+  const environment = resolveEnvironment();
+  const scraperFunctions = resolveScraperFunctions();
+  const { lambdaClient: activeLambdaClient, cloudWatchClient: activeCloudWatchClient } = getAwsClients(region);
+
   // Initialize database connection in global scope for reuse
   if (!pool) {
     pool = await getDatabasePool();
@@ -150,16 +195,16 @@ export const handler = async (
     // Build list of scrapers to invoke based on active channels
     const scrapersToInvoke: Array<{ name: string; label: string; type: ChannelType }> = [];
 
-    if (channelsByType[ChannelType.BLOG]?.length > 0 && BLOG_SCRAPER_FUNCTION) {
-      scrapersToInvoke.push({ name: BLOG_SCRAPER_FUNCTION, label: 'Blog RSS', type: ChannelType.BLOG });
+    if (channelsByType[ChannelType.BLOG]?.length > 0 && scraperFunctions.blog) {
+      scrapersToInvoke.push({ name: scraperFunctions.blog, label: 'Blog RSS', type: ChannelType.BLOG });
     }
 
-    if (channelsByType[ChannelType.YOUTUBE]?.length > 0 && YOUTUBE_SCRAPER_FUNCTION) {
-      scrapersToInvoke.push({ name: YOUTUBE_SCRAPER_FUNCTION, label: 'YouTube', type: ChannelType.YOUTUBE });
+    if (channelsByType[ChannelType.YOUTUBE]?.length > 0 && scraperFunctions.youtube) {
+      scrapersToInvoke.push({ name: scraperFunctions.youtube, label: 'YouTube', type: ChannelType.YOUTUBE });
     }
 
-    if (channelsByType[ChannelType.GITHUB]?.length > 0 && GITHUB_SCRAPER_FUNCTION) {
-      scrapersToInvoke.push({ name: GITHUB_SCRAPER_FUNCTION, label: 'GitHub', type: ChannelType.GITHUB });
+    if (channelsByType[ChannelType.GITHUB]?.length > 0 && scraperFunctions.github) {
+      scrapersToInvoke.push({ name: scraperFunctions.github, label: 'GitHub', type: ChannelType.GITHUB });
     }
 
     console.log(`Invoking ${scrapersToInvoke.length} scrapers based on active channels`);
@@ -178,7 +223,7 @@ export const handler = async (
       const scraper = scrapersToInvoke[i];
       console.log(`Invoking scraper ${i + 1}/${scrapersToInvoke.length}: ${scraper.label}`);
 
-      const result = await invokeScraper(scraper.name);
+      const result = await invokeScraper(activeLambdaClient, scraper.name);
       results.push(result);
 
       // Add delay between scrapers (except after the last one)
@@ -202,11 +247,11 @@ export const handler = async (
   // Publish CloudWatch metrics
   const successRate = results.length > 0 ? (successful / results.length) * 100 : 0;
   await Promise.all([
-    publishMetric('ScrapersInvoked', results.length),
-    publishMetric('ScrapersSucceeded', successful),
-    publishMetric('ScrapersFailed', failed),
-    publishMetric('OrchestrationTime', executionTime, StandardUnit.Milliseconds),
-    publishMetric('SuccessRate', successRate, StandardUnit.Percent),
+    publishMetric(activeCloudWatchClient, environment, 'ScrapersInvoked', results.length),
+    publishMetric(activeCloudWatchClient, environment, 'ScrapersSucceeded', successful),
+    publishMetric(activeCloudWatchClient, environment, 'ScrapersFailed', failed),
+    publishMetric(activeCloudWatchClient, environment, 'OrchestrationTime', executionTime, StandardUnit.Milliseconds),
+    publishMetric(activeCloudWatchClient, environment, 'SuccessRate', successRate, StandardUnit.Percent),
   ]);
 
   console.log(`Orchestration completed. Successful: ${successful}, Failed: ${failed}, Time: ${executionTime}ms`);

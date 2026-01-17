@@ -283,6 +283,21 @@ describe('Admin Bootstrap Script', () => {
             expect(env.databaseUrl).toBe('postgresql://content.user:S3cret!%40%23@db.aws.local:5544/contenthub');
         });
 
+        test('should build database URL without password when DB_PASSWORD is missing', () => {
+            delete process.env.DATABASE_URL;
+            process.env.DB_HOST = 'localhost';
+            process.env.DB_PORT = '5432';
+            process.env.DB_NAME = 'contenthub';
+            process.env.DB_USER = 'contentuser';
+            delete process.env.DB_PASSWORD;
+            process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
+
+            const { validateEnvironment } = loadScript();
+            const env = validateEnvironment();
+
+            expect(env.databaseUrl).toBe('postgresql://contentuser@localhost:5432/contenthub');
+        });
+
         test('should fail when database configuration is missing', () => {
             delete process.env.DATABASE_URL;
             delete process.env.DB_HOST;
@@ -296,14 +311,12 @@ describe('Admin Bootstrap Script', () => {
             expect(() => validateEnvironment()).toThrow(/Invalid environment: DATABASE_URL is required/);
         });
 
-        test('should use default AWS_REGION when not provided', () => {
+        test('should require AWS_REGION when not provided', () => {
             delete process.env.AWS_REGION;
             process.argv = ['node', 'script', '--email', 'admin@example.com', '--username', 'admin', '--password', 'SecurePass123!'];
 
             const { validateEnvironment } = loadScript();
-            const env = validateEnvironment();
-
-            expect(env.region).toBe('us-east-1');
+            expect(() => validateEnvironment()).toThrow('INVALID_ENVIRONMENT');
         });
     });
 

@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda
 import { getDatabasePool } from '../../services/database';
 import { createErrorResponse } from '../auth/utils';
 import { logExportEvent } from './utils';
+import { applyRateLimit, attachRateLimitHeaders } from '../../services/rateLimitPolicy';
 
 const VALID_PROGRAM_TYPES = ['community_builder', 'hero', 'ambassador', 'user_group_leader'];
 
@@ -19,21 +20,31 @@ export async function handler(
   event: APIGatewayProxyEvent,
   context: Context
 ): Promise<APIGatewayProxyResult> {
+  let rateLimit: Awaited<ReturnType<typeof applyRateLimit>> = null;
+
   try {
+    rateLimit = await applyRateLimit(event, { resource: 'export:csv' });
+    const withRateLimit = (response: APIGatewayProxyResult): APIGatewayProxyResult =>
+      attachRateLimitHeaders(response, rateLimit);
+
+    if (rateLimit && !rateLimit.allowed) {
+      return withRateLimit(createErrorResponse(429, 'RATE_LIMITED', 'Too many requests'));
+    }
+
     const authorizer: any = event.requestContext?.authorizer;
     if (!authorizer || !authorizer.userId) {
-      return createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required');
+      return withRateLimit(createErrorResponse(401, 'AUTH_REQUIRED', 'Authentication required'));
     }
 
     const userId = authorizer.userId;
     const body: ExportRequest = JSON.parse(event.body || '{}');
 
     if (!body.programType || !VALID_PROGRAM_TYPES.includes(body.programType)) {
-      return createErrorResponse(
+      return withRateLimit(createErrorResponse(
         400,
         'VALIDATION_ERROR',
         `Invalid program type. Must be one of: ${VALID_PROGRAM_TYPES.join(', ')}`
-      );
+      ));
     }
 
     const pool = await getDatabasePool();
@@ -153,17 +164,20 @@ export async function handler(
       console.error('Failed to log export event:', error);
     }
 
-    return {
+    return withRateLimit({
       statusCode: 200,
       headers: {
         'Content-Type': 'text/csv',
         'Content-Disposition': `attachment; filename="${body.programType}_export.csv"`,
       },
       body: csvContent,
-    };
+    });
   } catch (error: any) {
     console.error('CSV export error:', error);
-    return createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to export CSV');
+    return attachRateLimitHeaders(
+      createErrorResponse(500, 'INTERNAL_ERROR', 'Failed to export CSV'),
+      rateLimit
+    );
   }
 }
 

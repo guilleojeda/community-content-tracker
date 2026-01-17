@@ -1,6 +1,14 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+jest.mock('next/link', () => {
+  return ({ href, children, ...props }: { href: string; children: React.ReactNode }) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  );
+});
+
 const mockIsBetaModeActive = jest.fn(() => false);
 
 jest.mock('@/lib/featureFlags', () => ({
@@ -8,7 +16,12 @@ jest.mock('@/lib/featureFlags', () => ({
 }));
 
 jest.mock('next/dynamic', () => {
-  return () => () => <div data-testid="cookie-consent-stub" />;
+  return (_loader: unknown, options?: { loading?: () => React.ReactNode }) => {
+    if (options?.loading) {
+      options.loading();
+    }
+    return () => <div data-testid="cookie-consent-stub" />;
+  };
 });
 
 const originalEnv = { ...process.env };
@@ -57,7 +70,7 @@ describe('RootLayout component', () => {
   });
 
   it('shows beta indicators and feedback entrypoints when feature flag active', async () => {
-    process.env.NEXT_PUBLIC_DOMAIN = 'community.aws';
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://community.aws';
     mockIsBetaModeActive.mockReturnValue(true);
 
     const layoutModule = await loadLayoutModule();

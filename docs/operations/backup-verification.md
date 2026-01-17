@@ -5,15 +5,14 @@ This guide validates automated backups for the Aurora PostgreSQL cluster and S3 
 
 ## Database backups
 1. **Identify snapshot:**
-   - Open RDS console → `community-content-tracker-<env>` cluster.
+   - Open RDS console -> `community-content-tracker-<env>` cluster.
    - Locate the latest automated snapshot (`rds:AutomatedSnapshot`).
 2. **Restore to staging clone:**
    - Restore the snapshot to a temporary cluster named `content-backup-verify-<date>` with minimal ACUs.
-   - Update security group to allow bastion access.
 3. **Run verification script:**
-   - From the bastion host execute `psql "$DATABASE_URL" -f scripts/verify-backup.sql`.
+   - Use the RDS Query Editor or RDS Data API to execute the statements in `scripts/verify-backup.sql`.
    - The script checks core row counts, pgvector/pg_trgm extensions, recent audit log activity, and export metadata recorded in `analytics_events`.
-   - Compare the returned counts with production dashboards (Grafana → GDPR Compliance) and investigate deltas >1%.
+   - Compare the returned counts with production dashboards (Grafana -> GDPR Compliance) and investigate deltas >1%.
 4. **Tear down clone:**
    - Delete the temporary cluster once verification succeeds (within 24 hours).
 5. **Log evidence:**

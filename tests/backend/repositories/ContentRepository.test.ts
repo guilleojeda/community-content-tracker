@@ -83,6 +83,43 @@ describe('ContentRepository', () => {
     });
   });
 
+  describe('findByIdForViewer', () => {
+    it('returns private content for the owner and admin', async () => {
+      const content = await createTestContent(pool, testUserId, {
+        title: 'Private Content',
+        visibility: 'private',
+      });
+
+      const ownerResult = await contentRepository.findByIdForViewer(content.id, testUserId);
+      expect(ownerResult?.id).toBe(content.id);
+
+      const adminResult = await contentRepository.findByIdForViewer(content.id, adminUserId);
+      expect(adminResult?.id).toBe(content.id);
+    });
+
+    it('returns null for unauthorized viewers', async () => {
+      const content = await createTestContent(pool, testUserId, {
+        title: 'Private Content',
+        visibility: 'private',
+      });
+
+      const otherUser = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const result = await contentRepository.findByIdForViewer(content.id, otherUser.id);
+
+      expect(result).toBeNull();
+    });
+
+    it('returns public content to anonymous viewers', async () => {
+      const content = await createTestContent(pool, testUserId, {
+        title: 'Public Content',
+        visibility: 'public',
+      });
+
+      const result = await contentRepository.findByIdForViewer(content.id, null);
+      expect(result?.id).toBe(content.id);
+    });
+  });
+
   describe('findByUserId', () => {
     it('should find all content for a user', async () => {
       const content1 = await createTestContent(pool, testUserId, { title: 'Content 1' });
@@ -107,7 +144,8 @@ describe('ContentRepository', () => {
       });
 
       // Viewer as different user should only see public content
-      const results = await contentRepository.findByUserId(testUserId, { viewerId: adminUserId });
+      const regularViewer = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const results = await contentRepository.findByUserId(testUserId, { viewerId: regularViewer.id });
 
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe(publicContent.id);
@@ -159,8 +197,9 @@ describe('ContentRepository', () => {
         visibility: 'public',
       });
 
+      const regularViewer = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
       const results = await contentRepository.findByContentType(ContentType.BLOG, {
-        viewerId: adminUserId,
+        viewerId: regularViewer.id,
       });
 
       expect(results).toHaveLength(1);
@@ -286,7 +325,8 @@ describe('ContentRepository', () => {
         visibility: 'public',
       });
 
-      const results = await contentRepository.searchContent('lambda', { viewerId: adminUserId });
+      const regularViewer = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const results = await contentRepository.searchContent('lambda', { viewerId: regularViewer.id });
 
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe(publicContent.id);
@@ -388,7 +428,8 @@ describe('ContentRepository', () => {
         visibility: 'private',
       });
 
-      const results = await contentRepository.findRecentContent(30, { viewerId: adminUserId });
+      const regularViewer = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const results = await contentRepository.findRecentContent(30, { viewerId: regularViewer.id });
 
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe(publicContent.id);
@@ -435,7 +476,8 @@ describe('ContentRepository', () => {
         VALUES ($1, 10.0), ($2, 5.0)
       `, [privateContent.id, publicContent.id]);
 
-      const results = await contentRepository.findTrendingContent({ viewerId: adminUserId });
+      const regularViewer = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const results = await contentRepository.findTrendingContent({ viewerId: regularViewer.id });
 
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe(publicContent.id);
@@ -474,7 +516,8 @@ describe('ContentRepository', () => {
         visibility: 'public',
       });
 
-      const results = await contentRepository.findByTags(['aws'], { viewerId: adminUserId });
+      const regularViewer = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const results = await contentRepository.findByTags(['aws'], { viewerId: regularViewer.id });
 
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe(publicContent.id);
@@ -786,7 +829,8 @@ describe('ContentRepository', () => {
       expect(ownerResults).toHaveLength(1);
 
       // Other users cannot see it
-      const otherResults = await contentRepository.findByUserId(testUserId, { viewerId: adminUserId });
+      const regularViewer = await createTestUser(pool, { isAdmin: false, isAwsEmployee: false });
+      const otherResults = await contentRepository.findByUserId(testUserId, { viewerId: regularViewer.id });
       expect(otherResults).toHaveLength(0);
     });
 

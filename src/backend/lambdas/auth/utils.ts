@@ -127,7 +127,7 @@ export async function validateAdminPrivileges(
       return {
         isValid: false,
         error: {
-          code: 'INSUFFICIENT_PRIVILEGES',
+          code: 'PERMISSION_DENIED',
           message: `Admin privileges required for operation: ${operation}`,
         },
       };
@@ -140,7 +140,7 @@ export async function validateAdminPrivileges(
     return {
       isValid: false,
       error: {
-        code: 'PRIVILEGE_CHECK_FAILED',
+        code: 'INTERNAL_ERROR',
         message: 'Failed to validate admin privileges',
       },
     };
@@ -404,9 +404,9 @@ export function validateRegistrationInput(input: RegisterRequest): ValidationRes
   if (!input.username) {
     errors.username = 'Username is required';
   } else if (!isValidUsername(input.username)) {
-    errors.username = 'Username can only contain letters, numbers, and underscores';
-  } else if (input.username.length < 3 || input.username.length > 30) {
-    errors.username = 'Username must be between 3 and 30 characters';
+    errors.username = 'Username can only contain letters, numbers, hyphens, and underscores';
+  } else if (input.username.length < 3 || input.username.length > 100) {
+    errors.username = 'Username must be between 3 and 100 characters';
   }
 
   return {
@@ -515,7 +515,7 @@ export function isStrongPassword(password: string): boolean {
  * Check if username format is valid
  */
 export function isValidUsername(username: string): boolean {
-  const usernameRegex = /^[a-zA-Z0-9_]+$/;
+  const usernameRegex = /^[a-zA-Z0-9_-]+$/;
   return usernameRegex.test(username);
 }
 
@@ -683,7 +683,7 @@ export function parseRequestBody<T>(body: string | null): { data?: T; error?: an
 /**
  * Parse and validate query parameters
  */
-export function parseQueryParams(queryStringParameters: Record<string, string> | null): {
+export function parseQueryParams(queryStringParameters: Record<string, string | undefined> | null): {
   email?: string;
   code?: string;
   error?: any;

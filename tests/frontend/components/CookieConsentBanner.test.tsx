@@ -66,6 +66,39 @@ describe('CookieConsentBanner', () => {
     expect(screen.queryByText(/we use cookies/i)).not.toBeInTheDocument();
   });
 
+  it('records acceptance without access token and skips backend call', async () => {
+    const clientSpy = jest.spyOn(require('@/lib/api/lazyClient'), 'loadAuthenticatedApiClient');
+
+    render(<CookieConsentBanner />);
+
+    fireEvent.click(screen.getByRole('button', { name: /accept/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/we use cookies/i)).not.toBeInTheDocument();
+    });
+
+    expect(window.localStorage.setItem).toHaveBeenCalledWith('cookie-consent', 'accepted');
+    expect(clientSpy).not.toHaveBeenCalled();
+  });
+
+  it('hides banner even if consent update fails', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const mockClient = { manageConsent: jest.fn().mockRejectedValue(new Error('network')) };
+    jest.spyOn(require('@/lib/api/lazyClient'), 'loadAuthenticatedApiClient').mockResolvedValue(mockClient);
+
+    render(<CookieConsentBanner />);
+
+    window.localStorage.setItem('accessToken', 'token');
+    fireEvent.click(screen.getByRole('button', { name: /accept/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/we use cookies/i)).not.toBeInTheDocument();
+    });
+
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it('records decline without hitting backend', () => {
     render(<CookieConsentBanner />);
 
@@ -77,6 +110,14 @@ describe('CookieConsentBanner', () => {
 
   it('does not render when consent already given', () => {
     window.localStorage.setItem('cookie-consent', 'accepted');
+
+    render(<CookieConsentBanner />);
+
+    expect(screen.queryByText(/we use cookies/i)).not.toBeInTheDocument();
+  });
+
+  it('does not render when consent already declined', () => {
+    window.localStorage.setItem('cookie-consent', 'declined');
 
     render(<CookieConsentBanner />);
 

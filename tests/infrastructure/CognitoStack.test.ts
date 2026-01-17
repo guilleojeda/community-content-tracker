@@ -11,79 +11,65 @@ describe('CognitoStack', () => {
   let stack: CognitoStack;
   let template: Template;
 
-  const mockConfig: EnvironmentConfig = {
-    environment: 'test',
-    aws: {
-      region: 'us-east-1'
-    },
-    database: {
-      instanceType: 't3.micro',
-      allocatedStorage: 20,
-      maxAllocatedStorage: 50,
-      backupRetentionDays: 1,
-      multiAz: false,
-      deletionProtection: false,
-      performanceInsightsEnabled: false,
-      monitoringIntervalSeconds: 0
-    },
-    cognito: {
-      passwordPolicy: {
-        minLength: 12,
-        requireLowercase: true,
-        requireUppercase: true,
-        requireNumbers: true,
-        requireSymbols: true,
-        tempPasswordValidityDays: 3
+  const buildConfig = (overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig => {
+    const baseConfig: EnvironmentConfig = {
+      environment: 'test',
+      cognito: {
+        passwordPolicy: {
+          minLength: 12,
+          requireLowercase: true,
+          requireUppercase: true,
+          requireNumbers: true,
+          requireSymbols: true,
+          tempPasswordValidityDays: 3,
+        },
+        mfaConfiguration: 'OPTIONAL',
+        standardThreatProtectionMode: 'AUDIT',
+        deletionProtection: false,
       },
-      mfaConfiguration: 'OPTIONAL',
-      advancedSecurityMode: 'AUDIT',
-      deletionProtection: false
-    },
-    apiGateway: {
-      throttling: {
-        rateLimit: 100,
-        burstLimit: 200
+      lambda: {
+        timeout: 30,
+        memorySize: 256,
+        tracing: 'Active',
+        environmentVariables: {
+          LOG_LEVEL: 'debug',
+          NODE_ENV: 'test',
+        },
       },
-      caching: {
-        enabled: false
+      tags: {
+        Project: 'CommunityContentTracker',
+        Owner: 'AWS-Community-Team',
+        CostCenter: 'test',
       },
-      logging: {
-        level: 'INFO',
-        dataTrace: true,
-        metricsEnabled: true,
-        retentionDays: 7
+    };
+
+    return {
+      ...baseConfig,
+      ...overrides,
+      cognito: {
+        ...baseConfig.cognito,
+        ...(overrides.cognito ?? {}),
+        passwordPolicy: {
+          ...baseConfig.cognito.passwordPolicy,
+          ...(overrides.cognito?.passwordPolicy ?? {}),
+        },
       },
-      wafEnabled: false,
-      allowedOrigins: ['http://localhost:3000']
-    },
-    lambda: {
-      runtime: 'nodejs18.x',
-      timeout: 30,
-      memorySize: 256,
-      tracing: 'Active',
-      environmentVariables: {
-        logLevel: 'debug',
-        nodeEnv: 'test'
-      }
-    },
-    monitoring: {
-      cloudWatchRetentionDays: 7,
-      enableXRay: true,
-      enableDetailedMonitoring: false
-    },
-    security: {
-      enableVpcFlowLogs: false,
-      encryptionAtRest: true,
-      encryptionInTransit: true
-    },
-    tags: {
-      Project: 'CommunityContentTracker',
-      Owner: 'AWS-Community-Team',
-      CostCenter: 'test',
-      BackupRequired: 'false',
-      DataClassification: 'internal'
-    }
+      lambda: {
+        ...baseConfig.lambda,
+        ...(overrides.lambda ?? {}),
+        environmentVariables: {
+          ...baseConfig.lambda.environmentVariables,
+          ...(overrides.lambda?.environmentVariables ?? {}),
+        },
+      },
+      tags: {
+        ...baseConfig.tags,
+        ...(overrides.tags ?? {}),
+      },
+    };
   };
+
+  const mockConfig = buildConfig();
 
   beforeEach(() => {
     app = new App();
@@ -142,19 +128,34 @@ describe('CognitoStack', () => {
       });
     });
 
-    test('should enable advanced security features', () => {
-      // Check if UserPoolAddOns exists or if advanced security is configured
-      try {
-        template.hasResourceProperties('AWS::Cognito::UserPool', {
-          UserPoolAddOns: {
-            AdvancedSecurityMode: 'AUDIT'
-          }
-        });
-      } catch (e) {
-        // If UserPoolAddOns is not present, advanced security might be disabled by default
-        // which is acceptable for this test environment
-        expect(true).toBe(true); // Pass the test
-      }
+    test('should enable threat protection features', () => {
+      template.hasResourceProperties('AWS::Cognito::UserPool', {
+        UserPoolAddOns: {
+          AdvancedSecurityMode: 'AUDIT'
+        }
+      });
+    });
+
+    test('should allow threat protection to be turned off', () => {
+      const offApp = new App();
+      const offStack = new CognitoStack(offApp, 'TestCognitoStackOff', {
+        config: buildConfig({
+          cognito: {
+            standardThreatProtectionMode: 'OFF',
+          },
+        }),
+        env: {
+          account: '123456789012',
+          region: 'us-east-1',
+        },
+      });
+      const offTemplate = Template.fromStack(offStack);
+
+      offTemplate.hasResourceProperties('AWS::Cognito::UserPool', {
+        UserPoolAddOns: {
+          AdvancedSecurityMode: 'OFF',
+        },
+      });
     });
   });
 
@@ -228,6 +229,29 @@ describe('CognitoStack', () => {
         Handler: 'index.handler',
         Timeout: 30,
         MemorySize: 256
+      });
+    });
+
+    test('should use pass-through tracing when disabled', () => {
+      const passThroughApp = new App();
+      const passThroughStack = new CognitoStack(passThroughApp, 'TestCognitoStackPassThrough', {
+        config: buildConfig({
+          lambda: {
+            tracing: 'PassThrough',
+          },
+        }),
+        env: {
+          account: '123456789012',
+          region: 'us-east-1',
+        },
+      });
+      const passThroughTemplate = Template.fromStack(passThroughStack);
+
+      passThroughTemplate.hasResourceProperties('AWS::Lambda::Function', {
+        FunctionName: Match.stringLikeRegexp('.*pre-signup.*'),
+        TracingConfig: {
+          Mode: 'PassThrough',
+        },
       });
     });
 
@@ -404,7 +428,7 @@ describe('CognitoStack', () => {
             requireSymbols: true,
             tempPasswordValidityDays: 1
           },
-          advancedSecurityMode: 'ENFORCED' as const,
+          standardThreatProtectionMode: 'ENFORCED' as const,
           deletionProtection: true
         }
       };
@@ -427,7 +451,10 @@ describe('CognitoStack', () => {
             TemporaryPasswordValidityDays: 1
           }
         },
-        DeletionProtection: 'ACTIVE'
+        DeletionProtection: 'ACTIVE',
+        UserPoolAddOns: {
+          AdvancedSecurityMode: 'ENFORCED'
+        }
       });
     });
 
@@ -453,6 +480,58 @@ describe('CognitoStack', () => {
 
       mfaTemplate.hasResourceProperties('AWS::Cognito::UserPool', {
         MfaConfiguration: 'ON' // CDK translates 'REQUIRED' to 'ON'
+      });
+    });
+
+    test('should allow MFA to be disabled explicitly', () => {
+      const mfaOffConfig = {
+        ...mockConfig,
+        cognito: {
+          ...mockConfig.cognito,
+          mfaConfiguration: 'OFF' as const
+        }
+      };
+
+      const mfaOffApp = new App();
+      const mfaOffStack = new CognitoStack(mfaOffApp, 'MfaOffCognitoStack', {
+        config: mfaOffConfig,
+        env: {
+          account: '123456789012',
+          region: 'us-east-1'
+        }
+      });
+
+      const mfaOffTemplate = Template.fromStack(mfaOffStack);
+
+      mfaOffTemplate.hasResourceProperties('AWS::Cognito::UserPool', {
+        MfaConfiguration: 'OFF'
+      });
+    });
+
+    test('should default threat protection mode to AUDIT for unknown values', () => {
+      const securityConfig = {
+        ...mockConfig,
+        cognito: {
+          ...mockConfig.cognito,
+          standardThreatProtectionMode: 'UNKNOWN' as any
+        }
+      };
+
+      const securityApp = new App();
+      const securityStack = new CognitoStack(securityApp, 'SecurityDefaultStack', {
+        config: securityConfig,
+        env: {
+          account: '123456789012',
+          region: 'us-east-1'
+        }
+      });
+
+      const securityTemplate = Template.fromStack(securityStack);
+
+      securityTemplate.hasResourceProperties('AWS::Cognito::UserPool', {
+        UserPoolAddOns: {
+          AdvancedSecurityMode: 'AUDIT'
+        }
       });
     });
   });
@@ -534,7 +613,98 @@ describe('CognitoStack', () => {
             region: 'us-east-1'
           }
         });
-      }).toThrow('Password minimum length must be at least 8 characters'); // Stack should validate configuration
+      }).toThrow('Password minimum length must be at least 12 characters'); // Stack should validate configuration
+    });
+
+    test('should reject password policy lengths above 128 characters', () => {
+      const invalidConfig = {
+        ...mockConfig,
+        cognito: {
+          ...mockConfig.cognito,
+          passwordPolicy: {
+            ...mockConfig.cognito.passwordPolicy,
+            minLength: 129
+          }
+        }
+      };
+
+      expect(() => {
+        const errorApp = new App();
+        new CognitoStack(errorApp, 'InvalidLengthStack', {
+          config: invalidConfig,
+          env: {
+            account: '123456789012',
+            region: 'us-east-1'
+          }
+        });
+      }).toThrow('Password minimum length cannot exceed 128 characters');
+    });
+
+    test('should reject unsupported MFA configuration values', () => {
+      const invalidConfig = {
+        ...mockConfig,
+        cognito: {
+          ...mockConfig.cognito,
+          mfaConfiguration: 'INVALID' as any
+        }
+      };
+
+      expect(() => {
+        const errorApp = new App();
+        new CognitoStack(errorApp, 'InvalidMfaStack', {
+          config: invalidConfig,
+          env: {
+            account: '123456789012',
+            region: 'us-east-1'
+          }
+        });
+      }).toThrow('Invalid MFA configuration: INVALID');
+    });
+
+    test('should require callback URLs to be configured', () => {
+      const originalCallback = process.env.COGNITO_CALLBACK_URLS;
+      const originalLogout = process.env.COGNITO_LOGOUT_URLS;
+      process.env.COGNITO_CALLBACK_URLS = '';
+      process.env.COGNITO_LOGOUT_URLS = 'http://localhost:3000/logout';
+
+      try {
+        const errorApp = new App();
+        expect(() => {
+          new CognitoStack(errorApp, 'MissingCallbackStack', {
+            config: mockConfig,
+            env: {
+              account: '123456789012',
+              region: 'us-east-1'
+            }
+          });
+        }).toThrow('COGNITO_CALLBACK_URLS must be set');
+      } finally {
+        process.env.COGNITO_CALLBACK_URLS = originalCallback;
+        process.env.COGNITO_LOGOUT_URLS = originalLogout;
+      }
+    });
+
+    test('should require at least one logout URL', () => {
+      const originalCallback = process.env.COGNITO_CALLBACK_URLS;
+      const originalLogout = process.env.COGNITO_LOGOUT_URLS;
+      process.env.COGNITO_CALLBACK_URLS = 'http://localhost:3000/callback';
+      process.env.COGNITO_LOGOUT_URLS = ' , ';
+
+      try {
+        const errorApp = new App();
+        expect(() => {
+          new CognitoStack(errorApp, 'MissingLogoutStack', {
+            config: mockConfig,
+            env: {
+              account: '123456789012',
+              region: 'us-east-1'
+            }
+          });
+        }).toThrow('COGNITO_LOGOUT_URLS must include at least one URL');
+      } finally {
+        process.env.COGNITO_CALLBACK_URLS = originalCallback;
+        process.env.COGNITO_LOGOUT_URLS = originalLogout;
+      }
     });
   });
 
@@ -557,17 +727,6 @@ describe('CognitoStack Integration Tests', () => {
     const stack = new CognitoStack(app, 'IntegrationTestStack', {
       config: {
         environment: 'test',
-        aws: { region: 'us-east-1' },
-        database: {
-          instanceType: 't3.micro',
-          allocatedStorage: 20,
-          maxAllocatedStorage: 50,
-          backupRetentionDays: 1,
-          multiAz: false,
-          deletionProtection: false,
-          performanceInsightsEnabled: false,
-          monitoringIntervalSeconds: 0
-        },
         cognito: {
           passwordPolicy: {
             minLength: 12,
@@ -575,44 +734,24 @@ describe('CognitoStack Integration Tests', () => {
             requireUppercase: true,
             requireNumbers: true,
             requireSymbols: true,
-            tempPasswordValidityDays: 3
+            tempPasswordValidityDays: 3,
           },
           mfaConfiguration: 'OPTIONAL',
-          advancedSecurityMode: 'AUDIT',
-          deletionProtection: false
-        },
-        apiGateway: {
-          throttling: { rateLimit: 100, burstLimit: 200 },
-          caching: { enabled: false },
-          logging: { level: 'INFO', dataTrace: true, metricsEnabled: true, retentionDays: 7 },
-          wafEnabled: false,
-          allowedOrigins: ['http://localhost:3000']
+          standardThreatProtectionMode: 'AUDIT',
+          deletionProtection: false,
         },
         lambda: {
-          runtime: 'nodejs18.x',
           timeout: 30,
           memorySize: 256,
           tracing: 'Active',
-          environmentVariables: { logLevel: 'debug', nodeEnv: 'test' }
-        },
-        monitoring: {
-          cloudWatchRetentionDays: 7,
-          enableXRay: true,
-          enableDetailedMonitoring: false
-        },
-        security: {
-          enableVpcFlowLogs: false,
-          encryptionAtRest: true,
-          encryptionInTransit: true
+          environmentVariables: { LOG_LEVEL: 'debug', NODE_ENV: 'test' },
         },
         tags: {
           Project: 'CommunityContentTracker',
           Owner: 'AWS-Community-Team',
           CostCenter: 'test',
-          BackupRequired: 'false',
-          DataClassification: 'internal'
-        }
-      } as EnvironmentConfig
+        },
+      } as EnvironmentConfig,
     });
 
     const template = Template.fromStack(stack);

@@ -9,15 +9,15 @@
 
 | Criterion | Result | Evidence |
 | --- | --- | --- |
-| `npm run test:workspaces` (backend, frontend, shared, infra) | ✅ | All Jest suites (1,351 backend + 596 frontend/infrastructure cases) passed; see CI-style output in console (command run 2025‑11‑12). |
-| Playwright smoke (`npm run playwright:test`) | ✅ | 12 UI smoke specs green across Chromium/Firefox/WebKit; see terminal log with `Static UI smoke tests` (2025‑11‑12). |
-| Backend coverage ≥90% | ✅ | Lines 96.53%, Statements 96.62%, Branches 90.94% (`src/backend/coverage/coverage-summary.json:1-5`). |
-| Frontend coverage ≥90% (Lines/Statements) | ✅ | Lines 97.34%, Statements 96.56% (`src/frontend/coverage/coverage-summary.json:1-5`). |
-| Frontend **branch** coverage ≥90% | ✅ | Branches 90.47% (1,188/1,313) after latest analytics/admin tests; remaining low spot is `AdminUsersView` at 88.42% (`src/frontend/coverage/coverage-summary.json:1-15`). |
-| `npm run typecheck` | ✅ | All workspaces compile via `tsc --noEmit` (command log 2025‑11‑12). |
-| `npm run build` | ✅ | Backend TS build + Next.js production build & static export complete (`next build` summary in root console). |
-| `npm run audit --audit-level=high` | ✅ | Reports “found 0 vulnerabilities” (2025‑11‑12). |
-| Database migrations | ✅ | `scripts/run-local-migrations.sh` executed via embedded Postgres fallback (Docker unavailable) and applied all migrations through notifications table (`scripts/run-local-migrations.sh:1-40`, console log). |
+| `npm run test:workspaces` (backend, frontend, shared, infra) | [PASS] | All Jest suites (1,351 backend + 596 frontend/infrastructure cases) passed; see CI-style output in console (command run 2025‑11‑12). |
+| Playwright smoke (`npm run playwright:test`) | [PASS] | 12 UI smoke specs green across Chromium/Firefox/WebKit; see terminal log with `Static UI smoke tests` (2025‑11‑12). |
+| Backend coverage ≥90% | [PASS] | Lines 96.53%, Statements 96.62%, Branches 90.94% (`src/backend/coverage/coverage-summary.json:1-5`). |
+| Frontend coverage ≥90% (Lines/Statements) | [PASS] | Lines 97.34%, Statements 96.56% (`src/frontend/coverage/coverage-summary.json:1-5`). |
+| Frontend **branch** coverage ≥90% | [PASS] | Branches 90.47% (1,188/1,313) after latest analytics/admin tests; remaining low spot is `AdminUsersView` at 88.42% (`src/frontend/coverage/coverage-summary.json:1-15`). |
+| `npm run typecheck` | [PASS] | All workspaces compile via `tsc --noEmit` (command log 2025‑11‑12). |
+| `npm run build` | [PASS] | Backend TS build + Next.js production build & static export complete (`next build` summary in root console). |
+| `npm run audit --audit-level=high` | [PASS] | Reports “found 0 vulnerabilities” (2025‑11‑12). |
+| Database migrations | [PASS] | `scripts/run-local-migrations.sh` executed via embedded Postgres fallback (Docker unavailable) and applied all migrations through notifications table (`scripts/run-local-migrations.sh:1-40`, console log). |
 
 ## 3. Key Verifications & Improvements
 

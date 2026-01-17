@@ -12,11 +12,11 @@ jest.mock('next/navigation', () => ({
   useSearchParams: () => searchParamsValue,
 }));
 
-jest.mock('@/api/client', () => ({
-  getPublicApiClient: () => ({
+jest.mock('@/lib/api/lazyClient', () => ({
+  loadPublicApiClient: jest.fn(() => Promise.resolve({
     verifyEmail: mockVerifyEmail,
     resendVerification: mockResend,
-  }),
+  })),
 }));
 
 describe('VerifyEmailPage', () => {
@@ -46,9 +46,10 @@ describe('VerifyEmailPage', () => {
     fireEvent.change(screen.getByLabelText(/verification code/i), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: /verify email/i }));
 
-    expect(mockVerifyEmail).toHaveBeenCalledWith({ email: 'user@example.com', confirmationCode: '123456' });
-
-    await waitFor(() => expect(screen.getByText(/email verified successfully/i)).toBeInTheDocument());
+    await waitFor(() => {
+      expect(mockVerifyEmail).toHaveBeenCalledWith({ email: 'user@example.com', confirmationCode: '123456' });
+      expect(screen.getByText(/email verified successfully/i)).toBeInTheDocument();
+    });
     jest.runOnlyPendingTimers();
     expect(mockPush).toHaveBeenCalledWith('/auth/login');
   });

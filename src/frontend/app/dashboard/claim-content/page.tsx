@@ -69,11 +69,7 @@ export default function ClaimContentPage() {
     if (contentTypeFilter) filters.contentType = contentTypeFilter;
     if (tagsFilter) filters.tags = tagsFilter;
 
-    const timeoutId = setTimeout(() => {
-      fetchUnclaimedContent(Object.keys(filters).length > 0 ? filters : /* istanbul ignore next */ undefined);
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
+    fetchUnclaimedContent(Object.keys(filters).length > 0 ? filters : /* istanbul ignore next */ undefined);
   }, [searchQuery, contentTypeFilter, tagsFilter]);
 
   const clearFilters = () => {
@@ -100,11 +96,11 @@ export default function ClaimContentPage() {
 
   const handleClaimContent = async (contentId: string) => {
     const contentItem = content.find(c => c.id === contentId);
-    if (!contentItem) return;
+    const contentTitle = contentItem?.title ?? 'this content';
 
     showConfirmDialog(
       'Confirm Claim',
-      `Are you sure you want to claim "${contentItem.title}"?`,
+      `Are you sure you want to claim "${contentTitle}"?`,
       async () => {
         setConfirmDialog(null);
         try {
@@ -175,7 +171,7 @@ export default function ClaimContentPage() {
     }
   };
 
-  if (loading) {
+  if (loading && content.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50 p-8">
         <div className="max-w-7xl mx-auto">
