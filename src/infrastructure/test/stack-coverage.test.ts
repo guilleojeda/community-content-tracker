@@ -15,7 +15,7 @@ jest.mock('aws-cdk-lib/aws-lambda-nodejs', () => {
   const lambda = jest.requireActual('aws-cdk-lib/aws-lambda');
   class MockNodejsFunction extends lambda.Function {
     constructor(scope: any, id: string, props: any) {
-      const { entry, depsLockFilePath, bundling, ...functionProps } = props;
+      const { entry: _entry, depsLockFilePath: _depsLockFilePath, bundling: _bundling, ...functionProps } = props;
       super(scope, id, {
         ...functionProps,
         code: lambda.Code.fromInline('exports.handler = async () => {};'),

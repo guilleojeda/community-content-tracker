@@ -82,17 +82,6 @@ export class StaticSiteStack extends cdk.Stack {
     // by S3BucketOrigin.withOriginAccessControl() for secure S3 access
 
     // Create cache policies for different content types
-    const noCachePolicy = new cloudfront.CachePolicy(this, 'NoCachePolicy', {
-      cachePolicyName: `CommunityContentHub-${environment}-NoCache`,
-      comment: 'No caching for API calls',
-      defaultTtl: cdk.Duration.seconds(0),
-      minTtl: cdk.Duration.seconds(0),
-      maxTtl: cdk.Duration.seconds(1),
-      headerBehavior: cloudfront.CacheHeaderBehavior.allowList('Authorization', 'Content-Type'),
-      queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
-      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
-    });
-
     const staticAssetsPolicy = new cloudfront.CachePolicy(this, 'StaticAssetsPolicy', {
       cachePolicyName: `CommunityContentHub-${environment}-StaticAssets`,
       comment: 'Long caching for static assets',

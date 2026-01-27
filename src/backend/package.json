@@ -3,10 +3,13 @@
     "version": "0.1.0",
     "main": "dist/index.js",
     "scripts": {
+        "prebuild": "npm --prefix ../shared run build",
         "build": "tsc",
         "lint": "eslint . --ext .ts --max-warnings=0",
+        "pretest": "npm --prefix ../shared run build",
         "test": "jest --detectOpenHandles",
         "test:watch": "jest --watch",
+        "pretest:coverage": "npm --prefix ../shared run build",
         "test:coverage": "jest --coverage --detectOpenHandles",
         "dev": "ts-node-dev --respawn --transpile-only src/local-server.ts",
         "db:migrate": "node ./scripts/run-db-migrate.js up",
@@ -16,6 +19,7 @@
         "db:seed": "ts-node src/database/seeds/seed.ts",
         "seed": "ts-node src/database/seeds/seed.ts",
         "bootstrap:admin": "ts-node scripts/bootstrap-admin.ts",
+        "pretypecheck": "npm --prefix ../shared run build",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
